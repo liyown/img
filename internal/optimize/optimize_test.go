@@ -8,6 +8,8 @@ import (
 	"image/png"
 	"io"
 	"testing"
+
+	"github.com/HugoSmits86/nativewebp"
 )
 
 // makeJPEG returns a minimal JPEG-encoded image of the given dimensions.
@@ -85,16 +87,17 @@ func TestJPEGReEncodeReducesSize(t *testing.T) {
 	}
 }
 
-func TestPNGWithoutAlphaConvertsToJPEG(t *testing.T) {
+func TestPNGWithoutAlphaIsReduced(t *testing.T) {
 	data, origSize := makePNG(t, 200, 200)
 	res, err := TryCompress(bytes.NewReader(data), "image/png", origSize)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A large opaque PNG should be converted to JPEG and reduced.
+	// An opaque PNG should be re-encoded to whichever of JPEG / WebP is
+	// smallest. Both are acceptable; PNG (no gain) is also valid.
 	if res.Reduced {
-		if res.ContentType != "image/jpeg" {
-			t.Fatalf("expected image/jpeg after conversion, got %s", res.ContentType)
+		if res.ContentType != "image/jpeg" && res.ContentType != "image/webp" {
+			t.Fatalf("expected jpeg or webp after conversion, got %s", res.ContentType)
 		}
 		if res.Size >= origSize {
 			t.Fatalf("Reduced=true but size %d >= orig %d", res.Size, origSize)
@@ -102,20 +105,48 @@ func TestPNGWithoutAlphaConvertsToJPEG(t *testing.T) {
 	}
 }
 
-func TestPNGWithAlphaPassesThrough(t *testing.T) {
-	data, origSize := makePNGWithAlpha(t, 50, 50)
+func TestPNGWithAlphaNeverBecomesJPEG(t *testing.T) {
+	data, origSize := makePNGWithAlpha(t, 100, 100)
 	res, err := TryCompress(bytes.NewReader(data), "image/png", origSize)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.ContentType != "image/png" {
-		t.Fatalf("transparent PNG should keep image/png, got %s", res.ContentType)
+	// A transparent PNG must never be turned into JPEG (which has no alpha).
+	// It may become lossless WebP or stay PNG, depending on which is smaller.
+	if res.ContentType == "image/jpeg" {
+		t.Fatal("transparent PNG must not be converted to JPEG")
 	}
-	if res.Reduced {
-		t.Fatal("transparent PNG should not be reported as reduced")
+	if res.ContentType != "image/png" && res.ContentType != "image/webp" {
+		t.Fatalf("unexpected content type %s", res.ContentType)
 	}
-	if res.Size != origSize {
-		t.Fatalf("size changed for transparent PNG: %d → %d", origSize, res.Size)
+	// Whatever wins, the body must be readable.
+	b, err := io.ReadAll(res.Body)
+	if err != nil || len(b) == 0 {
+		t.Fatalf("body unreadable: %v", err)
+	}
+}
+
+func TestPNGWebPPreservesTransparency(t *testing.T) {
+	// A larger transparent PNG so lossless WebP has a chance to beat it.
+	data, origSize := makePNGWithAlpha(t, 256, 256)
+	res, err := TryCompress(bytes.NewReader(data), "image/png", origSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ContentType == "image/webp" {
+		if !res.Reduced {
+			t.Fatal("webp result must be marked reduced")
+		}
+		// Decode the WebP back and confirm the transparent corner survived.
+		b, _ := io.ReadAll(res.Body)
+		img, derr := nativewebp.Decode(bytes.NewReader(b))
+		if derr != nil {
+			t.Fatalf("cannot decode produced webp: %v", derr)
+		}
+		_, _, _, a := img.At(0, 0).RGBA()
+		if a == 0xffff {
+			t.Fatal("transparency was lost in WebP conversion")
+		}
 	}
 }
 

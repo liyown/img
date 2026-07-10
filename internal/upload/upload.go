@@ -94,11 +94,14 @@ func one(ctx context.Context, p model.Provider, c config.Upload, file string, o 
 			originalSize = res.OriginalSize
 			size = res.Size
 			typ = res.ContentType
-			// If format changed (e.g. PNG→JPEG), update the local-path hint used
-			// for remote-path generation so {ext} and {filename} stay consistent.
-			if res.ContentType == "image/jpeg" && !strings.HasSuffix(strings.ToLower(file), ".jpg") && !strings.HasSuffix(strings.ToLower(file), ".jpeg") {
-				ext := filepath.Ext(file)
-				file = strings.TrimSuffix(file, ext) + ".jpg"
+			// If the format changed (e.g. PNG→JPEG or PNG→WebP), update the
+			// local-path hint used for remote-path generation so {ext} and
+			// {filename} stay consistent with the uploaded bytes.
+			if newExt := extForType(res.ContentType); newExt != "" {
+				lower := strings.ToLower(file)
+				if !strings.HasSuffix(lower, newExt) && !(newExt == ".jpg" && strings.HasSuffix(lower, ".jpeg")) {
+					file = strings.TrimSuffix(file, filepath.Ext(file)) + newExt
+				}
 			}
 		} else if oerr == nil {
 			// No gain; body stays as-is, re-seek original file section.
@@ -150,4 +153,18 @@ func choose(a, b string) string {
 		return a
 	}
 	return b
+}
+
+// extForType maps a content type produced by the optimizer to the file
+// extension that should be used for the remote path. Returns "" for types
+// that do not require an extension change.
+func extForType(contentType string) string {
+	switch contentType {
+	case "image/jpeg":
+		return ".jpg"
+	case "image/webp":
+		return ".webp"
+	default:
+		return ""
+	}
 }

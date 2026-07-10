@@ -209,6 +209,26 @@ img screenshot.png --overwrite
 img screenshot.png --format markdown --copy
 ```
 
+上传前压缩：
+
+```sh
+img screenshot.png --optimize
+```
+
+`--optimize` 在上传前尝试压缩图片，只在结果更小时才使用：
+
+- JPEG：以质量 85 重新编码
+- 不透明 PNG：在 JPEG 和无损 WebP 之间取更小的
+- 透明 PNG：尝试无损 WebP（保留透明通道）
+- SVG、GIF、WebP、AVIF：原样上传
+
+压缩全部使用纯 Go 实现，无外部依赖。配合 `--verbose` 可查看每个文件的压缩率：
+
+```sh
+img screenshot.png --optimize --verbose
+# Optimized screenshot.png: 1.2 MB → 480 KB (−60%)
+```
+
 ## 给 Agent 使用
 
 仓库包含配套 Skill：[skills/img-uploader](skills/img-uploader)。使用开放 Agent Skills CLI 安装：
