@@ -87,7 +87,7 @@ func (c *CLI) upload(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("upload", flag.ContinueOnError)
 	fs.SetOutput(c.Err)
 	var pn, format, path, name string
-	var copyFlag, noCopy, overwrite, verbose, quietFlag bool
+	var copyFlag, noCopy, overwrite, verbose, quietFlag, optimizeFlag bool
 	fs.StringVar(&pn, "provider", "", "provider name")
 	fs.StringVar(&format, "format", "", "url, markdown, html, or json")
 	fs.BoolVar(&copyFlag, "copy", false, "copy output")
@@ -97,6 +97,7 @@ func (c *CLI) upload(ctx context.Context, args []string) int {
 	fs.StringVar(&name, "name", "", "remote file name")
 	fs.BoolVar(&overwrite, "overwrite", false, "overwrite existing object")
 	fs.BoolVar(&verbose, "verbose", false, "verbose logging")
+	fs.BoolVar(&optimizeFlag, "optimize", false, "compress images before upload (JPEG→q85, opaque PNG→JPEG)")
 	ordered, err := reorder(args, map[string]bool{"--provider": true, "--format": true, "--path": true, "--name": true})
 	if err != nil {
 		fmt.Fprintln(c.Err, "Error:", err)
@@ -153,7 +154,17 @@ func (c *CLI) upload(ctx context.Context, args []string) int {
 		fmt.Fprintln(c.Err, "Error:", err)
 		return 2
 	}
-	results := upload.Run(ctx, p, cfg.Upload, files, upload.Options{Path: path, Name: name, Overwrite: overwrite})
+	results := upload.Run(ctx, p, cfg.Upload, files, upload.Options{Path: path, Name: name, Overwrite: overwrite, Optimize: optimizeFlag})
+	// In verbose mode, report compression savings for each optimised file.
+	if verbose && optimizeFlag {
+		for _, r := range results {
+			if r.Success && r.OriginalSize > 0 {
+				saved := 100 - int(r.Size*100/r.OriginalSize)
+				fmt.Fprintf(c.Err, "Optimized %s: %s → %s (−%d%%)\n",
+					r.LocalPath, formatBytes(r.OriginalSize), formatBytes(r.Size), saved)
+			}
+		}
+	}
 	// Quiet mode: --quiet flag or output.quiet config suppresses stdout output.
 	// JSON output is also silenced in quiet mode; use --copy to get it on clipboard.
 	doQuiet := cfg.Output.Quiet || quietFlag
@@ -541,6 +552,18 @@ func mustwd() string                  { d, _ := os.Getwd(); return d }
 func readline(r *bufio.Reader) string { s, _ := r.ReadString('\n'); return s }
 func (c *CLI) usage() {
 	fmt.Fprintln(c.Out, "Usage: img upload <file...> [options]\n       img <file...> [options]\n       img init | provider | config | version")
+}
+
+// formatBytes formats a byte count as a human-readable string (KB / MB).
+func formatBytes(n int64) string {
+	switch {
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1f MB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%.0f KB", float64(n)/(1<<10))
+	default:
+		return fmt.Sprintf("%d B", n)
+	}
 }
 
 var _ = json.Marshal

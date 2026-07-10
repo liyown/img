@@ -1,0 +1,193 @@
+// Package optimize provides best-effort image compression before upload.
+// It operates entirely within the Go standard library — no CGO, no external
+// binaries — so it works identically on every platform the release targets.
+//
+// Strategy:
+//   - JPEG → re-encode at quality 85; keep the smaller of the two.
+//   - PNG without an alpha channel → convert to JPEG q85; keep the smaller.
+//   - PNG with actual transparency → pass through unchanged (lossy encoding
+//     cannot represent transparency).
+//   - All other formats (SVG, GIF, WebP, AVIF) → pass through unchanged.
+package optimize
+
+import (
+	"bytes"
+	"fmt"
+	"image"
+	"image/color"
+	"image/jpeg"
+	"image/png"
+	"io"
+)
+
+const jpegQuality = 85
+
+// Result is the output of TryCompress. If no compression gain was found,
+// Body contains the original data rewound to the start.
+type Result struct {
+	Body        io.ReadSeeker
+	ContentType string
+	// Size is the byte length of Body. May equal OriginalSize if unchanged.
+	Size int64
+	// OriginalSize holds the pre-compression size for reporting purposes.
+	OriginalSize int64
+	// Reduced is true when the output is smaller than the input.
+	Reduced bool
+}
+
+// TryCompress attempts to produce a smaller encoding of r.
+// It always returns a valid Result: on any decoding error it silently falls
+// back to the original data so that the caller can proceed with the upload.
+func TryCompress(r io.ReadSeeker, contentType string, origSize int64) (Result, error) {
+	passthrough := func() (Result, error) {
+		if _, err := r.Seek(0, io.SeekStart); err != nil {
+			return Result{}, fmt.Errorf("rewind for passthrough: %w", err)
+		}
+		return Result{Body: r, ContentType: contentType, Size: origSize, OriginalSize: origSize}, nil
+	}
+
+	switch contentType {
+	case "image/jpeg":
+		return reEncodeJPEG(r, origSize)
+	case "image/png":
+		res, err := pngOptimize(r, origSize)
+		if err != nil {
+			// Fall back silently — optimisation is best-effort.
+			return passthrough()
+		}
+		return res, nil
+	default:
+		return passthrough()
+	}
+}
+
+// reEncodeJPEG decodes a JPEG and re-encodes it at jpegQuality.
+// Returns the original if re-encoding is larger or if decoding fails.
+func reEncodeJPEG(r io.ReadSeeker, origSize int64) (Result, error) {
+	if _, err := r.Seek(0, io.SeekStart); err != nil {
+		return Result{}, fmt.Errorf("rewind JPEG: %w", err)
+	}
+	img, err := jpeg.Decode(r)
+	if err != nil {
+		// Decode failure → return original.
+		if _, se := r.Seek(0, io.SeekStart); se != nil {
+			return Result{}, se
+		}
+		return Result{Body: r, ContentType: "image/jpeg", Size: origSize, OriginalSize: origSize}, nil
+	}
+	var buf bytes.Buffer
+	buf.Grow(int(origSize))
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: jpegQuality}); err != nil {
+		if _, se := r.Seek(0, io.SeekStart); se != nil {
+			return Result{}, se
+		}
+		return Result{Body: r, ContentType: "image/jpeg", Size: origSize, OriginalSize: origSize}, nil
+	}
+	if int64(buf.Len()) >= origSize {
+		// No gain.
+		if _, se := r.Seek(0, io.SeekStart); se != nil {
+			return Result{}, se
+		}
+		return Result{Body: r, ContentType: "image/jpeg", Size: origSize, OriginalSize: origSize}, nil
+	}
+	b := buf.Bytes()
+	return Result{
+		Body:         bytes.NewReader(b),
+		ContentType:  "image/jpeg",
+		Size:         int64(len(b)),
+		OriginalSize: origSize,
+		Reduced:      true,
+	}, nil
+}
+
+// pngOptimize tries to convert a PNG to JPEG when there is no visible
+// transparency. If the image has an alpha channel it is returned unchanged.
+func pngOptimize(r io.ReadSeeker, origSize int64) (Result, error) {
+	if _, err := r.Seek(0, io.SeekStart); err != nil {
+		return Result{}, fmt.Errorf("rewind PNG: %w", err)
+	}
+	img, err := png.Decode(r)
+	if err != nil {
+		return Result{}, fmt.Errorf("decode PNG: %w", err)
+	}
+
+	if hasTransparency(img) {
+		if _, se := r.Seek(0, io.SeekStart); se != nil {
+			return Result{}, se
+		}
+		return Result{Body: r, ContentType: "image/png", Size: origSize, OriginalSize: origSize}, nil
+	}
+
+	var buf bytes.Buffer
+	buf.Grow(int(origSize))
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: jpegQuality}); err != nil {
+		return Result{}, fmt.Errorf("encode PNG as JPEG: %w", err)
+	}
+	if int64(buf.Len()) >= origSize {
+		if _, se := r.Seek(0, io.SeekStart); se != nil {
+			return Result{}, se
+		}
+		return Result{Body: r, ContentType: "image/png", Size: origSize, OriginalSize: origSize}, nil
+	}
+	b := buf.Bytes()
+	return Result{
+		Body:         bytes.NewReader(b),
+		ContentType:  "image/jpeg",
+		Size:         int64(len(b)),
+		OriginalSize: origSize,
+		Reduced:      true,
+	}, nil
+}
+
+// hasTransparency reports whether img contains any non-opaque pixels.
+// For performance it samples approximately 1 % of pixels (at least 1000,
+// at most 10 000) rather than scanning the entire image.
+func hasTransparency(img image.Image) bool {
+	switch img.ColorModel() {
+	case color.RGBAModel, color.RGBA64Model, color.NRGBAModel, color.NRGBA64Model:
+		// These models can carry alpha; sample pixels.
+	default:
+		switch img.(type) {
+		case *image.Paletted:
+			// Check whether the palette contains any transparent colour.
+			for _, c := range img.(*image.Paletted).Palette {
+				_, _, _, a := c.RGBA()
+				if a != 0xffff {
+					return true
+				}
+			}
+			return false
+		default:
+			// Gray, Gray16, YCbCr, CMYK — no alpha channel.
+			return false
+		}
+	}
+
+	bounds := img.Bounds()
+	total := bounds.Dx() * bounds.Dy()
+	if total == 0 {
+		return false
+	}
+	// step: sample ~1% of pixels, clamped to [1000, 10000].
+	step := total / 100
+	if step < 1 {
+		step = 1
+	}
+	if step > 10 {
+		step = 10 // ensure we check at most ~10000 samples across a 100x100 grid
+	}
+	n := 0
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			n++
+			if n%step != 0 {
+				continue
+			}
+			_, _, _, a := img.At(x, y).RGBA()
+			if a != 0xffff {
+				return true
+			}
+		}
+	}
+	return false
+}
