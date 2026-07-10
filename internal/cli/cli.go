@@ -87,7 +87,7 @@ func (c *CLI) upload(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("upload", flag.ContinueOnError)
 	fs.SetOutput(c.Err)
 	var pn, format, path, name string
-	var copyFlag, noCopy, overwrite, verbose, quietFlag, optimizeFlag bool
+	var copyFlag, noCopy, overwrite, verbose, quietFlag, optimizeFlag, allowInsecure bool
 	fs.StringVar(&pn, "provider", "", "provider name")
 	fs.StringVar(&format, "format", "", "url, markdown, html, or json")
 	fs.BoolVar(&copyFlag, "copy", false, "copy output")
@@ -98,6 +98,7 @@ func (c *CLI) upload(ctx context.Context, args []string) int {
 	fs.BoolVar(&overwrite, "overwrite", false, "overwrite existing object")
 	fs.BoolVar(&verbose, "verbose", false, "verbose logging")
 	fs.BoolVar(&optimizeFlag, "optimize", false, "compress images before upload (JPEG→q85, opaque PNG→JPEG)")
+	fs.BoolVar(&allowInsecure, "allow-insecure", false, "allow fetching source URLs over plain HTTP")
 	ordered, err := reorder(args, map[string]bool{"--provider": true, "--format": true, "--path": true, "--name": true})
 	if err != nil {
 		fmt.Fprintln(c.Err, "Error:", err)
@@ -154,7 +155,7 @@ func (c *CLI) upload(ctx context.Context, args []string) int {
 		fmt.Fprintln(c.Err, "Error:", err)
 		return 2
 	}
-	results := upload.Run(ctx, p, cfg.Upload, files, upload.Options{Path: path, Name: name, Overwrite: overwrite, Optimize: optimizeFlag})
+	results := upload.Run(ctx, p, cfg.Upload, files, upload.Options{Path: path, Name: name, Overwrite: overwrite, Optimize: optimizeFlag, AllowInsecure: allowInsecure})
 	// In verbose mode, report compression savings for each optimised file.
 	if verbose && optimizeFlag {
 		for _, r := range results {

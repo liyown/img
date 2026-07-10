@@ -47,17 +47,48 @@ func InspectFile(f *os.File, displayPath string, maxSize int64) (string, int64, 
 		return "", 0, fmt.Errorf("rewind image %s: %w", displayPath, err)
 	}
 
-	typ := strings.Split(http.DetectContentType(b[:n]), ";")[0]
-	if isSVG(b[:n]) {
+	typ, err := detect(b[:n], displayPath)
+	if err != nil {
+		return "", 0, err
+	}
+	return typ, st.Size(), nil
+}
+
+// InspectBytes detects and validates an image held entirely in memory, for
+// sources that are not backed by a file (e.g. a downloaded URL). It applies
+// the same size limits and format allow-list as InspectFile.
+func InspectBytes(data []byte, displayName string, maxSize int64) (string, int64, error) {
+	size := int64(len(data))
+	if size == 0 {
+		return "", 0, fmt.Errorf("image %s is empty", displayName)
+	}
+	if size > maxSize {
+		return "", 0, fmt.Errorf("image %s exceeds maximum size of %d bytes", displayName, maxSize)
+	}
+	header := data
+	if len(header) > 4096 {
+		header = header[:4096]
+	}
+	typ, err := detect(header, displayName)
+	if err != nil {
+		return "", 0, err
+	}
+	return typ, size, nil
+}
+
+// detect classifies an image header and enforces the format allow-list.
+func detect(header []byte, displayName string) (string, error) {
+	typ := strings.Split(http.DetectContentType(header), ";")[0]
+	if isSVG(header) {
 		typ = "image/svg+xml"
 	}
-	if isAVIF(b[:n]) {
+	if isAVIF(header) {
 		typ = "image/avif"
 	}
 	if !allowed[typ] {
-		return "", 0, fmt.Errorf("file %s is not a supported image (detected %s)", displayPath, typ)
+		return "", fmt.Errorf("file %s is not a supported image (detected %s)", displayName, typ)
 	}
-	return typ, st.Size(), nil
+	return typ, nil
 }
 
 func isSVG(b []byte) bool {

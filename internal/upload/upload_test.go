@@ -3,12 +3,16 @@ package upload
 import (
 	"context"
 	"fmt"
-	"github.com/liyown/img/internal/config"
-	"github.com/liyown/img/internal/model"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/liyown/img/internal/config"
+	"github.com/liyown/img/internal/model"
 )
 
 type fake struct {
@@ -62,5 +66,49 @@ func TestCancellation(t *testing.T) {
 	r := Run(ctx, &fake{}, config.Defaults().Upload, []string{p}, Options{})
 	if len(r) != 1 || r[0].Success || r[0].Error == "" {
 		t.Fatalf("cancellation lost: %+v", r)
+	}
+}
+
+func TestRehostFromURL(t *testing.T) {
+	png := []byte("\x89PNG\r\n\x1a\nremote-image-bytes")
+	src := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Write(png)
+	}))
+	defer src.Close()
+
+	f := &fake{}
+	c := config.Defaults().Upload
+	// httptest serves HTTP, so AllowInsecure must be set. But fetch.Fetch with a
+	// nil client won't trust httptest's cert-less HTTP unless allowInsecure — and
+	// it uses a fresh client, which is fine for plain HTTP.
+	r := Run(context.Background(), f, c, []string{src.URL + "/pic.png"},
+		Options{AllowInsecure: true, Now: time.Date(2026, 7, 11, 0, 0, 0, 0, time.UTC)})
+
+	if len(r) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(r))
+	}
+	if !r[0].Success {
+		t.Fatalf("rehost failed: %s", r[0].Error)
+	}
+	if r[0].ContentType != "image/png" {
+		t.Fatalf("content type = %s", r[0].ContentType)
+	}
+	// The remote path should have used the URL's filename.
+	if !strings.HasSuffix(r[0].RemotePath, "pic.png") {
+		t.Fatalf("remote path = %s", r[0].RemotePath)
+	}
+	// LocalPath should preserve the original URL for reporting.
+	if r[0].LocalPath != src.URL+"/pic.png" {
+		t.Fatalf("local path = %s", r[0].LocalPath)
+	}
+}
+
+func TestRehostRejectsHTTPSByDefault(t *testing.T) {
+	f := &fake{}
+	c := config.Defaults().Upload
+	r := Run(context.Background(), f, c, []string{"http://example.com/a.png"}, Options{})
+	if len(r) != 1 || r[0].Success {
+		t.Fatalf("plain HTTP should be rejected without --allow-insecure: %+v", r)
 	}
 }

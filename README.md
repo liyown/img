@@ -209,6 +209,19 @@ img screenshot.png --overwrite
 img screenshot.png --format markdown --copy
 ```
 
+转存外部图片（下载后上传到自己的图床）：
+
+```sh
+img https://example.com/photo.jpg
+img https://example.com/photo.jpg --format markdown --optimize
+```
+
+把外链图片下载下来重新托管到自己的图床，避免原图失效。下载遵循与 HTTP Provider 相同的安全策略：默认要求 HTTPS、只允许同源重定向、限制响应大小。信任的 HTTP 源需显式加 `--allow-insecure`：
+
+```sh
+img http://192.168.1.10/photo.png --allow-insecure
+```
+
 上传前压缩：
 
 ```sh

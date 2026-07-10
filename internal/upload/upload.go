@@ -1,6 +1,7 @@
 package upload
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/liyown/img/internal/config"
+	"github.com/liyown/img/internal/fetch"
 	"github.com/liyown/img/internal/filetype"
 	"github.com/liyown/img/internal/model"
 	"github.com/liyown/img/internal/optimize"
@@ -30,10 +32,11 @@ type FileResult struct {
 }
 
 type Options struct {
-	Path, Name string
-	Overwrite  bool
-	Optimize   bool
-	Now        time.Time
+	Path, Name    string
+	Overwrite     bool
+	Optimize      bool
+	AllowInsecure bool // permit fetching source URLs over plain HTTP
+	Now           time.Time
 }
 
 func Run(ctx context.Context, p model.Provider, c config.Upload, files []string, o Options) []FileResult {
@@ -65,19 +68,48 @@ func Run(ctx context.Context, p model.Provider, c config.Upload, files []string,
 	return res
 }
 
-func one(ctx context.Context, p model.Provider, c config.Upload, file string, o Options) FileResult {
-	r := FileResult{LocalPath: file}
-	f, err := os.Open(file)
-	if err != nil {
-		r.Error = fmt.Sprintf("open image %s: %v", file, err)
-		return r
+func one(ctx context.Context, p model.Provider, c config.Upload, src string, o Options) FileResult {
+	r := FileResult{LocalPath: src}
+
+	// A "source" is either a local path or a remote URL. Both resolve to a
+	// detected type, a size, a display name (used for {filename}/{ext}), and a
+	// factory that yields a fresh independent reader over the content.
+	var typ string
+	var size int64
+	var name string
+	var newReader func() io.ReadSeeker
+
+	if fetch.IsURL(src) {
+		got, err := fetch.Fetch(ctx, src, c.MaxSize, o.AllowInsecure, nil)
+		if err != nil {
+			r.Error = err.Error()
+			return r
+		}
+		typ, size, err = filetype.InspectBytes(got.Data, got.FileName, c.MaxSize)
+		if err != nil {
+			r.Error = err.Error()
+			return r
+		}
+		name = got.FileName
+		data := got.Data
+		newReader = func() io.ReadSeeker { return bytes.NewReader(data) }
+	} else {
+		f, err := os.Open(src)
+		if err != nil {
+			r.Error = fmt.Sprintf("open image %s: %v", src, err)
+			return r
+		}
+		defer f.Close()
+		typ, size, err = filetype.InspectFile(f, src, c.MaxSize)
+		if err != nil {
+			r.Error = err.Error()
+			return r
+		}
+		name = src
+		origSize := size // capture before optimize can reassign size
+		newReader = func() io.ReadSeeker { return io.NewSectionReader(f, 0, origSize) }
 	}
-	defer f.Close()
-	typ, size, err := filetype.InspectFile(f, file, c.MaxSize)
-	if err != nil {
-		r.Error = err.Error()
-		return r
-	}
+
 	now := o.Now
 	if now.IsZero() {
 		now = time.Now()
@@ -85,27 +117,24 @@ func one(ctx context.Context, p model.Provider, c config.Upload, file string, o 
 
 	// Optimise before path generation so the remote extension can reflect the
 	// (possibly converted) output format.
-	var body io.ReadSeeker = io.NewSectionReader(f, 0, size)
+	body := newReader()
 	var originalSize int64
 	if o.Optimize {
-		res, oerr := optimize.TryCompress(io.NewSectionReader(f, 0, size), typ, size)
+		res, oerr := optimize.TryCompress(newReader(), typ, size)
 		if oerr == nil && res.Reduced {
 			body = res.Body
 			originalSize = res.OriginalSize
 			size = res.Size
 			typ = res.ContentType
 			// If the format changed (e.g. PNG→JPEG or PNG→WebP), update the
-			// local-path hint used for remote-path generation so {ext} and
-			// {filename} stay consistent with the uploaded bytes.
+			// name hint used for remote-path generation so {ext} and {filename}
+			// stay consistent with the uploaded bytes.
 			if newExt := extForType(res.ContentType); newExt != "" {
-				lower := strings.ToLower(file)
+				lower := strings.ToLower(name)
 				if !strings.HasSuffix(lower, newExt) && !(newExt == ".jpg" && strings.HasSuffix(lower, ".jpeg")) {
-					file = strings.TrimSuffix(file, filepath.Ext(file)) + newExt
+					name = strings.TrimSuffix(name, filepath.Ext(name)) + newExt
 				}
 			}
-		} else if oerr == nil {
-			// No gain; body stays as-is, re-seek original file section.
-			body = io.NewSectionReader(f, 0, size)
 		}
 	}
 
@@ -117,15 +146,15 @@ func one(ctx context.Context, p model.Provider, c config.Upload, file string, o 
 		}
 		template = o.Name
 	}
-	remote, err := pathgen.GenerateFromReader(file, f, template, choose(o.Path, c.Path), c.Rename, now)
+	remote, err := pathgen.GenerateFromReader(name, newReader(), template, choose(o.Path, c.Path), c.Rename, now)
 	if err != nil {
 		r.Error = err.Error()
 		return r
 	}
 	overwrite := o.Overwrite || c.Overwrite || c.Conflict == "overwrite"
 	u, err := p.Upload(ctx, model.UploadRequest{
-		LocalPath:   r.LocalPath, // always original local path for logging
-		FileName:    filepath.Base(file),
+		LocalPath:   r.LocalPath, // original source (path or URL) for logging
+		FileName:    filepath.Base(name),
 		Body:        body,
 		Size:        size,
 		RemotePath:  remote,

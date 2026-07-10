@@ -28,3 +28,32 @@ func TestDetectsSVGFromContent(t *testing.T) {
 		t.Fatalf("type=%s", typ)
 	}
 }
+
+func TestInspectBytesDetectsPNG(t *testing.T) {
+	data := []byte("\x89PNG\r\n\x1a\nbody-bytes")
+	typ, size, err := InspectBytes(data, "photo.png", 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if typ != "image/png" {
+		t.Fatalf("type=%s", typ)
+	}
+	if size != int64(len(data)) {
+		t.Fatalf("size=%d want %d", size, len(data))
+	}
+}
+
+func TestInspectBytesRejectsNonImage(t *testing.T) {
+	if _, _, err := InspectBytes([]byte("just plain text"), "x.png", 1<<20); err == nil {
+		t.Fatal("plain text accepted as image")
+	}
+}
+
+func TestInspectBytesEnforcesSize(t *testing.T) {
+	if _, _, err := InspectBytes([]byte("\x89PNG\r\n\x1a\nxxxx"), "x.png", 4); err == nil {
+		t.Fatal("oversized data accepted")
+	}
+	if _, _, err := InspectBytes(nil, "x.png", 100); err == nil {
+		t.Fatal("empty data accepted")
+	}
+}
