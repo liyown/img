@@ -60,7 +60,7 @@ func (p *Provider) Test(ctx context.Context) error {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("test GitHub provider %q failed with status %d: %s", p.name, resp.StatusCode, p.sanitize(string(b)))
+		return fmt.Errorf("test GitHub provider %q failed with status %d: %s", p.name, resp.StatusCode, p.sanitize(truncate(string(b), 512)))
 	}
 	return nil
 }
@@ -119,7 +119,7 @@ func (p *Provider) Upload(ctx context.Context, r model.UploadRequest) (*model.Up
 		if resp.StatusCode == 403 && resp.Header.Get("X-RateLimit-Remaining") == "0" {
 			return nil, fmt.Errorf("GitHub API rate limit exceeded")
 		}
-		return nil, fmt.Errorf("GitHub upload failed with status %d: %s", resp.StatusCode, p.sanitize(string(rb)))
+		return nil, fmt.Errorf("GitHub upload failed with status %d: %s", resp.StatusCode, p.sanitize(truncate(string(rb), 512)))
 	}
 	public := p.cfg.PublicURL
 	if public == "" {
@@ -143,7 +143,7 @@ func (p *Provider) lookup(ctx context.Context, endpoint, branch string) (string,
 		if resp.StatusCode == 403 && resp.Header.Get("X-RateLimit-Remaining") == "0" {
 			return "", false, fmt.Errorf("GitHub API rate limit exceeded")
 		}
-		return "", false, fmt.Errorf("check GitHub file failed with status %d: %s", resp.StatusCode, p.sanitize(string(b)))
+		return "", false, fmt.Errorf("check GitHub file failed with status %d: %s", resp.StatusCode, p.sanitize(truncate(string(b), 512)))
 	}
 	var v struct {
 		SHA string `json:"sha"`
@@ -153,6 +153,13 @@ func (p *Provider) lookup(ctx context.Context, endpoint, branch string) (string,
 	}
 	return v.SHA, true, nil
 }
+func truncate(s string, n int) string {
+	if len(s) > n {
+		return s[:n] + "…"
+	}
+	return s
+}
+
 func (p *Provider) sanitize(s string) string {
 	if p.cfg.Token != "" {
 		s = strings.ReplaceAll(s, p.cfg.Token, "********")

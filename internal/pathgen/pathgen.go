@@ -46,11 +46,22 @@ func GenerateFromReader(local string, reader io.ReadSeeker, template, prefix, re
 	default:
 		return "", fmt.Errorf("unknown rename strategy %q", rename)
 	}
-	vars := map[string]string{"{year}": now.Format("2006"), "{month}": now.Format("01"), "{day}": now.Format("02"), "{timestamp}": now.Format("20060102-150405"), "{unix}": fmt.Sprint(now.Unix()), "{filename}": name, "{stem}": stem, "{ext}": strings.TrimPrefix(ext, "."), "{hash}": hash, "{uuid}": id}
-	out := template
-	for k, v := range vars {
-		out = strings.ReplaceAll(out, k, v)
-	}
+	// strings.NewReplacer performs a single left-to-right scan, so a substituted
+	// value that happens to contain another token (e.g. a filename like
+	// "{year}-report") is never expanded a second time.
+	r := strings.NewReplacer(
+		"{year}", now.Format("2006"),
+		"{month}", now.Format("01"),
+		"{day}", now.Format("02"),
+		"{timestamp}", now.Format("20060102-150405"),
+		"{unix}", fmt.Sprint(now.Unix()),
+		"{filename}", name,
+		"{stem}", stem,
+		"{ext}", strings.TrimPrefix(ext, "."),
+		"{hash}", hash,
+		"{uuid}", id,
+	)
+	out := r.Replace(template)
 	if prefix != "" {
 		out = path.Join(strings.ReplaceAll(prefix, "\\", "/"), out)
 	}

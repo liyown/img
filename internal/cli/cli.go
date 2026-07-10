@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/liyown/img/internal/clipboard"
 	"github.com/liyown/img/internal/config"
@@ -86,11 +87,12 @@ func (c *CLI) upload(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("upload", flag.ContinueOnError)
 	fs.SetOutput(c.Err)
 	var pn, format, path, name string
-	var copyFlag, noCopy, overwrite, verbose bool
+	var copyFlag, noCopy, overwrite, verbose, quietFlag bool
 	fs.StringVar(&pn, "provider", "", "provider name")
 	fs.StringVar(&format, "format", "", "url, markdown, html, or json")
 	fs.BoolVar(&copyFlag, "copy", false, "copy output")
 	fs.BoolVar(&noCopy, "no-copy", false, "do not copy output")
+	fs.BoolVar(&quietFlag, "quiet", false, "suppress stdout output (useful with --copy)")
 	fs.StringVar(&path, "path", "", "remote path prefix")
 	fs.StringVar(&name, "name", "", "remote file name")
 	fs.BoolVar(&overwrite, "overwrite", false, "overwrite existing object")
@@ -152,7 +154,12 @@ func (c *CLI) upload(ctx context.Context, args []string) int {
 		return 2
 	}
 	results := upload.Run(ctx, p, cfg.Upload, files, upload.Options{Path: path, Name: name, Overwrite: overwrite})
-	_ = output.Render(c.Out, format, results)
+	// Quiet mode: --quiet flag or output.quiet config suppresses stdout output.
+	// JSON output is also silenced in quiet mode; use --copy to get it on clipboard.
+	doQuiet := cfg.Output.Quiet || quietFlag
+	if !doQuiet {
+		_ = output.Render(c.Out, format, results)
+	}
 	doCopy := cfg.Output.Copy
 	if copyFlag {
 		doCopy = true
@@ -266,6 +273,9 @@ func (c *CLI) init(args []string) error {
 		return err
 	}
 	fmt.Fprintf(c.Out, "%s provider %q configured.\nDefault provider: %s\n", strings.ToUpper(typ), name, name)
+	if typ == "github" && cfg.Upload.MaxSize > 1<<20 {
+		fmt.Fprintf(c.Out, "Note: GitHub Contents API recommends files ≤ 1 MB. To enforce: img config set upload.max_size %d\n", 1<<20)
+	}
 	return nil
 }
 func (c *CLI) provider(ctx context.Context, args []string) error {
@@ -278,7 +288,8 @@ func (c *CLI) provider(ctx context.Context, args []string) error {
 	}
 	switch args[0] {
 	case "list":
-		fmt.Fprintln(c.Out, "NAME\tTYPE\tDEFAULT\tSTATUS")
+		tw := tabwriter.NewWriter(c.Out, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "NAME\tTYPE\tDEFAULT\tSTATUS")
 		names := make([]string, 0, len(cfg.Providers))
 		for n := range cfg.Providers {
 			names = append(names, n)
@@ -290,8 +301,9 @@ func (c *CLI) provider(ctx context.Context, args []string) error {
 			if n == cfg.DefaultProvider {
 				d = "yes"
 			}
-			fmt.Fprintf(c.Out, "%s\t%s\t%s\tconfigured\n", n, p.Type, d)
+			fmt.Fprintf(tw, "%s\t%s\t%s\tconfigured\n", n, p.Type, d)
 		}
+		tw.Flush()
 	case "show":
 		if len(args) != 2 {
 			return errors.New("usage: img provider show <name>")
@@ -473,6 +485,8 @@ func get(w io.Writer, c config.Config, k string) error {
 		fmt.Fprintln(w, c.Output.Format)
 	case "output.copy":
 		fmt.Fprintln(w, c.Output.Copy)
+	case "output.quiet":
+		fmt.Fprintln(w, c.Output.Quiet)
 	case "default_provider":
 		fmt.Fprintln(w, c.DefaultProvider)
 	case "upload.concurrency":
@@ -499,6 +513,16 @@ func set(c *config.Config, k, v string) error {
 			return e
 		}
 		c.Output.Copy = b
+	case "output.quiet":
+		b, e := strconv.ParseBool(v)
+		if v == "" {
+			b = false
+			e = nil
+		}
+		if e != nil {
+			return e
+		}
+		c.Output.Quiet = b
 	case "default_provider":
 		c.DefaultProvider = v
 	case "upload.concurrency":
