@@ -19,31 +19,19 @@ $ img screenshot.png --format markdown
 
 ## 安装
 
-macOS 或 Linux 推荐一键安装：
+macOS / Linux：
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/liyown/img/main/install.sh | sh
 ```
 
-安装器会自动识别系统和 CPU 架构、校验 SHA-256，并安装最新 Release。默认使用 `/usr/local/bin`；不可写时使用 `~/.local/bin`。
+Windows PowerShell：
 
-自定义安装目录：
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/liyown/img/main/install.sh | IMG_INSTALL_DIR="$HOME/bin" sh
+```powershell
+irm https://raw.githubusercontent.com/liyown/img/main/install.ps1 | iex
 ```
 
-安装指定版本：
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/liyown/img/main/install.sh | IMG_VERSION=v0.1.0 sh
-```
-
-也可以使用 Go 安装：
-
-```sh
-go install github.com/liyown/img/cmd/img@latest
-```
+安装器会自动完成下载、校验和命令配置。
 
 确认安装：
 

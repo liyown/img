@@ -14,3 +14,14 @@ jobs:
           go-version-file: go.mod
       - run: go test -race ./...
       - run: go vet ./...
+  windows-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install released CLI
+        shell: powershell
+        env:
+          IMG_INSTALL_DIR: ${{ runner.temp }}\img-bin
+        run: |
+          .\install.ps1
+          & "$env:IMG_INSTALL_DIR\img.exe" version
