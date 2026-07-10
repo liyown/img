@@ -1,0 +1,476 @@
+package cli
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+
+	"github.com/liyown/img/internal/clipboard"
+	"github.com/liyown/img/internal/config"
+	"github.com/liyown/img/internal/output"
+	"github.com/liyown/img/internal/provider"
+	"github.com/liyown/img/internal/upload"
+	"github.com/pelletier/go-toml/v2"
+)
+
+var Version = "dev"
+var Commit = "unknown"
+var BuildDate = "unknown"
+
+type CLI struct {
+	Out, Err   io.Writer
+	In         io.Reader
+	Clipboard  clipboard.Clipboard
+	GlobalPath string
+}
+
+func New() *CLI {
+	p, _ := config.GlobalPath()
+	return &CLI{Out: os.Stdout, Err: os.Stderr, In: os.Stdin, Clipboard: clipboard.System{}, GlobalPath: p}
+}
+func (c *CLI) Run(ctx context.Context, args []string) int {
+	if len(args) == 0 {
+		c.usage()
+		return 2
+	}
+	cmd := args[0]
+	rest := args[1:]
+	if !known(cmd) {
+		cmd = "upload"
+		rest = args
+	}
+	var err error
+	switch cmd {
+	case "upload":
+		return c.upload(ctx, rest)
+	case "init":
+		err = c.init(rest)
+	case "provider":
+		err = c.provider(ctx, rest)
+	case "config":
+		err = c.config(rest)
+	case "version":
+		fmt.Fprintf(c.Out, "img %s\ncommit: %s\nbuilt: %s\n", Version, Commit, BuildDate)
+		return 0
+	case "help", "--help", "-h":
+		c.usage()
+		return 0
+	}
+	if err != nil {
+		fmt.Fprintln(c.Err, "Error:", err)
+		return 2
+	}
+	return 0
+}
+func known(s string) bool {
+	switch s {
+	case "upload", "init", "provider", "config", "version", "help", "--help", "-h":
+		return true
+	}
+	return false
+}
+func (c *CLI) load() (config.Config, error) {
+	return config.Load(c.GlobalPath, filepath.Join(mustwd(), ".img.toml"))
+}
+func (c *CLI) upload(ctx context.Context, args []string) int {
+	fs := flag.NewFlagSet("upload", flag.ContinueOnError)
+	fs.SetOutput(c.Err)
+	var pn, format, path, name string
+	var copyFlag, noCopy, overwrite, verbose bool
+	fs.StringVar(&pn, "provider", "", "provider name")
+	fs.StringVar(&format, "format", "", "url, markdown, html, or json")
+	fs.BoolVar(&copyFlag, "copy", false, "copy output")
+	fs.BoolVar(&noCopy, "no-copy", false, "do not copy output")
+	fs.StringVar(&path, "path", "", "remote path prefix")
+	fs.StringVar(&name, "name", "", "remote file name")
+	fs.BoolVar(&overwrite, "overwrite", false, "overwrite existing object")
+	fs.BoolVar(&verbose, "verbose", false, "verbose logging")
+	ordered, err := reorder(args, map[string]bool{"--provider": true, "--format": true, "--path": true, "--name": true})
+	if err != nil {
+		fmt.Fprintln(c.Err, "Error:", err)
+		return 2
+	}
+	if err = fs.Parse(ordered); err != nil {
+		return 2
+	}
+	files := fs.Args()
+	if len(files) == 0 {
+		fmt.Fprintln(c.Err, "Error: at least one image file is required")
+		return 2
+	}
+	if name != "" && len(files) > 1 {
+		fmt.Fprintln(c.Err, "Error: --name can only be used with one file")
+		return 2
+	}
+	cfg, err := c.load()
+	if err != nil {
+		fmt.Fprintln(c.Err, "Error:", err)
+		return 2
+	}
+	if pn == "" {
+		pn = cfg.Provider
+		if pn == "" {
+			pn = cfg.DefaultProvider
+		}
+	}
+	if pn == "" {
+		fmt.Fprintln(c.Err, "Error: no provider selected; run img init")
+		return 2
+	}
+	pc, ok := cfg.Providers[pn]
+	if !ok {
+		fmt.Fprintf(c.Err, "Error: provider %q is not configured\n", pn)
+		return 2
+	}
+	if format == "" {
+		format = cfg.Output.Format
+	}
+	if !validFormat(format) {
+		fmt.Fprintf(c.Err, "Error: unknown output format %q\n", format)
+		return 2
+	}
+	if verbose {
+		fmt.Fprintf(c.Err, "Using provider %s (%s)\n", pn, pc.Type)
+	}
+	p, err := provider.New(ctx, pn, pc)
+	if err != nil {
+		fmt.Fprintln(c.Err, "Error:", err)
+		return 2
+	}
+	if err = p.Validate(ctx); err != nil {
+		fmt.Fprintln(c.Err, "Error:", err)
+		return 2
+	}
+	results := upload.Run(ctx, p, cfg.Upload, files, upload.Options{Path: path, Name: name, Overwrite: overwrite})
+	_ = output.Render(c.Out, format, results)
+	doCopy := cfg.Output.Copy
+	if copyFlag {
+		doCopy = true
+	}
+	if noCopy {
+		doCopy = false
+	}
+	if doCopy {
+		if err := c.Clipboard.Write(output.ClipboardText(format, results)); err != nil {
+			fmt.Fprintln(c.Err, "Warning: upload succeeded, but clipboard copy failed:", err)
+		}
+	}
+	failed := 0
+	for _, r := range results {
+		if !r.Success {
+			failed++
+		}
+	}
+	if failed == 0 {
+		return 0
+	}
+	if failed < len(results) {
+		return 3
+	}
+	return 1
+}
+func (c *CLI) init(args []string) error {
+	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	fs.SetOutput(c.Err)
+	var name, typ, url, jsonpath, endpoint, region, bucket, access, secret, public string
+	var pathStyle bool
+	fs.StringVar(&name, "name", "", "provider name")
+	fs.StringVar(&typ, "type", "", "http or s3")
+	fs.StringVar(&url, "url", "", "HTTP upload URL")
+	fs.StringVar(&jsonpath, "url-json-path", "data.url", "JSON URL path")
+	fs.StringVar(&endpoint, "endpoint", "", "S3 endpoint")
+	fs.StringVar(&region, "region", "auto", "S3 region")
+	fs.StringVar(&bucket, "bucket", "", "S3 bucket")
+	fs.StringVar(&access, "access-key", "", "environment reference, e.g. ${IMG_ACCESS_KEY}")
+	fs.StringVar(&secret, "secret-key", "", "environment reference, e.g. ${IMG_SECRET_KEY}")
+	fs.StringVar(&public, "public-url", "", "public base URL")
+	fs.BoolVar(&pathStyle, "path-style", false, "use S3 path style")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if typ == "" {
+		r := bufio.NewReader(c.In)
+		fmt.Fprint(c.Out, "Provider type (http/s3): ")
+		typ = strings.TrimSpace(readline(r))
+		fmt.Fprint(c.Out, "Provider name: ")
+		name = strings.TrimSpace(readline(r))
+		if typ == "http" {
+			fmt.Fprint(c.Out, "Upload URL: ")
+			url = strings.TrimSpace(readline(r))
+		} else {
+			fmt.Fprint(c.Out, "Bucket: ")
+			bucket = strings.TrimSpace(readline(r))
+			fmt.Fprint(c.Out, "Public URL: ")
+			public = strings.TrimSpace(readline(r))
+		}
+	}
+	if name == "" {
+		name = typ
+	}
+	if typ != "http" && typ != "s3" {
+		return fmt.Errorf("unsupported provider type %q", typ)
+	}
+	cfg := config.Defaults()
+	if b, e := os.ReadFile(c.GlobalPath); e == nil {
+		if e = toml.Unmarshal(b, &cfg); e != nil {
+			return fmt.Errorf("parse existing config: %w", e)
+		}
+	}
+	pc := config.ProviderConfig{Type: typ, URL: url, Method: "POST", FileField: "file", URLJSONPath: jsonpath, Endpoint: endpoint, Region: region, Bucket: bucket, AccessKey: access, SecretKey: secret, PublicURL: public, PathStyle: pathStyle}
+	cfg.Providers[name] = pc
+	cfg.DefaultProvider = name
+	if err := pcValidate(name, pc); err != nil {
+		return err
+	}
+	if err := config.Save(c.GlobalPath, cfg); err != nil {
+		return err
+	}
+	fmt.Fprintf(c.Out, "%s provider %q configured.\nDefault provider: %s\n", strings.ToUpper(typ), name, name)
+	return nil
+}
+func (c *CLI) provider(ctx context.Context, args []string) error {
+	if len(args) == 0 {
+		return errors.New("provider subcommand required: list, show, use, remove, test")
+	}
+	cfg, err := c.load()
+	if err != nil {
+		return err
+	}
+	switch args[0] {
+	case "list":
+		fmt.Fprintln(c.Out, "NAME\tTYPE\tDEFAULT\tSTATUS")
+		for n, p := range cfg.Providers {
+			d := "no"
+			if n == cfg.DefaultProvider {
+				d = "yes"
+			}
+			fmt.Fprintf(c.Out, "%s\t%s\t%s\tavailable\n", n, p.Type, d)
+		}
+	case "show":
+		if len(args) != 2 {
+			return errors.New("usage: img provider show <name>")
+		}
+		p, ok := cfg.Providers[args[1]]
+		if !ok {
+			return fmt.Errorf("provider %q not found", args[1])
+		}
+		b, _ := toml.Marshal(config.Redact(config.Config{Version: 1, Providers: map[string]config.ProviderConfig{args[1]: p}}))
+		fmt.Fprint(c.Out, string(b))
+	case "use":
+		if len(args) != 2 {
+			return errors.New("usage: img provider use <name>")
+		}
+		if _, ok := cfg.Providers[args[1]]; !ok {
+			return fmt.Errorf("provider %q not found", args[1])
+		}
+		global, err := loadGlobal(c.GlobalPath)
+		if err != nil {
+			return err
+		}
+		global.DefaultProvider = args[1]
+		if err = config.Save(c.GlobalPath, global); err != nil {
+			return err
+		}
+		fmt.Fprintf(c.Out, "Default provider: %s\n", args[1])
+	case "remove":
+		if len(args) != 2 {
+			return errors.New("usage: img provider remove <name>")
+		}
+		global, err := loadGlobal(c.GlobalPath)
+		if err != nil {
+			return err
+		}
+		delete(global.Providers, args[1])
+		if global.DefaultProvider == args[1] {
+			global.DefaultProvider = ""
+		}
+		return config.Save(c.GlobalPath, global)
+	case "test":
+		if len(args) != 2 {
+			return errors.New("usage: img provider test <name>")
+		}
+		pc, ok := cfg.Providers[args[1]]
+		if !ok {
+			return fmt.Errorf("provider %q not found", args[1])
+		}
+		p, err := provider.New(ctx, args[1], pc)
+		if err != nil {
+			return err
+		}
+		if err = p.Validate(ctx); err != nil {
+			return err
+		}
+		fmt.Fprintln(c.Out, "available")
+	default:
+		return fmt.Errorf("unknown provider subcommand %q", args[0])
+	}
+	return nil
+}
+func (c *CLI) config(args []string) error {
+	if len(args) == 0 {
+		return errors.New("config subcommand required: path, list, validate, get, set, unset")
+	}
+	switch args[0] {
+	case "path":
+		fmt.Fprintln(c.Out, c.GlobalPath)
+		return nil
+	case "list":
+		cfg, e := c.load()
+		if e != nil {
+			return e
+		}
+		b, _ := toml.Marshal(config.Redact(cfg))
+		fmt.Fprint(c.Out, string(b))
+		return nil
+	case "validate":
+		_, e := c.load()
+		if e == nil {
+			fmt.Fprintln(c.Out, "configuration is valid")
+		}
+		return e
+	case "get":
+		if len(args) != 2 {
+			return errors.New("usage: img config get <key>")
+		}
+		cfg, e := c.load()
+		if e != nil {
+			return e
+		}
+		return get(c.Out, cfg, args[1])
+	case "set":
+		if len(args) != 3 {
+			return errors.New("usage: img config set <key> <value>")
+		}
+		cfg, e := loadGlobal(c.GlobalPath)
+		if e != nil {
+			return e
+		}
+		if e = set(&cfg, args[1], args[2]); e != nil {
+			return e
+		}
+		return config.Save(c.GlobalPath, cfg)
+	case "unset":
+		if len(args) != 2 {
+			return errors.New("usage: img config unset <key>")
+		}
+		cfg, e := loadGlobal(c.GlobalPath)
+		if e != nil {
+			return e
+		}
+		if e = set(&cfg, args[1], ""); e != nil {
+			return e
+		}
+		return config.Save(c.GlobalPath, cfg)
+	default:
+		return fmt.Errorf("unknown config subcommand %q", args[0])
+	}
+}
+func loadGlobal(p string) (config.Config, error) {
+	c := config.Defaults()
+	b, e := os.ReadFile(p)
+	if errors.Is(e, os.ErrNotExist) {
+		return c, nil
+	}
+	if e != nil {
+		return c, e
+	}
+	if e = toml.Unmarshal(b, &c); e != nil {
+		return c, e
+	}
+	return c, nil
+}
+func pcValidate(n string, p config.ProviderConfig) error {
+	switch p.Type {
+	case "http":
+		if p.URL == "" {
+			return errors.New("--url is required for HTTP")
+		}
+	case "s3":
+		if p.Bucket == "" || p.PublicURL == "" {
+			return errors.New("--bucket and --public-url are required for S3")
+		}
+	}
+	_ = n
+	return nil
+}
+func reorder(a []string, withValue map[string]bool) ([]string, error) {
+	var flags, pos []string
+	for i := 0; i < len(a); i++ {
+		x := a[i]
+		key := strings.SplitN(x, "=", 2)[0]
+		if strings.HasPrefix(x, "--") {
+			flags = append(flags, x)
+			if withValue[key] && !strings.Contains(x, "=") {
+				if i+1 >= len(a) {
+					return nil, fmt.Errorf("flag %s requires a value", x)
+				}
+				i++
+				flags = append(flags, a[i])
+			}
+		} else {
+			pos = append(pos, x)
+		}
+	}
+	return append(flags, pos...), nil
+}
+func get(w io.Writer, c config.Config, k string) error {
+	switch k {
+	case "output.format":
+		fmt.Fprintln(w, c.Output.Format)
+	case "output.copy":
+		fmt.Fprintln(w, c.Output.Copy)
+	case "default_provider":
+		fmt.Fprintln(w, c.DefaultProvider)
+	case "upload.concurrency":
+		fmt.Fprintln(w, c.Upload.Concurrency)
+	default:
+		return fmt.Errorf("unsupported config key %q", k)
+	}
+	return nil
+}
+func set(c *config.Config, k, v string) error {
+	switch k {
+	case "output.format":
+		if v != "" && !validFormat(v) {
+			return fmt.Errorf("invalid format %q", v)
+		}
+		c.Output.Format = v
+	case "output.copy":
+		b, e := strconv.ParseBool(v)
+		if v == "" {
+			b = false
+			e = nil
+		}
+		if e != nil {
+			return e
+		}
+		c.Output.Copy = b
+	case "default_provider":
+		c.DefaultProvider = v
+	case "upload.concurrency":
+		n, e := strconv.Atoi(v)
+		if e != nil || n < 1 {
+			return errors.New("concurrency must be a positive integer")
+		}
+		c.Upload.Concurrency = n
+	default:
+		return fmt.Errorf("unsupported config key %q", k)
+	}
+	return nil
+}
+func validFormat(s string) bool       { return s == "url" || s == "markdown" || s == "json" || s == "html" }
+func mustwd() string                  { d, _ := os.Getwd(); return d }
+func readline(r *bufio.Reader) string { s, _ := r.ReadString('\n'); return s }
+func (c *CLI) usage() {
+	fmt.Fprintln(c.Out, "Usage: img upload <file...> [options]\n       img <file...> [options]\n       img init | provider | config | version")
+}
+
+var _ = json.Marshal

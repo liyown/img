@@ -1,0 +1,42 @@
+version = 1
+default_provider = "r2"
+
+[output]
+format = "markdown"
+copy = false
+
+[upload]
+path_template = "{year}/{month}/{filename}"
+rename = "original"
+conflict = "error"
+overwrite = false
+concurrency = 4
+max_size = 20971520
+
+[providers.r2]
+type = "s3"
+endpoint = "https://ACCOUNT_ID.r2.cloudflarestorage.com"
+region = "auto"
+bucket = "images"
+access_key = "${IMG_R2_ACCESS_KEY}"
+secret_key = "${IMG_R2_SECRET_KEY}"
+public_url = "https://img.example.com"
+path_style = true
+
+[providers.github]
+type = "github"
+owner = "example"
+repo = "images"
+branch = "main"
+token = "${IMG_GITHUB_TOKEN}"
+public_url = "https://cdn.jsdelivr.net/gh/example/images@main"
+
+[providers.custom]
+type = "http"
+url = "https://example.com/api/upload"
+method = "POST"
+file_field = "file"
+url_json_path = "data.url"
+
+[providers.custom.headers]
+Authorization = "Bearer ${IMG_HTTP_TOKEN}"

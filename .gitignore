@@ -1,0 +1,8 @@
+/bin/
+/dist/
+/img
+/.img.toml
+*.log
+.DS_Store
+/TEST_REPORT.md
+/testdata/
