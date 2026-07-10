@@ -35,7 +35,10 @@ func InspectFile(f *os.File, displayPath string, maxSize int64) (string, int64, 
 		return "", 0, fmt.Errorf("image %s exceeds maximum size of %d bytes", displayPath, maxSize)
 	}
 
-	b := make([]byte, 512)
+	// 512 bytes suffices for net/http.DetectContentType and most binary formats.
+	// SVG files can have a long <?xml ... ?> declaration before the <svg tag, so
+	// we read up to 4 KiB to give isSVG enough context.
+	b := make([]byte, 4096)
 	n, err := io.ReadFull(f, b)
 	if err != nil && err != io.ErrUnexpectedEOF {
 		return "", 0, fmt.Errorf("read image header %s: %w", displayPath, err)

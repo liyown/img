@@ -103,6 +103,12 @@ func (p *Provider) Upload(ctx context.Context, r model.UploadRequest) (*model.Up
 	}
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	for k, v := range p.cfg.Headers {
+		// Protect the multipart Content-Type (which carries the boundary) from
+		// being overwritten by a user-configured header. Overwriting it would
+		// produce an unparseable request body on the server side.
+		if strings.EqualFold(k, "Content-Type") {
+			continue
+		}
 		req.Header.Set(k, v)
 	}
 	go func() {

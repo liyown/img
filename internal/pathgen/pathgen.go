@@ -109,7 +109,7 @@ func readerHash(f io.ReadSeeker) (string, error) {
 	if _, e := f.Seek(0, io.SeekStart); e != nil {
 		return "", fmt.Errorf("rewind file after hashing: %w", e)
 	}
-	return hex.EncodeToString(h.Sum(nil))[:16], nil
+	return hex.EncodeToString(h.Sum(nil))[:32], nil
 }
 func uuid() (string, error) {
 	b := make([]byte, 16)

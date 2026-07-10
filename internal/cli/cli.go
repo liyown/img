@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -182,9 +183,10 @@ func (c *CLI) init(args []string) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	fs.SetOutput(c.Err)
 	var name, typ, url, jsonpath, endpoint, region, bucket, access, secret, public string
+	var owner, repo, branch, token, commitMsg string
 	var pathStyle, allowInsecure bool
 	fs.StringVar(&name, "name", "", "provider name")
-	fs.StringVar(&typ, "type", "", "http or s3")
+	fs.StringVar(&typ, "type", "", "http, s3, or github")
 	fs.StringVar(&url, "url", "", "HTTP upload URL")
 	fs.StringVar(&jsonpath, "url-json-path", "data.url", "JSON URL path")
 	fs.StringVar(&endpoint, "endpoint", "", "S3 endpoint")
@@ -195,30 +197,45 @@ func (c *CLI) init(args []string) error {
 	fs.StringVar(&public, "public-url", "", "public base URL")
 	fs.BoolVar(&pathStyle, "path-style", false, "use S3 path style")
 	fs.BoolVar(&allowInsecure, "allow-insecure", false, "allow trusted HTTP endpoints without TLS")
+	fs.StringVar(&owner, "owner", "", "GitHub owner (user or org)")
+	fs.StringVar(&repo, "repo", "", "GitHub repository name")
+	fs.StringVar(&branch, "branch", "main", "GitHub branch")
+	fs.StringVar(&token, "token", "", "environment reference, e.g. ${IMG_GITHUB_TOKEN}")
+	fs.StringVar(&commitMsg, "commit-message", "upload: {path}", "GitHub commit message template")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if typ == "" {
 		r := bufio.NewReader(c.In)
-		fmt.Fprint(c.Out, "Provider type (http/s3): ")
+		fmt.Fprint(c.Out, "Provider type (http/s3/github): ")
 		typ = strings.TrimSpace(readline(r))
 		fmt.Fprint(c.Out, "Provider name: ")
 		name = strings.TrimSpace(readline(r))
-		if typ == "http" {
+		switch typ {
+		case "http":
 			fmt.Fprint(c.Out, "Upload URL: ")
 			url = strings.TrimSpace(readline(r))
-		} else {
+		case "s3":
 			fmt.Fprint(c.Out, "Bucket: ")
 			bucket = strings.TrimSpace(readline(r))
 			fmt.Fprint(c.Out, "Public URL: ")
 			public = strings.TrimSpace(readline(r))
+		case "github":
+			fmt.Fprint(c.Out, "Owner: ")
+			owner = strings.TrimSpace(readline(r))
+			fmt.Fprint(c.Out, "Repository: ")
+			repo = strings.TrimSpace(readline(r))
+			fmt.Fprint(c.Out, "Token (env ref, e.g. ${IMG_GITHUB_TOKEN}): ")
+			token = strings.TrimSpace(readline(r))
 		}
 	}
 	if name == "" {
 		name = typ
 	}
-	if typ != "http" && typ != "s3" {
-		return fmt.Errorf("unsupported provider type %q", typ)
+	switch typ {
+	case "http", "s3", "github":
+	default:
+		return fmt.Errorf("unsupported provider type %q (supported: http, s3, github)", typ)
 	}
 	cfg := config.Defaults()
 	if b, e := os.ReadFile(c.GlobalPath); e == nil {
@@ -226,7 +243,17 @@ func (c *CLI) init(args []string) error {
 			return fmt.Errorf("parse existing config: %w", e)
 		}
 	}
-	pc := config.ProviderConfig{Type: typ, URL: url, Method: "POST", FileField: "file", URLJSONPath: jsonpath, Endpoint: endpoint, Region: region, Bucket: bucket, AccessKey: access, SecretKey: secret, PublicURL: public, PathStyle: pathStyle, AllowInsecure:allowInsecure}
+	pc := config.ProviderConfig{
+		Type: typ,
+		// http
+		URL: url, Method: "POST", FileField: "file", URLJSONPath: jsonpath,
+		AllowInsecure: allowInsecure,
+		// s3
+		Endpoint: endpoint, Region: region, Bucket: bucket,
+		AccessKey: access, SecretKey: secret, PublicURL: public, PathStyle: pathStyle,
+		// github
+		Owner: owner, Repo: repo, Branch: branch, Token: token, CommitMessage: commitMsg,
+	}
 	cfg.Providers[name] = pc
 	cfg.DefaultProvider = name
 	if err := pcValidate(name, pc); err != nil {
@@ -252,7 +279,13 @@ func (c *CLI) provider(ctx context.Context, args []string) error {
 	switch args[0] {
 	case "list":
 		fmt.Fprintln(c.Out, "NAME\tTYPE\tDEFAULT\tSTATUS")
-		for n, p := range cfg.Providers {
+		names := make([]string, 0, len(cfg.Providers))
+		for n := range cfg.Providers {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		for _, n := range names {
+			p := cfg.Providers[n]
 			d := "no"
 			if n == cfg.DefaultProvider {
 				d = "yes"
@@ -405,6 +438,10 @@ func pcValidate(n string, p config.ProviderConfig) error {
 	case "s3":
 		if p.Bucket == "" || p.PublicURL == "" {
 			return errors.New("--bucket and --public-url are required for S3")
+		}
+	case "github":
+		if p.Owner == "" || p.Repo == "" || p.Token == "" {
+			return errors.New("--owner, --repo, and --token are required for GitHub")
 		}
 	}
 	_ = n
