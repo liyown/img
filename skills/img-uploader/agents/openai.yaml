@@ -1,0 +1,4 @@
+interface:
+  display_name: "Image Uploader"
+  short_description: "Upload images and return ready-to-use links"
+  default_prompt: "Use $img-uploader to upload my image and return a Markdown link."

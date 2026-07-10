@@ -11,7 +11,7 @@ func TestLoadPrecedenceAndExpansion(t *testing.T) {
 	d := t.TempDir()
 	g := filepath.Join(d, "global.toml")
 	p := filepath.Join(d, "project.toml")
-	os.WriteFile(g, []byte("version=1\ndefault_provider='x'\n[output]\nformat='url'\n[providers.x]\ntype='http'\nurl='https://example.test'\nurl_json_path='url'\n[providers.x.headers]\nAuthorization='${IMG_TEST_TOKEN}'\n"), 0600)
+	os.WriteFile(g, []byte("version=1\ndefault_provider='x'\n[output]\nformat='url'\n[providers.x]\ntype='http'\nurl='https://example.test'\nurl_json_path='url'\n[providers.x.headers]\nAuthorization='Bearer ${IMG_TEST_TOKEN}'\n"), 0600)
 	os.WriteFile(p, []byte("provider='x'\n[output]\nformat='markdown'\n"), 0600)
 	t.Setenv("IMG_TEST_TOKEN", "top-secret")
 	t.Setenv("IMG_OUTPUT_FORMAT", "json")
@@ -22,7 +22,7 @@ func TestLoadPrecedenceAndExpansion(t *testing.T) {
 	if c.Output.Format != "json" || c.Provider != "x" {
 		t.Fatalf("precedence failed: %+v", c)
 	}
-	if c.Providers["x"].Headers["Authorization"] != "top-secret" {
+	if c.Providers["x"].Headers["Authorization"] != "Bearer top-secret" {
 		t.Fatal("placeholder not expanded")
 	}
 }
