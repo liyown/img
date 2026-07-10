@@ -4,7 +4,9 @@ COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || printf unknown)
 DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
 
-.PHONY: build test lint fmt install cross
+GOVULNCHECK_VERSION ?= v1.6.0
+
+.PHONY: build test lint fmt vuln install cross
 build:
 	mkdir -p bin
 	go build -trimpath -ldflags "$(LDFLAGS)" -o bin/$(BINARY) ./cmd/img
@@ -14,6 +16,8 @@ lint:
 	go vet ./...
 fmt:
 	gofmt -w cmd internal
+vuln:
+	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 install:
 	go install -trimpath -ldflags "$(LDFLAGS)" ./cmd/img
 cross:
