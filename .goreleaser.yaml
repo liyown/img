@@ -11,7 +11,8 @@ builds:
       - goos: windows
         goarch: arm64
 archives:
-  - formats: [tar.gz]
+  - name_template: "img_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
     format_overrides:
       - goos: windows
         formats: [zip]
