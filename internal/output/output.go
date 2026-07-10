@@ -3,6 +3,7 @@ package output
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"strings"
 
@@ -12,9 +13,10 @@ import (
 func FormatURL(url, format string) string {
 	switch format {
 	case "markdown":
-		return "![](" + url + ")"
+		safe := strings.NewReplacer("\\", "\\\\", ")", "\\)", "\r", "", "\n", "").Replace(url)
+		return "![](" + safe + ")"
 	case "html":
-		return `<img src="` + url + `" alt="">`
+		return `<img src="` + html.EscapeString(url) + `" alt="">`
 	default:
 		return url
 	}
@@ -32,10 +34,21 @@ func Render(w io.Writer, format string, results []upload.FileResult) error {
 		if r.Success {
 			fmt.Fprintln(w, FormatURL(r.URL, format))
 		} else {
-			fmt.Fprintf(w, "Error: %s: %s\n", r.LocalPath, r.Error)
+			fmt.Fprintf(w, "Error: %s: %s\n", cleanTerminal(r.LocalPath), cleanTerminal(r.Error))
 		}
 	}
 	return nil
+}
+func cleanTerminal(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 32 && r != '\t' {
+			return -1
+		}
+		if r == 127 {
+			return -1
+		}
+		return r
+	}, s)
 }
 func ClipboardText(format string, results []upload.FileResult) string {
 	var x []string

@@ -22,13 +22,13 @@ $ img screenshot.png --format markdown
 macOS / Linux：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/liyown/img/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/liyown/img/v0.1.1/install.sh | sh
 ```
 
 Windows PowerShell：
 
 ```powershell
-irm https://raw.githubusercontent.com/liyown/img/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/liyown/img/v0.1.1/install.ps1 | iex
 ```
 
 安装器会自动完成下载、校验和命令配置。
@@ -110,6 +110,8 @@ img init \
   --url https://example.com/api/upload \
   --url-json-path data.url
 ```
+
+HTTP Provider 默认要求 HTTPS。本机或可信内网测试必须显式添加 `--allow-insecure`。
 
 需要固定 Header 或表单字段时，在配置文件中添加：
 
@@ -281,6 +283,8 @@ img config validate
 
 配置优先级从低到高：全局配置、当前目录 `.img.toml`、环境变量、命令行参数。
 
+项目级 `.img.toml` 只允许选择已在全局配置中定义的 Provider，以及设置输出格式、远端路径和路径模板。Provider、Header 和凭据只能放在全局配置中。
+
 ## JSON 输出
 
 Agent 和脚本建议使用：
@@ -311,6 +315,7 @@ img upload a.png b.png --format json --no-copy
 ## 安全建议
 
 - 使用 `${ENV_NAME}` 引用凭据，不要把 Token 或 Secret 写入仓库
+- 默认拒绝明文凭据；仅兼容旧配置时才显式设置 `allow_plaintext_credentials = true`
 - 不要把真实密钥发送给 Agent、Issue 或聊天窗口
 - 将项目级 `.img.toml` 加入自己的 `.gitignore`
 - `config list` 和 `provider show` 会隐藏敏感字段

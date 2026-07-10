@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -44,6 +43,27 @@ func (p *Provider) Validate(context.Context) error {
 	}
 	return nil
 }
+func (p *Provider) Test(ctx context.Context) error {
+	if err := p.Validate(ctx); err != nil {
+		return err
+	}
+	endpoint := fmt.Sprintf("%s/repos/%s/%s", strings.TrimRight(p.api, "/"), url.PathEscape(p.cfg.Owner), url.PathEscape(p.cfg.Repo))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("build GitHub provider test: %w", err)
+	}
+	p.auth(req)
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("test GitHub provider %q: %w", p.name, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("test GitHub provider %q failed with status %d: %s", p.name, resp.StatusCode, p.sanitize(string(b)))
+	}
+	return nil
+}
 func (p *Provider) Upload(ctx context.Context, r model.UploadRequest) (*model.UploadResult, error) {
 	if err := p.Validate(ctx); err != nil {
 		return nil, err
@@ -60,9 +80,18 @@ func (p *Provider) Upload(ctx context.Context, r model.UploadRequest) (*model.Up
 	if exists && !r.Overwrite {
 		return nil, fmt.Errorf("GitHub file %q already exists; use --overwrite", r.RemotePath)
 	}
-	b, err := os.ReadFile(r.LocalPath)
+	if r.Body == nil {
+		return nil, fmt.Errorf("upload body is required")
+	}
+	if _, err := r.Body.Seek(0, io.SeekStart); err != nil {
+		return nil, fmt.Errorf("rewind upload body: %w", err)
+	}
+	b, err := io.ReadAll(io.LimitReader(r.Body, r.Size+1))
 	if err != nil {
-		return nil, fmt.Errorf("read upload file: %w", err)
+		return nil, fmt.Errorf("read upload body: %w", err)
+	}
+	if int64(len(b)) != r.Size {
+		return nil, fmt.Errorf("upload body size changed during upload")
 	}
 	msg := p.cfg.CommitMessage
 	if msg == "" {
@@ -128,7 +157,12 @@ func (p *Provider) sanitize(s string) string {
 	if p.cfg.Token != "" {
 		s = strings.ReplaceAll(s, p.cfg.Token, "********")
 	}
-	return s
+	return strings.Map(func(r rune) rune {
+		if r < 32 || r == 127 {
+			return -1
+		}
+		return r
+	}, s)
 }
 func (p *Provider) auth(r *http.Request) {
 	r.Header.Set("Authorization", "Bearer "+p.cfg.Token)

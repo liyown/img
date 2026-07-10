@@ -18,6 +18,16 @@ func ghfile(t *testing.T) string {
 	os.WriteFile(f, []byte("png"), 0600)
 	return f
 }
+func ghrequest(t *testing.T, remote string) model.UploadRequest {
+	p := ghfile(t)
+	f, err := os.Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { f.Close() })
+	st, _ := f.Stat()
+	return model.UploadRequest{LocalPath: p, FileName: "a.png", Body: f, Size: st.Size(), RemotePath: remote, ContentType: "image/png"}
+}
 func TestCreateAndOverwrite(t *testing.T) {
 	var exists bool
 	var gotSHA bool
@@ -42,12 +52,14 @@ func TestCreateAndOverwrite(t *testing.T) {
 	}))
 	defer s.Close()
 	p := NewWithAPI("gh", config.ProviderConfig{Owner: "o", Repo: "r", Token: "secret", Branch: "main"}, s.Client(), s.URL)
-	_, e := p.Upload(context.Background(), model.UploadRequest{LocalPath: ghfile(t), RemotePath: "a b.png", ContentType: "image/png"})
+	_, e := p.Upload(context.Background(), ghrequest(t, "a b.png"))
 	if e != nil {
 		t.Fatal(e)
 	}
 	exists = true
-	_, e = p.Upload(context.Background(), model.UploadRequest{LocalPath: ghfile(t), RemotePath: "a.png", Overwrite: true})
+	req := ghrequest(t, "a.png")
+	req.Overwrite = true
+	_, e = p.Upload(context.Background(), req)
 	if e != nil || !gotSHA {
 		t.Fatalf("overwrite failed: %v sha=%v", e, gotSHA)
 	}
@@ -65,12 +77,12 @@ func TestExistsRateLimitAndTokenSafety(t *testing.T) {
 	}))
 	defer s.Close()
 	p := NewWithAPI("gh", config.ProviderConfig{Owner: "o", Repo: "r", Token: "secret"}, s.Client(), s.URL)
-	_, e := p.Upload(context.Background(), model.UploadRequest{LocalPath: ghfile(t), RemotePath: "a.png"})
+	_, e := p.Upload(context.Background(), ghrequest(t, "a.png"))
 	if e == nil {
 		t.Fatal("expected exists")
 	}
 	mode = 1
-	_, e = p.Upload(context.Background(), model.UploadRequest{LocalPath: ghfile(t), RemotePath: "a.png"})
+	_, e = p.Upload(context.Background(), ghrequest(t, "a.png"))
 	if e == nil || strings.Contains(e.Error(), "secret") {
 		t.Fatalf("unsafe rate error: %v", e)
 	}

@@ -3,6 +3,8 @@ package upload
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -59,7 +61,13 @@ func Run(ctx context.Context, p model.Provider, c config.Upload, files []string,
 }
 func one(ctx context.Context, p model.Provider, c config.Upload, file string, o Options) FileResult {
 	r := FileResult{LocalPath: file}
-	typ, size, err := filetype.Inspect(file, c.MaxSize)
+	f, err := os.Open(file)
+	if err != nil {
+		r.Error = fmt.Sprintf("open image %s: %v", file, err)
+		return r
+	}
+	defer f.Close()
+	typ, size, err := filetype.InspectFile(f, file, c.MaxSize)
 	if err != nil {
 		r.Error = err.Error()
 		return r
@@ -76,12 +84,14 @@ func one(ctx context.Context, p model.Provider, c config.Upload, file string, o 
 		}
 		template = o.Name
 	}
-	remote, err := pathgen.Generate(file, template, choose(o.Path, c.Path), c.Rename, now)
+	remote, err := pathgen.GenerateFromReader(file, f, template, choose(o.Path, c.Path), c.Rename, now)
 	if err != nil {
 		r.Error = err.Error()
 		return r
 	}
-	u, err := p.Upload(ctx, model.UploadRequest{LocalPath: file, RemotePath: remote, ContentType: typ, Overwrite: o.Overwrite || c.Overwrite})
+	overwrite := o.Overwrite || c.Overwrite || c.Conflict == "overwrite"
+	body := io.NewSectionReader(f, 0, size)
+	u, err := p.Upload(ctx, model.UploadRequest{LocalPath: file, FileName: filepath.Base(file), Body: body, Size: size, RemotePath: remote, ContentType: typ, Overwrite: overwrite})
 	if err != nil {
 		r.Error = fmt.Sprintf("upload with provider %s: %v", p.Name(), err)
 		return r

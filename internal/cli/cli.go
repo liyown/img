@@ -15,6 +15,7 @@ import (
 
 	"github.com/liyown/img/internal/clipboard"
 	"github.com/liyown/img/internal/config"
+	"github.com/liyown/img/internal/model"
 	"github.com/liyown/img/internal/output"
 	"github.com/liyown/img/internal/provider"
 	"github.com/liyown/img/internal/upload"
@@ -181,7 +182,7 @@ func (c *CLI) init(args []string) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	fs.SetOutput(c.Err)
 	var name, typ, url, jsonpath, endpoint, region, bucket, access, secret, public string
-	var pathStyle bool
+	var pathStyle, allowInsecure bool
 	fs.StringVar(&name, "name", "", "provider name")
 	fs.StringVar(&typ, "type", "", "http or s3")
 	fs.StringVar(&url, "url", "", "HTTP upload URL")
@@ -193,6 +194,7 @@ func (c *CLI) init(args []string) error {
 	fs.StringVar(&secret, "secret-key", "", "environment reference, e.g. ${IMG_SECRET_KEY}")
 	fs.StringVar(&public, "public-url", "", "public base URL")
 	fs.BoolVar(&pathStyle, "path-style", false, "use S3 path style")
+	fs.BoolVar(&allowInsecure, "allow-insecure", false, "allow trusted HTTP endpoints without TLS")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -224,10 +226,13 @@ func (c *CLI) init(args []string) error {
 			return fmt.Errorf("parse existing config: %w", e)
 		}
 	}
-	pc := config.ProviderConfig{Type: typ, URL: url, Method: "POST", FileField: "file", URLJSONPath: jsonpath, Endpoint: endpoint, Region: region, Bucket: bucket, AccessKey: access, SecretKey: secret, PublicURL: public, PathStyle: pathStyle}
+	pc := config.ProviderConfig{Type: typ, URL: url, Method: "POST", FileField: "file", URLJSONPath: jsonpath, Endpoint: endpoint, Region: region, Bucket: bucket, AccessKey: access, SecretKey: secret, PublicURL: public, PathStyle: pathStyle, AllowInsecure:allowInsecure}
 	cfg.Providers[name] = pc
 	cfg.DefaultProvider = name
 	if err := pcValidate(name, pc); err != nil {
+		return err
+	}
+	if err := cfg.Validate(); err != nil {
 		return err
 	}
 	if err := config.Save(c.GlobalPath, cfg); err != nil {
@@ -252,7 +257,7 @@ func (c *CLI) provider(ctx context.Context, args []string) error {
 			if n == cfg.DefaultProvider {
 				d = "yes"
 			}
-			fmt.Fprintf(c.Out, "%s\t%s\t%s\tavailable\n", n, p.Type, d)
+			fmt.Fprintf(c.Out, "%s\t%s\t%s\tconfigured\n", n, p.Type, d)
 		}
 	case "show":
 		if len(args) != 2 {
@@ -305,7 +310,11 @@ func (c *CLI) provider(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		if err = p.Validate(ctx); err != nil {
+		if tester, ok := p.(model.Tester); ok {
+			if err = tester.Test(ctx); err != nil {
+				return err
+			}
+		} else if err = p.Validate(ctx); err != nil {
 			return err
 		}
 		fmt.Fprintln(c.Out, "available")

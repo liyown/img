@@ -25,3 +25,12 @@ func TestJSONOutputStable(t *testing.T) {
 		t.Fatalf("unexpected JSON: %s", b.String())
 	}
 }
+
+func TestFormatEscapesHTMLAndMarkdown(t *testing.T) {
+	if got := FormatURL(`https://x.test/a" onerror="alert(1)`, `html`); got == `<img src="https://x.test/a" onerror="alert(1)" alt="">` {
+		t.Fatal("HTML URL was not escaped")
+	}
+	if got := FormatURL("https://x.test/a)\nINJECT", "markdown"); got != "![](https://x.test/a\\)INJECT)" {
+		t.Fatalf("markdown=%q", got)
+	}
+}

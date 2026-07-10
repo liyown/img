@@ -14,10 +14,19 @@ import (
 )
 
 func Generate(local, template, prefix, rename string, now time.Time) (string, error) {
+	f, err := os.Open(local)
+	if err != nil {
+		return "", fmt.Errorf("open %s for path generation: %w", local, err)
+	}
+	defer f.Close()
+	return GenerateFromReader(local, f, template, prefix, rename, now)
+}
+
+func GenerateFromReader(local string, reader io.ReadSeeker, template, prefix, rename string, now time.Time) (string, error) {
 	base := filepath.Base(local)
 	ext := strings.ToLower(filepath.Ext(base))
 	stem := strings.TrimSuffix(base, filepath.Ext(base))
-	hash, err := fileHash(local)
+	hash, err := readerHash(reader)
 	if err != nil {
 		return "", err
 	}
@@ -89,15 +98,16 @@ func pathEscape(s string) string { // url.PathEscape keeps slashes escaped per s
 	}
 	return b.String()
 }
-func fileHash(p string) (string, error) {
-	f, e := os.Open(p)
-	if e != nil {
-		return "", fmt.Errorf("hash %s: %w", p, e)
+func readerHash(f io.ReadSeeker) (string, error) {
+	if _, e := f.Seek(0, io.SeekStart); e != nil {
+		return "", fmt.Errorf("rewind file for hashing: %w", e)
 	}
-	defer f.Close()
 	h := sha256.New()
-	if _, e = io.Copy(h, f); e != nil {
-		return "", fmt.Errorf("hash %s: %w", p, e)
+	if _, e := io.Copy(h, f); e != nil {
+		return "", fmt.Errorf("hash file: %w", e)
+	}
+	if _, e := f.Seek(0, io.SeekStart); e != nil {
+		return "", fmt.Errorf("rewind file after hashing: %w", e)
 	}
 	return hex.EncodeToString(h.Sum(nil))[:16], nil
 }

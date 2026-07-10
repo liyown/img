@@ -1,8 +1,10 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -14,12 +16,13 @@ import (
 )
 
 type Config struct {
-	Version         int                       `toml:"version" json:"version"`
-	DefaultProvider string                    `toml:"default_provider" json:"default_provider"`
-	Provider        string                    `toml:"provider,omitempty" json:"provider,omitempty"`
-	Output          Output                    `toml:"output" json:"output"`
-	Upload          Upload                    `toml:"upload" json:"upload"`
-	Providers       map[string]ProviderConfig `toml:"providers" json:"providers"`
+	Version                   int                       `toml:"version" json:"version"`
+	DefaultProvider           string                    `toml:"default_provider" json:"default_provider"`
+	Provider                  string                    `toml:"provider,omitempty" json:"provider,omitempty"`
+	Output                    Output                    `toml:"output" json:"output"`
+	Upload                    Upload                    `toml:"upload" json:"upload"`
+	Providers                 map[string]ProviderConfig `toml:"providers" json:"providers"`
+	AllowPlaintextCredentials bool                      `toml:"allow_plaintext_credentials,omitempty" json:"allow_plaintext_credentials,omitempty"`
 }
 
 type Output struct {
@@ -59,6 +62,21 @@ type ProviderConfig struct {
 	URLJSONPath   string            `toml:"url_json_path,omitempty" json:"url_json_path,omitempty"`
 	Headers       map[string]string `toml:"headers,omitempty" json:"headers,omitempty"`
 	Fields        map[string]string `toml:"fields,omitempty" json:"fields,omitempty"`
+	AllowInsecure bool              `toml:"allow_insecure,omitempty" json:"allow_insecure,omitempty"`
+}
+
+type projectConfig struct {
+	Version  *int           `toml:"version"`
+	Provider *string        `toml:"provider"`
+	Output   *projectOutput `toml:"output"`
+	Upload   *projectUpload `toml:"upload"`
+}
+type projectOutput struct {
+	Format *string `toml:"format"`
+}
+type projectUpload struct {
+	Path         *string `toml:"path"`
+	PathTemplate *string `toml:"path_template"`
 }
 
 func Defaults() Config {
@@ -75,31 +93,58 @@ func GlobalPath() (string, error) {
 
 func Load(globalPath, projectPath string) (Config, error) {
 	c := Defaults()
-	for _, p := range []string{globalPath, projectPath} {
-		if p == "" {
-			continue
-		}
-		b, err := os.ReadFile(p)
+	if globalPath != "" {
+		b, err := os.ReadFile(globalPath)
 		if errors.Is(err, os.ErrNotExist) {
-			continue
+			// A missing global config is valid.
+		} else if err != nil {
+			return c, fmt.Errorf("read config %s: %w", globalPath, err)
+		} else if err := toml.Unmarshal(b, &c); err != nil {
+			return c, fmt.Errorf("parse config %s: %w", globalPath, err)
 		}
-		if err != nil {
-			return c, fmt.Errorf("read config %s: %w", p, err)
-		}
-		if err := toml.Unmarshal(b, &c); err != nil {
-			return c, fmt.Errorf("parse config %s: %w", p, err)
+	}
+	if projectPath != "" {
+		b, err := os.ReadFile(projectPath)
+		if errors.Is(err, os.ErrNotExist) {
+			// A missing project config is valid.
+		} else if err != nil {
+			return c, fmt.Errorf("read config %s: %w", projectPath, err)
+		} else if err := applyProjectConfig(&c, b); err != nil {
+			return c, fmt.Errorf("parse project config %s: %w", projectPath, err)
 		}
 	}
 	applyEnv(&c)
-	// Keep unresolved references intact. Only the selected provider resolves its
-	// credentials strictly, so unrelated providers can use independent secrets.
-	if err := expandCredentials(reflect.ValueOf(&c).Elem(), credential.OptionalEnvironment{}); err != nil {
-		return c, err
-	}
 	if err := c.Validate(); err != nil {
 		return c, err
 	}
 	return c, nil
+}
+
+func applyProjectConfig(c *Config, b []byte) error {
+	var p projectConfig
+	if err := toml.NewDecoder(bytes.NewReader(b)).DisallowUnknownFields().Decode(&p); err != nil {
+		return err
+	}
+	if p.Version != nil && *p.Version != 1 {
+		return fmt.Errorf("unsupported config version %d (expected 1)", *p.Version)
+	}
+	if p.Provider != nil {
+		c.Provider = *p.Provider
+	}
+	if p.Output != nil {
+		if p.Output.Format != nil {
+			c.Output.Format = *p.Output.Format
+		}
+	}
+	if p.Upload != nil {
+		if p.Upload.Path != nil {
+			c.Upload.Path = *p.Upload.Path
+		}
+		if p.Upload.PathTemplate != nil {
+			c.Upload.PathTemplate = *p.Upload.PathTemplate
+		}
+	}
+	return nil
 }
 
 func ResolveProvider(p ProviderConfig) (ProviderConfig, error) {
@@ -119,12 +164,96 @@ func (c Config) Validate() error {
 	if c.Upload.MaxSize <= 0 {
 		return errors.New("upload.max_size must be positive")
 	}
+	if c.Output.Format != "url" && c.Output.Format != "markdown" && c.Output.Format != "html" && c.Output.Format != "json" {
+		return fmt.Errorf("unknown output format %q", c.Output.Format)
+	}
+	switch c.Upload.Rename {
+	case "original", "timestamp", "hash", "uuid":
+	default:
+		return fmt.Errorf("unknown upload.rename %q", c.Upload.Rename)
+	}
+	switch c.Upload.Conflict {
+	case "error", "overwrite":
+	default:
+		return fmt.Errorf("unknown or unsupported upload.conflict %q", c.Upload.Conflict)
+	}
 	for n, p := range c.Providers {
 		switch p.Type {
-		case "http", "s3", "github":
+		case "http":
+			if p.URL == "" || p.URLJSONPath == "" {
+				return fmt.Errorf("http provider %q requires url and url_json_path", n)
+			}
+			if err := validateNetworkURL(p.URL, p.AllowInsecure); err != nil {
+				return fmt.Errorf("http provider %q: %w", n, err)
+			}
+		case "s3":
+			if p.Bucket == "" || p.PublicURL == "" {
+				return fmt.Errorf("s3 provider %q requires bucket and public_url", n)
+			}
+			if (p.AccessKey == "") != (p.SecretKey == "") {
+				return fmt.Errorf("s3 provider %q requires both access_key and secret_key", n)
+			}
+			if p.Endpoint != "" {
+				if err := validateNetworkURL(p.Endpoint, p.AllowInsecure); err != nil {
+					return fmt.Errorf("s3 provider %q endpoint: %w", n, err)
+				}
+			}
+			if err := validateNetworkURL(p.PublicURL, p.AllowInsecure); err != nil {
+				return fmt.Errorf("s3 provider %q public_url: %w", n, err)
+			}
+		case "github":
+			if p.Owner == "" || p.Repo == "" || p.Token == "" {
+				return fmt.Errorf("github provider %q requires owner, repo, and token", n)
+			}
+			if p.PublicURL != "" {
+				if err := validateNetworkURL(p.PublicURL, p.AllowInsecure); err != nil {
+					return fmt.Errorf("github provider %q public_url: %w", n, err)
+				}
+			}
 		default:
 			return fmt.Errorf("provider %q has unknown type %q", n, p.Type)
 		}
+		if !c.AllowPlaintextCredentials {
+			for key, value := range map[string]string{"access_key": p.AccessKey, "secret_key": p.SecretKey, "session_token": p.SessionToken, "token": p.Token} {
+				if value != "" && !credential.IsReference(value) {
+					return fmt.Errorf("provider %q contains plaintext %s; use an environment reference or explicitly set allow_plaintext_credentials = true", n, key)
+				}
+			}
+			for key, value := range p.Headers {
+				if isSensitive(key) && value != "" && !credential.IsReference(value) {
+					return fmt.Errorf("provider %q contains plaintext sensitive header %q", n, key)
+				}
+			}
+			for key, value := range p.Fields {
+				if isSensitive(key) && value != "" && !credential.IsReference(value) {
+					return fmt.Errorf("provider %q contains plaintext sensitive field %q", n, key)
+				}
+			}
+		}
+	}
+	if c.DefaultProvider != "" {
+		if _, ok := c.Providers[c.DefaultProvider]; !ok {
+			return fmt.Errorf("default provider %q is not configured", c.DefaultProvider)
+		}
+	}
+	if c.Provider != "" {
+		if _, ok := c.Providers[c.Provider]; !ok {
+			return fmt.Errorf("project provider %q is not configured globally", c.Provider)
+		}
+	}
+	return nil
+}
+
+func validateNetworkURL(raw string, allowInsecure bool) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return fmt.Errorf("invalid absolute URL")
+	}
+	if u.User != nil || u.Fragment != "" {
+		return fmt.Errorf("URL must not contain user information or a fragment")
+	}
+	if u.Scheme != "https" && !(allowInsecure && u.Scheme == "http") {
+		return fmt.Errorf("URL must use HTTPS (set allow_insecure = true only for trusted local endpoints)")
 	}
 	return nil
 }
@@ -137,8 +266,29 @@ func Save(path string, c Config) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return fmt.Errorf("create config directory: %w", err)
 	}
-	if err := os.WriteFile(path, b, 0600); err != nil {
+	f, err := os.CreateTemp(filepath.Dir(path), ".config-*.tmp")
+	if err != nil {
+		return fmt.Errorf("open config for writing: %w", err)
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if err := f.Chmod(0600); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("secure config permissions: %w", err)
+	}
+	if _, err := f.Write(b); err != nil {
+		_ = f.Close()
 		return fmt.Errorf("write config: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("sync config: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return fmt.Errorf("replace config atomically: %w", err)
 	}
 	return nil
 }
@@ -193,8 +343,8 @@ func applyEnv(c *Config) {
 }
 
 func isSensitive(s string) bool {
-	s = strings.ToLower(s)
-	for _, k := range []string{"token", "secret", "secret_key", "access_token", "password", "authorization", "api_key"} {
+	s = strings.NewReplacer("-", "", "_", "", " ", "").Replace(strings.ToLower(s))
+	for _, k := range []string{"token", "secret", "password", "authorization", "apikey"} {
 		if strings.Contains(s, k) {
 			return true
 		}
@@ -211,6 +361,11 @@ func Redact(c Config) Config {
 		for k, v := range p.Headers {
 			if isSensitive(k) {
 				p.Headers[k] = mask(v, 0)
+			}
+		}
+		for k, v := range p.Fields {
+			if isSensitive(k) {
+				p.Fields[k] = mask(v, 0)
 			}
 		}
 		c.Providers[n] = p

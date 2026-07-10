@@ -1,9 +1,15 @@
 package model
 
-import "context"
+import (
+	"context"
+	"io"
+)
 
 type UploadRequest struct {
 	LocalPath   string
+	FileName    string
+	Body        io.ReadSeeker
+	Size        int64
 	RemotePath  string
 	ContentType string
 	Overwrite   bool
@@ -25,3 +31,5 @@ type Provider interface {
 	Validate(context.Context) error
 	Upload(context.Context, UploadRequest) (*UploadResult, error)
 }
+
+type Tester interface{ Test(context.Context) error }

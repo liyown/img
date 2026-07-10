@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"os"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -21,6 +20,7 @@ import (
 type API interface {
 	PutObject(context.Context, *s3.PutObjectInput, ...func(*s3.Options)) (*s3.PutObjectOutput, error)
 	HeadObject(context.Context, *s3.HeadObjectInput, ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
+	HeadBucket(context.Context, *s3.HeadBucketInput, ...func(*s3.Options)) (*s3.HeadBucketOutput, error)
 }
 type Provider struct {
 	name   string
@@ -70,6 +70,16 @@ func (p *Provider) Validate(context.Context) error {
 	}
 	return nil
 }
+func (p *Provider) Test(ctx context.Context) error {
+	if err := p.Validate(ctx); err != nil {
+		return err
+	}
+	_, err := p.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(p.cfg.Bucket)})
+	if err != nil {
+		return fmt.Errorf("test S3 provider %q: %w", p.name, err)
+	}
+	return nil
+}
 func (p *Provider) Upload(ctx context.Context, r model.UploadRequest) (*model.UploadResult, error) {
 	if err := p.Validate(ctx); err != nil {
 		return nil, err
@@ -84,19 +94,13 @@ func (p *Provider) Upload(ctx context.Context, r model.UploadRequest) (*model.Up
 			return nil, fmt.Errorf("check S3 object %q: %w", r.RemotePath, err)
 		}
 	}
-	f, err := os.Open(r.LocalPath)
-	if err != nil {
-		return nil, fmt.Errorf("open upload file: %w", err)
+	if r.Body == nil {
+		return nil, fmt.Errorf("upload body is required")
 	}
-	defer f.Close()
-	st, err := f.Stat()
-	if err != nil {
-		return nil, fmt.Errorf("stat upload file: %w", err)
-	}
-	_, err = p.client.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(p.cfg.Bucket), Key: aws.String(r.RemotePath), Body: f, ContentType: aws.String(r.ContentType), ContentLength: aws.Int64(st.Size()), Metadata: r.Metadata})
+	_, err := p.client.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(p.cfg.Bucket), Key: aws.String(r.RemotePath), Body: r.Body, ContentType: aws.String(r.ContentType), ContentLength: aws.Int64(r.Size), Metadata: r.Metadata})
 	if err != nil {
 		return nil, fmt.Errorf("upload %q to S3 provider %q: %w", r.RemotePath, p.name, err)
 	}
 	u := strings.TrimRight(p.cfg.PublicURL, "/") + "/" + pathgen.EscapeURLPath(r.RemotePath)
-	return &model.UploadResult{Provider: p.name, LocalPath: r.LocalPath, RemotePath: r.RemotePath, URL: u, Size: st.Size(), ContentType: r.ContentType}, nil
+	return &model.UploadResult{Provider: p.name, LocalPath: r.LocalPath, RemotePath: r.RemotePath, URL: u, Size: r.Size, ContentType: r.ContentType}, nil
 }

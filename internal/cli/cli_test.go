@@ -33,7 +33,7 @@ func TestShorthandUploadEndToEnd(t *testing.T) {
 	d := t.TempDir()
 	cfg := config.Defaults()
 	cfg.DefaultProvider = "local"
-	cfg.Providers["local"] = config.ProviderConfig{Type: "http", URL: server.URL, URLJSONPath: "data.url"}
+	cfg.Providers["local"] = config.ProviderConfig{Type: "http", URL: server.URL, URLJSONPath: "data.url", AllowInsecure: true}
 	cfgPath := filepath.Join(d, "config.toml")
 	if err := config.Save(cfgPath, cfg); err != nil {
 		t.Fatal(err)
