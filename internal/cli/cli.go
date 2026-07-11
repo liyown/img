@@ -22,6 +22,8 @@ import (
 	"github.com/liyown/img/internal/model"
 	"github.com/liyown/img/internal/output"
 	"github.com/liyown/img/internal/provider"
+	"github.com/liyown/img/internal/screenshot"
+	"github.com/liyown/img/internal/serve"
 	"github.com/liyown/img/internal/upload"
 	"github.com/pelletier/go-toml/v2"
 )
@@ -58,6 +60,10 @@ func (c *CLI) Run(ctx context.Context, args []string) int {
 		return c.upload(ctx, rest)
 	case "rewrite":
 		return c.rewrite(ctx, rest)
+	case "screenshot":
+		return c.screenshot(ctx, rest)
+	case "serve":
+		return c.serveCmd(ctx, rest)
 	case "init":
 		err = c.init(rest)
 	case "provider":
@@ -79,7 +85,8 @@ func (c *CLI) Run(ctx context.Context, args []string) int {
 }
 func known(s string) bool {
 	switch s {
-	case "upload", "init", "provider", "config", "version", "rewrite", "help", "--help", "-h":
+	case "upload", "init", "provider", "config", "version",
+		"rewrite", "screenshot", "serve", "help", "--help", "-h":
 		return true
 	}
 	return false
@@ -405,6 +412,185 @@ func cleanOutput(s string) string {
 		}
 		return r
 	}, s)
+}
+
+// screenshot captures a screenshot and uploads it in one step.
+//
+//	img screenshot                    # full screen, copy URL to clipboard
+//	img screenshot --region           # interactive region selection
+//	img screenshot --window           # active window
+//	img screenshot --format markdown  # output Markdown link
+func (c *CLI) screenshot(ctx context.Context, args []string) int {
+	fs := flag.NewFlagSet("screenshot", flag.ContinueOnError)
+	fs.SetOutput(c.Err)
+	var pn, format, remotePath string
+	var region, window, noCopy, optimize, verbose bool
+	fs.StringVar(&pn, "provider", "", "provider name")
+	fs.StringVar(&format, "format", "", "output format: url, markdown, html, json")
+	fs.StringVar(&remotePath, "path", "", "remote path prefix")
+	fs.BoolVar(&region, "region", false, "interactive region/area selection")
+	fs.BoolVar(&window, "window", false, "capture the active window")
+	fs.BoolVar(&noCopy, "no-copy", false, "do not copy result to clipboard")
+	fs.BoolVar(&optimize, "optimize", false, "compress image before upload")
+	fs.BoolVar(&verbose, "verbose", false, "verbose logging")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	// Determine capture mode.
+	mode := screenshot.ModeFullScreen
+	switch {
+	case region:
+		mode = screenshot.ModeRegion
+	case window:
+		mode = screenshot.ModeWindow
+	}
+
+	tmpPath, err := screenshot.Capture(mode)
+	if err != nil {
+		fmt.Fprintln(c.Err, "Error:", err)
+		return 2
+	}
+	defer os.Remove(tmpPath)
+
+	cfg, err := c.load()
+	if err != nil {
+		fmt.Fprintln(c.Err, "Error:", err)
+		return 2
+	}
+	if pn == "" {
+		pn = cfg.Provider
+		if pn == "" {
+			pn = cfg.DefaultProvider
+		}
+	}
+	if pn == "" {
+		fmt.Fprintln(c.Err, "Error: no provider selected; run img init")
+		return 2
+	}
+	pc, ok := cfg.Providers[pn]
+	if !ok {
+		fmt.Fprintf(c.Err, "Error: provider %q is not configured\n", pn)
+		return 2
+	}
+	if format == "" {
+		format = cfg.Output.Format
+	}
+	if !validFormat(format) {
+		fmt.Fprintf(c.Err, "Error: unknown output format %q\n", format)
+		return 2
+	}
+	if verbose {
+		fmt.Fprintf(c.Err, "Using provider %s (%s)\n", pn, pc.Type)
+	}
+	p, err := provider.New(ctx, pn, pc)
+	if err != nil {
+		fmt.Fprintln(c.Err, "Error:", err)
+		return 2
+	}
+	if err = p.Validate(ctx); err != nil {
+		fmt.Fprintln(c.Err, "Error:", err)
+		return 2
+	}
+
+	results := upload.Run(ctx, p, cfg.Upload, []string{tmpPath},
+		upload.Options{Path: remotePath, Optimize: optimize})
+
+	doQuiet := cfg.Output.Quiet
+	if !doQuiet {
+		_ = output.Render(c.Out, format, results)
+	}
+	// Screenshot defaults to copying the result — skip only on --no-copy.
+	doCopy := !noCopy
+	if doCopy {
+		if err := c.Clipboard.Write(output.ClipboardText(format, results)); err != nil {
+			fmt.Fprintln(c.Err, "Warning: screenshot uploaded, but clipboard copy failed:", err)
+		}
+	}
+
+	if verbose && results[0].OriginalSize > 0 {
+		saved := 100 - int(results[0].Size*100/results[0].OriginalSize)
+		fmt.Fprintf(c.Err, "Optimized: %s → %s (−%d%%)\n",
+			formatBytes(results[0].OriginalSize), formatBytes(results[0].Size), saved)
+	}
+	if results[0].Success {
+		return 0
+	}
+	return 1
+}
+
+// serveCmd runs a PicGo-compatible local HTTP server so any editor that
+// supports a custom PicGo endpoint can upload images via img.
+//
+//	img serve                         # listen on 127.0.0.1:36677
+//	img serve --port 9000             # custom port
+//	img serve --bind 0.0.0.0          # all interfaces (use with care)
+//	img serve --optimize              # compress images before upload
+//
+// Configure Typora: Preferences → Image → Image Uploader → Custom Command
+//
+//	img "${filepath}"
+//
+// Configure Obsidian (Image Auto Upload Plugin):
+//
+//	Upload Server: http://127.0.0.1:36677/upload
+func (c *CLI) serveCmd(ctx context.Context, args []string) int {
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	fs.SetOutput(c.Err)
+	var pn, bind string
+	var port int
+	var optimize bool
+	fs.StringVar(&pn, "provider", "", "provider name")
+	fs.StringVar(&bind, "bind", "127.0.0.1", "address to bind")
+	fs.IntVar(&port, "port", 36677, "port to listen on")
+	fs.BoolVar(&optimize, "optimize", false, "compress images before upload")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	cfg, err := c.load()
+	if err != nil {
+		fmt.Fprintln(c.Err, "Error:", err)
+		return 2
+	}
+	if pn == "" {
+		pn = cfg.Provider
+		if pn == "" {
+			pn = cfg.DefaultProvider
+		}
+	}
+	if pn == "" {
+		fmt.Fprintln(c.Err, "Error: no provider selected; run img init")
+		return 2
+	}
+	pc, ok := cfg.Providers[pn]
+	if !ok {
+		fmt.Fprintf(c.Err, "Error: provider %q is not configured\n", pn)
+		return 2
+	}
+	p, err := provider.New(ctx, pn, pc)
+	if err != nil {
+		fmt.Fprintln(c.Err, "Error:", err)
+		return 2
+	}
+	if err = p.Validate(ctx); err != nil {
+		fmt.Fprintln(c.Err, "Error:", err)
+		return 2
+	}
+
+	addr := fmt.Sprintf("%s:%d", bind, port)
+	s := &serve.Server{
+		Provider: p,
+		Cfg:      cfg.Upload,
+		Opts:     serve.Options{UploadOpts: upload.Options{Optimize: optimize}},
+		Out:      c.Out,
+		Err:      c.Err,
+	}
+	if err := s.ListenAndServe(ctx, addr); err != nil {
+		fmt.Fprintln(c.Err, "Error:", err)
+		return 1
+	}
+	return 0
 }
 
 func (c *CLI) init(args []string) error {
@@ -761,7 +947,13 @@ func validFormat(s string) bool       { return s == "url" || s == "markdown" || 
 func mustwd() string                  { d, _ := os.Getwd(); return d }
 func readline(r *bufio.Reader) string { s, _ := r.ReadString('\n'); return s }
 func (c *CLI) usage() {
-	fmt.Fprintln(c.Out, "Usage: img upload <file...> [options]\n       img <file...> [options]\n       img rewrite [<file.md>] [options]\n       img init | provider | config | version")
+	fmt.Fprintln(c.Out,
+		"Usage: img upload <file...> [options]\n"+
+			"       img <file...> [options]\n"+
+			"       img screenshot [--region|--window] [options]\n"+
+			"       img serve [--port 36677] [options]\n"+
+			"       img rewrite [<file.md>] [options]\n"+
+			"       img init | provider | config | version")
 }
 
 // formatBytes formats a byte count as a human-readable string (KB / MB).

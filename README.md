@@ -185,6 +185,50 @@ img screenshot.png --optimize --verbose   # 显示每张图的压缩率
 | PNG（含透明） | 尝试无损 WebP（保留透明度） |
 | SVG / GIF / WebP / AVIF | 原样上传 |
 
+## 截图即上传
+
+截图后直接上传，结果自动复制到剪贴板：
+
+```sh
+img screenshot                  # 全屏截图
+img screenshot --region         # 框选区域（交互式）
+img screenshot --window         # 当前活动窗口
+img screenshot --format markdown # 输出 Markdown 链接
+img screenshot --optimize       # 截图后压缩再上传
+img screenshot --no-copy        # 不自动复制
+```
+
+- macOS：使用系统内置 `screencapture`，无需安装额外工具
+- Linux：按顺序尝试 `flameshot`、`scrot`、`gnome-screenshot`、`import`（ImageMagick）
+- Windows：使用 PowerShell 截全屏（不支持选区）
+
+## 编辑器图片上传代理
+
+启动一个兼容 PicGo 协议的本地 HTTP 服务，让 Typora、Obsidian 等编辑器通过 img 上传图片：
+
+```sh
+img serve                       # 监听 127.0.0.1:36677（PicGo 默认端口）
+img serve --port 9000           # 自定义端口
+img serve --optimize            # 上传前自动压缩
+img serve --provider r2         # 指定图床
+```
+
+配置编辑器：
+
+**Typora**：偏好设置 → 图像 → 插入图片时 → 上传图片 → Custom Command
+
+```
+img "${filepath}"
+```
+
+**Obsidian**（Image Auto Upload 插件）：
+
+```
+上传服务 URL：http://127.0.0.1:36677/upload
+```
+
+每次有图片上传时，终端会实时显示上传结果。按 Ctrl+C 停止服务。
+
 ## 文章图片转存
 
 将 Markdown 文章里的所有图片一键上传到图床并替换引用：
