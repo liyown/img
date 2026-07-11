@@ -239,6 +239,38 @@ img screenshot.png --optimize
 
 ```sh
 img screenshot.png --optimize --verbose
+```
+
+## 文章图片转存
+
+将一篇 Markdown 文章里的所有图片（本地路径和外链 URL）全部上传到图床，并原地替换引用：
+
+```sh
+img rewrite article.md
+```
+
+支持的图片引用格式：
+
+- Markdown：`![alt](path "title")`
+- HTML 内联：`<img src="path">`
+
+替换逻辑：
+
+- **本地路径**（相对路径以文章所在目录为基准）→ 上传后替换为图床 URL
+- **外链 URL** → 下载后重新上传，替换为自己图床的 URL
+- `data:` URI、锚点等无法处理的引用 → 原样保留，stderr 报告
+- 上传失败的引用 → 原样保留，退出码 3（同 `upload` 一致）
+
+保留文章中的 alt text、标题和其他属性，只替换 URL 部分。写回使用原子 rename，写入失败不会损坏原文件。
+
+组合选项：
+
+```sh
+img rewrite article.md --optimize            # 上传前压缩图片
+img rewrite article.md --provider github     # 指定图床
+img rewrite article.md --stdout              # 结果打印到 stdout，不改原文件
+cat article.md | img rewrite                 # 从 stdin 读，结果输出到 stdout
+```
 # Optimized screenshot.png: 1.2 MB → 480 KB (−60%)
 ```
 

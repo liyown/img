@@ -17,6 +17,8 @@ import (
 
 	"github.com/liyown/img/internal/clipboard"
 	"github.com/liyown/img/internal/config"
+	"github.com/liyown/img/internal/fetch"
+	"github.com/liyown/img/internal/mdimg"
 	"github.com/liyown/img/internal/model"
 	"github.com/liyown/img/internal/output"
 	"github.com/liyown/img/internal/provider"
@@ -54,6 +56,8 @@ func (c *CLI) Run(ctx context.Context, args []string) int {
 	switch cmd {
 	case "upload":
 		return c.upload(ctx, rest)
+	case "rewrite":
+		return c.rewrite(ctx, rest)
 	case "init":
 		err = c.init(rest)
 	case "provider":
@@ -75,7 +79,7 @@ func (c *CLI) Run(ctx context.Context, args []string) int {
 }
 func known(s string) bool {
 	switch s {
-	case "upload", "init", "provider", "config", "version", "help", "--help", "-h":
+	case "upload", "init", "provider", "config", "version", "rewrite", "help", "--help", "-h":
 		return true
 	}
 	return false
@@ -198,6 +202,211 @@ func (c *CLI) upload(ctx context.Context, args []string) int {
 	}
 	return 1
 }
+
+// rewrite downloads or uploads every image referenced in a Markdown article
+// and rewrites the document with the new image-host URLs.
+//
+// Usage:
+//
+//	img rewrite article.md [options]   # rewrite file in-place
+//	img rewrite article.md --stdout    # print result to stdout
+//	cat article.md | img rewrite       # read stdin → stdout
+func (c *CLI) rewrite(ctx context.Context, args []string) int {
+	fs := flag.NewFlagSet("rewrite", flag.ContinueOnError)
+	fs.SetOutput(c.Err)
+	var pn, path string
+	var overwrite, optimize, allowInsecure, toStdout bool
+	fs.StringVar(&pn, "provider", "", "provider name")
+	fs.StringVar(&path, "path", "", "remote path prefix")
+	fs.BoolVar(&overwrite, "overwrite", false, "overwrite existing objects")
+	fs.BoolVar(&optimize, "optimize", false, "compress images before upload")
+	fs.BoolVar(&allowInsecure, "allow-insecure", false, "allow fetching source URLs over plain HTTP")
+	fs.BoolVar(&toStdout, "stdout", false, "write result to stdout instead of rewriting the file")
+	ordered, err := reorder(args, map[string]bool{"--provider": true, "--path": true})
+	if err != nil {
+		fmt.Fprintln(c.Err, "Error:", err)
+		return 2
+	}
+	if err = fs.Parse(ordered); err != nil {
+		return 2
+	}
+
+	// ── Read article ──────────────────────────────────────────────────────
+	fileArg := ""
+	if rest := fs.Args(); len(rest) > 0 {
+		fileArg = rest[0]
+	}
+	var articleBytes []byte
+	var articleDir string
+	if fileArg != "" {
+		articleBytes, err = os.ReadFile(fileArg)
+		if err != nil {
+			fmt.Fprintln(c.Err, "Error:", err)
+			return 2
+		}
+		if abs, e := filepath.Abs(filepath.Dir(fileArg)); e == nil {
+			articleDir = abs
+		} else {
+			articleDir = filepath.Dir(fileArg)
+		}
+	} else {
+		articleBytes, err = io.ReadAll(c.In)
+		if err != nil {
+			fmt.Fprintln(c.Err, "Error: read stdin:", err)
+			return 2
+		}
+		articleDir = mustwd()
+		toStdout = true // no file to write back to
+	}
+
+	// ── Extract image references ──────────────────────────────────────────
+	doc := string(articleBytes)
+	refs := mdimg.Extract(doc)
+	if len(refs) == 0 {
+		return c.writeRewritten(fileArg, toStdout, articleBytes)
+	}
+
+	// ── Resolve provider ─────────────────────────────────────────────────
+	cfg, err := c.load()
+	if err != nil {
+		fmt.Fprintln(c.Err, "Error:", err)
+		return 2
+	}
+	if pn == "" {
+		pn = cfg.Provider
+		if pn == "" {
+			pn = cfg.DefaultProvider
+		}
+	}
+	if pn == "" {
+		fmt.Fprintln(c.Err, "Error: no provider selected; run img init")
+		return 2
+	}
+	pc, ok := cfg.Providers[pn]
+	if !ok {
+		fmt.Fprintf(c.Err, "Error: provider %q is not configured\n", pn)
+		return 2
+	}
+	p, err := provider.New(ctx, pn, pc)
+	if err != nil {
+		fmt.Fprintln(c.Err, "Error:", err)
+		return 2
+	}
+	if err = p.Validate(ctx); err != nil {
+		fmt.Fprintln(c.Err, "Error:", err)
+		return 2
+	}
+
+	// ── Build upload source list ──────────────────────────────────────────
+	// Local relative paths are resolved to absolute so upload.one can open
+	// them; we remember the original ref string for text replacement later.
+	type entry struct {
+		original string // as it appears in the document
+		source   string // passed to upload.Run (abs path or URL)
+	}
+	entries := make([]entry, len(refs))
+	sources := make([]string, len(refs))
+	for i, r := range refs {
+		src := r.Src
+		if !fetch.IsURL(src) && !filepath.IsAbs(src) {
+			src = filepath.Join(articleDir, src)
+		}
+		entries[i] = entry{original: r.Src, source: src}
+		sources[i] = src
+	}
+
+	// ── Upload ───────────────────────────────────────────────────────────
+	results := upload.Run(ctx, p, cfg.Upload, sources, upload.Options{
+		Path:          path,
+		Overwrite:     overwrite,
+		Optimize:      optimize,
+		AllowInsecure: allowInsecure,
+	})
+
+	// ── Build replacement map and report ─────────────────────────────────
+	replacements := make(map[string]string, len(results))
+	succeeded, failed := 0, 0
+	for i, r := range results {
+		orig := entries[i].original
+		if r.Success {
+			replacements[orig] = r.URL
+			succeeded++
+		} else {
+			fmt.Fprintf(c.Err, "Warning: %s: %s (kept original)\n",
+				cleanOutput(orig), cleanOutput(r.Error))
+			failed++
+		}
+	}
+
+	// ── Rewrite and output ────────────────────────────────────────────────
+	out := mdimg.Rewrite(doc, replacements)
+	code := c.writeRewritten(fileArg, toStdout, []byte(out))
+
+	if fileArg != "" && !toStdout {
+		fmt.Fprintf(c.Err, "Rewrite: %d uploaded, %d failed.\n", succeeded, failed)
+	}
+	if code != 0 {
+		return code
+	}
+	if failed > 0 && succeeded > 0 {
+		return 3
+	}
+	if failed > 0 {
+		return 1
+	}
+	return 0
+}
+
+// writeRewritten writes data either to stdout or back to the source file using
+// an atomic rename so a write failure never corrupts the original.
+func (c *CLI) writeRewritten(fileArg string, toStdout bool, data []byte) int {
+	if fileArg == "" || toStdout {
+		if _, err := c.Out.Write(data); err != nil {
+			fmt.Fprintln(c.Err, "Error: write output:", err)
+			return 1
+		}
+		return 0
+	}
+	dir := filepath.Dir(fileArg)
+	f, err := os.CreateTemp(dir, ".rewrite-*.tmp")
+	if err != nil {
+		fmt.Fprintln(c.Err, "Error: create temp file:", err)
+		return 1
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		fmt.Fprintln(c.Err, "Error: write temp file:", err)
+		return 1
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		fmt.Fprintln(c.Err, "Error: sync temp file:", err)
+		return 1
+	}
+	if err := f.Close(); err != nil {
+		fmt.Fprintln(c.Err, "Error: close temp file:", err)
+		return 1
+	}
+	if err := os.Rename(tmp, fileArg); err != nil {
+		fmt.Fprintln(c.Err, "Error: replace file:", err)
+		return 1
+	}
+	return 0
+}
+
+// cleanOutput strips control characters from a string before printing to
+// stderr, mirroring the Render package's cleanTerminal helper.
+func cleanOutput(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 32 && r != '\t' || r == 127 {
+			return -1
+		}
+		return r
+	}, s)
+}
+
 func (c *CLI) init(args []string) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	fs.SetOutput(c.Err)
@@ -552,7 +761,7 @@ func validFormat(s string) bool       { return s == "url" || s == "markdown" || 
 func mustwd() string                  { d, _ := os.Getwd(); return d }
 func readline(r *bufio.Reader) string { s, _ := r.ReadString('\n'); return s }
 func (c *CLI) usage() {
-	fmt.Fprintln(c.Out, "Usage: img upload <file...> [options]\n       img <file...> [options]\n       img init | provider | config | version")
+	fmt.Fprintln(c.Out, "Usage: img upload <file...> [options]\n       img <file...> [options]\n       img rewrite [<file.md>] [options]\n       img init | provider | config | version")
 }
 
 // formatBytes formats a byte count as a human-readable string (KB / MB).

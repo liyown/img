@@ -141,3 +141,144 @@ func TestQuietFlagSuppressesOutput(t *testing.T) {
 		t.Fatalf("quiet mode produced output: %q", out.String())
 	}
 }
+
+// newHTTPProvider sets up a test server that accepts a multipart upload and
+// returns a predictable CDN URL, then writes a config pointing at it.
+func newHTTPProvider(t *testing.T, cdnURL string) (cfgPath string, server *httptest.Server) {
+	t.Helper()
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.ParseMultipartForm(4 << 20)
+		fmt.Fprintf(w, `{"data":{"url":%q}}`, cdnURL)
+	}))
+	t.Cleanup(server.Close)
+	d := t.TempDir()
+	cfg := config.Defaults()
+	cfg.DefaultProvider = "local"
+	cfg.Providers["local"] = config.ProviderConfig{
+		Type: "http", URL: server.URL, URLJSONPath: "data.url", AllowInsecure: true,
+	}
+	cfgPath = filepath.Join(d, "config.toml")
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+	return cfgPath, server
+}
+
+func TestRewriteInPlace(t *testing.T) {
+	cfgPath, _ := newHTTPProvider(t, "https://cdn.test/a.png")
+	d := t.TempDir()
+
+	// Write a local image next to the article.
+	img := filepath.Join(d, "a.png")
+	if err := os.WriteFile(img, []byte("\x89PNG\r\n\x1a\nbody"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	article := filepath.Join(d, "post.md")
+	original := "# Title\n\n![alt](a.png)\n\nParagraph.\n"
+	if err := os.WriteFile(article, []byte(original), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stderr bytes.Buffer
+	c := &CLI{Out: io.Discard, Err: &stderr, In: strings.NewReader(""), GlobalPath: cfgPath}
+	code := c.Run(context.Background(), []string{"rewrite", article})
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, stderr.String())
+	}
+
+	// File should have been rewritten in place.
+	got, err := os.ReadFile(article)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "https://cdn.test/a.png") {
+		t.Fatalf("image URL not replaced: %s", got)
+	}
+	if strings.Contains(string(got), "](a.png)") {
+		t.Fatal("original local reference still present after rewrite")
+	}
+	// Alt text and surrounding prose must be preserved.
+	if !strings.Contains(string(got), "![alt](") {
+		t.Fatalf("alt text lost: %s", got)
+	}
+	if !strings.Contains(string(got), "# Title") || !strings.Contains(string(got), "Paragraph.") {
+		t.Fatalf("prose lost: %s", got)
+	}
+}
+
+func TestRewriteStdin(t *testing.T) {
+	cfgPath, _ := newHTTPProvider(t, "https://cdn.test/remote.jpg")
+	d := t.TempDir()
+	// remote URL image in the article — fetching requires AllowInsecure because
+	// httptest is HTTP. We use a real PNG header in the fake response to pass
+	// filetype detection.
+	imgSrc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Write([]byte("\x89PNG\r\n\x1a\nbody"))
+	}))
+	defer imgSrc.Close()
+
+	article := "![](a.png)\n![remote](" + imgSrc.URL + "/remote.png)\n"
+	// Write a local image so the local ref is uploadable.
+	if err := os.WriteFile(filepath.Join(d, "a.png"), []byte("\x89PNG\r\n\x1a\nbody"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_ = d // articleDir resolves to cwd; local ref "a.png" won't resolve correctly
+	// Focus this test on stdin→stdout routing, not on local image resolution.
+	article = "![remote](" + imgSrc.URL + "/remote.png)\n"
+
+	var out, stderr bytes.Buffer
+	c := &CLI{Out: &out, Err: &stderr, In: strings.NewReader(article), GlobalPath: cfgPath}
+	code := c.Run(context.Background(), []string{"rewrite", "--allow-insecure"})
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, stderr.String())
+	}
+	// Result goes to stdout.
+	if !strings.Contains(out.String(), "https://cdn.test/") {
+		t.Fatalf("image URL not replaced in stdout output: %q", out.String())
+	}
+}
+
+func TestRewriteStdout(t *testing.T) {
+	cfgPath, _ := newHTTPProvider(t, "https://cdn.test/a.png")
+	d := t.TempDir()
+	img := filepath.Join(d, "a.png")
+	os.WriteFile(img, []byte("\x89PNG\r\n\x1a\nbody"), 0600)
+	article := filepath.Join(d, "post.md")
+	os.WriteFile(article, []byte("![](a.png)\n"), 0600)
+	originalContent, _ := os.ReadFile(article)
+
+	var out bytes.Buffer
+	c := &CLI{Out: &out, Err: io.Discard, In: strings.NewReader(""), GlobalPath: cfgPath}
+	code := c.Run(context.Background(), []string{"rewrite", article, "--stdout"})
+	if code != 0 {
+		t.Fatalf("code=%d", code)
+	}
+	// --stdout: result goes to stdout, original file untouched.
+	if !strings.Contains(out.String(), "https://cdn.test/a.png") {
+		t.Fatalf("expected rewritten content in stdout, got: %q", out.String())
+	}
+	afterContent, _ := os.ReadFile(article)
+	if string(afterContent) != string(originalContent) {
+		t.Fatal("--stdout must not modify the original file")
+	}
+}
+
+func TestRewriteNoImages(t *testing.T) {
+	cfgPath, _ := newHTTPProvider(t, "https://cdn.test/x.png")
+	d := t.TempDir()
+	article := filepath.Join(d, "post.md")
+	original := "# No images here\n\nJust text.\n"
+	os.WriteFile(article, []byte(original), 0600)
+
+	c := &CLI{Out: io.Discard, Err: io.Discard, In: strings.NewReader(""), GlobalPath: cfgPath}
+	code := c.Run(context.Background(), []string{"rewrite", article})
+	if code != 0 {
+		t.Fatalf("code=%d", code)
+	}
+	// File must be unchanged.
+	got, _ := os.ReadFile(article)
+	if string(got) != original {
+		t.Fatalf("file changed when no images: %q", got)
+	}
+}
