@@ -18,6 +18,7 @@ import (
 	"github.com/liyown/img/internal/clipboard"
 	"github.com/liyown/img/internal/config"
 	"github.com/liyown/img/internal/fetch"
+	"github.com/liyown/img/internal/info"
 	"github.com/liyown/img/internal/mdimg"
 	"github.com/liyown/img/internal/model"
 	"github.com/liyown/img/internal/output"
@@ -64,6 +65,8 @@ func (c *CLI) Run(ctx context.Context, args []string) int {
 		return c.screenshot(ctx, rest)
 	case "serve":
 		return c.serveCmd(ctx, rest)
+	case "info":
+		return c.info(rest)
 	case "init":
 		err = c.init(rest)
 	case "provider":
@@ -86,7 +89,7 @@ func (c *CLI) Run(ctx context.Context, args []string) int {
 func known(s string) bool {
 	switch s {
 	case "upload", "init", "provider", "config", "version",
-		"rewrite", "screenshot", "serve", "help", "--help", "-h":
+		"rewrite", "screenshot", "serve", "info", "help", "--help", "-h":
 		return true
 	}
 	return false
@@ -218,9 +221,10 @@ func (c *CLI) upload(ctx context.Context, args []string) int {
 //
 // Usage:
 //
-//	img rewrite article.md [options]   # rewrite file in-place
-//	img rewrite article.md --stdout    # print result to stdout
-//	cat article.md | img rewrite       # read stdin → stdout
+//	img rewrite article.md [options]        # rewrite file in-place
+//	img rewrite a.md b.md *.md [options]    # multiple files
+//	img rewrite article.md --stdout         # print result to stdout
+//	cat article.md | img rewrite            # read stdin → stdout
 func (c *CLI) rewrite(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("rewrite", flag.ContinueOnError)
 	fs.SetOutput(c.Err)
@@ -243,79 +247,84 @@ func (c *CLI) rewrite(ctx context.Context, args []string) int {
 	if err = fs.Parse(ordered); err != nil {
 		return 2
 	}
+	fileArgs := fs.Args()
 
-	// ── Read article ──────────────────────────────────────────────────────
-	fileArg := ""
-	if rest := fs.Args(); len(rest) > 0 {
-		fileArg = rest[0]
-	}
-	var articleBytes []byte
-	var articleDir string
-	if fileArg != "" {
-		articleBytes, err = os.ReadFile(fileArg)
-		if err != nil {
-			fmt.Fprintln(c.Err, "Error:", err)
-			return 2
-		}
-		if abs, e := filepath.Abs(filepath.Dir(fileArg)); e == nil {
-			articleDir = abs
-		} else {
-			articleDir = filepath.Dir(fileArg)
-		}
-	} else {
-		articleBytes, err = io.ReadAll(c.In)
+	// No file args → read from stdin and write to stdout.
+	if len(fileArgs) == 0 {
+		articleBytes, err := io.ReadAll(c.In)
 		if err != nil {
 			fmt.Fprintln(c.Err, "Error: read stdin:", err)
 			return 2
 		}
-		articleDir = mustwd()
-		toStdout = true // no file to write back to
+		cfg, err := c.load()
+		if err != nil {
+			fmt.Fprintln(c.Err, "Error:", err)
+			return 2
+		}
+		p, code := c.resolveProvider(ctx, pn, cfg)
+		if code != 0 {
+			return code
+		}
+		opts := upload.Options{Path: path, Overwrite: overwrite, Optimize: optimize,
+			StripEXIF: stripEXIF, MaxWidth: resizeWidth, AllowInsecure: allowInsecure}
+		out, _, _ := c.rewriteDoc(ctx, p, cfg, string(articleBytes), mustwd(), opts)
+		return c.writeRewritten("", true, []byte(out))
 	}
 
-	// ── Extract image references ──────────────────────────────────────────
-	doc := string(articleBytes)
-	refs := mdimg.Extract(doc)
-	if len(refs) == 0 {
-		return c.writeRewritten(fileArg, toStdout, articleBytes)
-	}
-
-	// ── Resolve provider ─────────────────────────────────────────────────
+	// Load config and provider once for all files.
 	cfg, err := c.load()
 	if err != nil {
 		fmt.Fprintln(c.Err, "Error:", err)
 		return 2
 	}
-	if pn == "" {
-		pn = cfg.Provider
-		if pn == "" {
-			pn = cfg.DefaultProvider
+	p, code := c.resolveProvider(ctx, pn, cfg)
+	if code != 0 {
+		return code
+	}
+	opts := upload.Options{Path: path, Overwrite: overwrite, Optimize: optimize,
+		StripEXIF: stripEXIF, MaxWidth: resizeWidth, AllowInsecure: allowInsecure}
+
+	multi := len(fileArgs) > 1
+	worstCode := 0
+	for _, fileArg := range fileArgs {
+		if multi {
+			fmt.Fprintf(c.Err, "→ %s\n", fileArg)
+		}
+		articleBytes, err := os.ReadFile(fileArg)
+		if err != nil {
+			fmt.Fprintf(c.Err, "Error: %s: %v\n", fileArg, err)
+			worstCode = 1
+			continue
+		}
+		absDir, _ := filepath.Abs(filepath.Dir(fileArg))
+		out, succeeded, failed := c.rewriteDoc(ctx, p, cfg, string(articleBytes), absDir, opts)
+		code := c.writeRewritten(fileArg, toStdout, []byte(out))
+		if !toStdout {
+			fmt.Fprintf(c.Err, "Rewrite %s: %d uploaded, %d failed.\n", fileArg, succeeded, failed)
+		}
+		if code != 0 && worstCode < code {
+			worstCode = code
+		} else if failed > 0 && succeeded > 0 && worstCode < 3 {
+			worstCode = 3
+		} else if failed > 0 && succeeded == 0 && worstCode < 1 {
+			worstCode = 1
 		}
 	}
-	if pn == "" {
-		fmt.Fprintln(c.Err, "Error: no provider selected; run img init")
-		return 2
-	}
-	pc, ok := cfg.Providers[pn]
-	if !ok {
-		fmt.Fprintf(c.Err, "Error: provider %q is not configured\n", pn)
-		return 2
-	}
-	p, err := provider.New(ctx, pn, pc)
-	if err != nil {
-		fmt.Fprintln(c.Err, "Error:", err)
-		return 2
-	}
-	if err = p.Validate(ctx); err != nil {
-		fmt.Fprintln(c.Err, "Error:", err)
-		return 2
+	return worstCode
+}
+
+// rewriteDoc uploads all image references in doc and returns the rewritten
+// document along with success/failure counts. articleDir is used to resolve
+// relative local paths.
+func (c *CLI) rewriteDoc(ctx context.Context, p model.Provider, cfg config.Config, doc, articleDir string, opts upload.Options) (out string, succeeded, failed int) {
+	refs := mdimg.Extract(doc)
+	if len(refs) == 0 {
+		return doc, 0, 0
 	}
 
-	// ── Build upload source list ──────────────────────────────────────────
-	// Local relative paths are resolved to absolute so upload.one can open
-	// them; we remember the original ref string for text replacement later.
 	type entry struct {
-		original string // as it appears in the document
-		source   string // passed to upload.Run (abs path or URL)
+		original string
+		source   string
 	}
 	entries := make([]entry, len(refs))
 	sources := make([]string, len(refs))
@@ -328,48 +337,50 @@ func (c *CLI) rewrite(ctx context.Context, args []string) int {
 		sources[i] = src
 	}
 
-	// ── Upload ───────────────────────────────────────────────────────────
-	results := upload.Run(ctx, p, cfg.Upload, sources, upload.Options{
-		Path:          path,
-		Overwrite:     overwrite,
-		Optimize:      optimize,
-		StripEXIF:     stripEXIF,
-		MaxWidth:      resizeWidth,
-		AllowInsecure: allowInsecure,
-	})
-
-	// ── Build replacement map and report ─────────────────────────────────
+	results := upload.Run(ctx, p, cfg.Upload, sources, opts)
 	replacements := make(map[string]string, len(results))
-	succeeded, failed := 0, 0
 	for i, r := range results {
 		orig := entries[i].original
 		if r.Success {
 			replacements[orig] = r.URL
 			succeeded++
 		} else {
-			fmt.Fprintf(c.Err, "Warning: %s: %s (kept original)\n",
+			fmt.Fprintf(c.Err, "  ✗ %s: %s (kept original)\n",
 				cleanOutput(orig), cleanOutput(r.Error))
 			failed++
 		}
 	}
+	return mdimg.Rewrite(doc, replacements), succeeded, failed
+}
 
-	// ── Rewrite and output ────────────────────────────────────────────────
-	out := mdimg.Rewrite(doc, replacements)
-	code := c.writeRewritten(fileArg, toStdout, []byte(out))
-
-	if fileArg != "" && !toStdout {
-		fmt.Fprintf(c.Err, "Rewrite: %d uploaded, %d failed.\n", succeeded, failed)
+// resolveProvider loads the named provider from cfg and validates it.
+// Returns the provider and 0 on success, or nil and a non-zero exit code.
+func (c *CLI) resolveProvider(ctx context.Context, pn string, cfg config.Config) (model.Provider, int) {
+	if pn == "" {
+		pn = cfg.Provider
+		if pn == "" {
+			pn = cfg.DefaultProvider
+		}
 	}
-	if code != 0 {
-		return code
+	if pn == "" {
+		fmt.Fprintln(c.Err, "Error: no provider selected; run img init")
+		return nil, 2
 	}
-	if failed > 0 && succeeded > 0 {
-		return 3
+	pc, ok := cfg.Providers[pn]
+	if !ok {
+		fmt.Fprintf(c.Err, "Error: provider %q is not configured\n", pn)
+		return nil, 2
 	}
-	if failed > 0 {
-		return 1
+	p, err := provider.New(ctx, pn, pc)
+	if err != nil {
+		fmt.Fprintln(c.Err, "Error:", err)
+		return nil, 2
 	}
-	return 0
+	if err = p.Validate(ctx); err != nil {
+		fmt.Fprintln(c.Err, "Error:", err)
+		return nil, 2
+	}
+	return p, 0
 }
 
 // writeRewritten writes data either to stdout or back to the source file using
@@ -408,6 +419,51 @@ func (c *CLI) writeRewritten(fileArg string, toStdout bool, data []byte) int {
 		fmt.Fprintln(c.Err, "Error: replace file:", err)
 		return 1
 	}
+	return 0
+}
+
+// info inspects image files and reports their type, dimensions, size, and
+// whether EXIF metadata (GPS, device info) is present.
+//
+//	img info photo.jpg screenshot.png    # tabular output
+//	img info photo.jpg --format json     # JSON output
+func (c *CLI) info(args []string) int {
+	fs := flag.NewFlagSet("info", flag.ContinueOnError)
+	fs.SetOutput(c.Err)
+	var format string
+	fs.StringVar(&format, "format", "text", "output format: text or json")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	files := fs.Args()
+	if len(files) == 0 {
+		fmt.Fprintln(c.Err, "Error: at least one image file is required")
+		return 2
+	}
+	infos := make([]info.ImageInfo, len(files))
+	for i, f := range files {
+		infos[i] = info.Inspect(f)
+	}
+	if format == "json" {
+		if err := info.PrintJSON(c.Out, infos); err != nil {
+			fmt.Fprintln(c.Err, "Error:", err)
+			return 1
+		}
+		return 0
+	}
+	// Tabular text output.
+	hasEXIF := false
+	for _, ii := range infos {
+		fmt.Fprintln(c.Out, ii.Format())
+		if ii.HasEXIF {
+			hasEXIF = true
+		}
+	}
+	if hasEXIF {
+		fmt.Fprintln(c.Out, "\n⚠  Files marked with EXIF may contain GPS location and device information.")
+		fmt.Fprintln(c.Out, "   Remove before uploading: img upload <file> --strip-exif")
+	}
+	// Exit 0 even if some files had errors; errors are included in the output.
 	return 0
 }
 
@@ -913,12 +969,34 @@ func get(w io.Writer, c config.Config, k string) error {
 		fmt.Fprintln(w, c.DefaultProvider)
 	case "upload.concurrency":
 		fmt.Fprintln(w, c.Upload.Concurrency)
+	case "upload.strip_exif":
+		fmt.Fprintln(w, c.Upload.StripEXIF)
+	case "upload.max_width":
+		fmt.Fprintln(w, c.Upload.MaxWidth)
+	case "upload.retry_count":
+		fmt.Fprintln(w, c.Upload.RetryCount)
 	default:
 		return fmt.Errorf("unsupported config key %q", k)
 	}
 	return nil
 }
 func set(c *config.Config, k, v string) error {
+	parseBool := func(v string) (bool, error) {
+		if v == "" {
+			return false, nil
+		}
+		return strconv.ParseBool(v)
+	}
+	parseUint := func(v string, min int) (int, error) {
+		if v == "" {
+			return 0, nil
+		}
+		n, e := strconv.Atoi(v)
+		if e != nil || n < min {
+			return 0, fmt.Errorf("value must be an integer ≥ %d", min)
+		}
+		return n, nil
+	}
 	switch k {
 	case "output.format":
 		if v != "" && !validFormat(v) {
@@ -926,21 +1004,13 @@ func set(c *config.Config, k, v string) error {
 		}
 		c.Output.Format = v
 	case "output.copy":
-		b, e := strconv.ParseBool(v)
-		if v == "" {
-			b = false
-			e = nil
-		}
+		b, e := parseBool(v)
 		if e != nil {
 			return e
 		}
 		c.Output.Copy = b
 	case "output.quiet":
-		b, e := strconv.ParseBool(v)
-		if v == "" {
-			b = false
-			e = nil
-		}
+		b, e := parseBool(v)
 		if e != nil {
 			return e
 		}
@@ -948,11 +1018,29 @@ func set(c *config.Config, k, v string) error {
 	case "default_provider":
 		c.DefaultProvider = v
 	case "upload.concurrency":
-		n, e := strconv.Atoi(v)
-		if e != nil || n < 1 {
+		n, e := parseUint(v, 1)
+		if e != nil {
 			return errors.New("concurrency must be a positive integer")
 		}
 		c.Upload.Concurrency = n
+	case "upload.strip_exif":
+		b, e := parseBool(v)
+		if e != nil {
+			return e
+		}
+		c.Upload.StripEXIF = b
+	case "upload.max_width":
+		n, e := parseUint(v, 0)
+		if e != nil {
+			return e
+		}
+		c.Upload.MaxWidth = n
+	case "upload.retry_count":
+		n, e := parseUint(v, 0)
+		if e != nil {
+			return e
+		}
+		c.Upload.RetryCount = n
 	default:
 		return fmt.Errorf("unsupported config key %q", k)
 	}
@@ -967,7 +1055,8 @@ func (c *CLI) usage() {
 			"       img <file...> [options]\n"+
 			"       img screenshot [--region|--window] [options]\n"+
 			"       img serve [--port 36677] [options]\n"+
-			"       img rewrite [<file.md>] [options]\n"+
+			"       img rewrite [<file.md> ...] [options]\n"+
+			"       img info <file...> [--format json]\n"+
 			"       img init | provider | config | version")
 }
 

@@ -3,6 +3,7 @@ package upload
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -118,13 +119,18 @@ func one(ctx context.Context, p model.Provider, c config.Upload, src string, o O
 	}
 
 	// ── Pre-processing ────────────────────────────────────────────────────────
-	// Apply lossless EXIF stripping and/or downscaling before the format
-	// optimiser so that each step can work on already-processed bytes.
+	// Merge config-level defaults with per-call option overrides.
+	doStripEXIF := o.StripEXIF || c.StripEXIF
+	doMaxWidth := o.MaxWidth
+	if doMaxWidth == 0 {
+		doMaxWidth = c.MaxWidth
+	}
+
 	body := newReader()
 	var originalSize int64
 
 	// Step 1: EXIF strip (lossless, JPEG only).
-	if o.StripEXIF && typ == "image/jpeg" {
+	if doStripEXIF && typ == "image/jpeg" {
 		if raw, err := io.ReadAll(newReader()); err == nil {
 			if stripped, changed := optimize.StripJPEGMetadata(raw); changed {
 				if originalSize == 0 {
@@ -139,8 +145,8 @@ func one(ctx context.Context, p model.Provider, c config.Upload, src string, o O
 	}
 
 	// Step 2: Scale down (decode → CatmullRom → encode as JPEG/WebP).
-	if o.MaxWidth > 0 {
-		res, err := optimize.ScaleDown(newReader(), typ, size, o.MaxWidth, 0)
+	if doMaxWidth > 0 {
+		res, err := optimize.ScaleDown(newReader(), typ, size, doMaxWidth, 0)
 		if err == nil && res.Reduced {
 			if originalSize == 0 {
 				originalSize = res.OriginalSize
@@ -192,17 +198,45 @@ func one(ctx context.Context, p model.Provider, c config.Upload, src string, o O
 		return r
 	}
 	overwrite := o.Overwrite || c.Overwrite || c.Conflict == "overwrite"
-	u, err := p.Upload(ctx, model.UploadRequest{
-		LocalPath:   r.LocalPath, // original source (path or URL) for logging
+	req := model.UploadRequest{
+		LocalPath:   r.LocalPath,
 		FileName:    filepath.Base(name),
 		Body:        body,
 		Size:        size,
 		RemotePath:  remote,
 		ContentType: typ,
 		Overwrite:   overwrite,
-	})
-	if err != nil {
-		r.Error = fmt.Sprintf("upload with provider %s: %v", p.Name(), err)
+	}
+
+	// ── Upload with retry ─────────────────────────────────────────────────────
+	retries := c.RetryCount
+	var uploadErr error
+	var u *model.UploadResult
+	for attempt := 0; attempt <= retries; attempt++ {
+		if attempt > 0 {
+			// Exponential backoff: 1s, 2s, 4s, …
+			delay := time.Duration(1<<uint(attempt-1)) * time.Second
+			select {
+			case <-ctx.Done():
+				r.Error = ctx.Err().Error()
+				return r
+			case <-time.After(delay):
+			}
+			// Rewind body for retry.
+			if _, se := body.Seek(0, io.SeekStart); se != nil {
+				break
+			}
+		}
+		u, uploadErr = p.Upload(ctx, req)
+		if uploadErr == nil {
+			break
+		}
+		if !isRetryable(uploadErr) {
+			break
+		}
+	}
+	if uploadErr != nil {
+		r.Error = fmt.Sprintf("upload with provider %s: %v", p.Name(), uploadErr)
 		return r
 	}
 	r.Success = true
@@ -215,6 +249,31 @@ func one(ctx context.Context, p model.Provider, c config.Upload, src string, o O
 		r.OriginalSize = originalSize
 	}
 	return r
+}
+
+// isRetryable reports whether an upload error is likely transient and worth
+// retrying. Permanent errors (already exists, auth, invalid file) are not
+// retried regardless of retry_count.
+func isRetryable(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, perm := range []string{"already exists", "not found", "unauthorized", "forbidden", "unsupported"} {
+		if strings.Contains(msg, perm) {
+			return false
+		}
+	}
+	for _, transient := range []string{"rate limit", "timeout", "connection", "temporary", "unavailable", "retry", "too many"} {
+		if strings.Contains(msg, transient) {
+			return true
+		}
+	}
+	// Retry on generic network/IO errors that aren't clearly permanent.
+	return true
 }
 
 func choose(a, b string) string {

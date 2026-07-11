@@ -39,6 +39,11 @@ type Upload struct {
 	Overwrite    bool   `toml:"overwrite" json:"overwrite"`
 	Concurrency  int    `toml:"concurrency" json:"concurrency"`
 	MaxSize      int64  `toml:"max_size" json:"max_size"`
+	// Processing options — mirror the --strip-exif / --resize / retry CLI flags.
+	// Set them here to apply globally without repeating flags each time.
+	StripEXIF  bool `toml:"strip_exif,omitempty" json:"strip_exif,omitempty"`
+	MaxWidth   int  `toml:"max_width,omitempty" json:"max_width,omitempty"`
+	RetryCount int  `toml:"retry_count,omitempty" json:"retry_count,omitempty"`
 }
 
 type ProviderConfig struct {
