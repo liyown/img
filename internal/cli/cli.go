@@ -98,7 +98,8 @@ func (c *CLI) upload(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("upload", flag.ContinueOnError)
 	fs.SetOutput(c.Err)
 	var pn, format, path, name string
-	var copyFlag, noCopy, overwrite, verbose, quietFlag, optimizeFlag, allowInsecure bool
+	var copyFlag, noCopy, overwrite, verbose, quietFlag, optimizeFlag, allowInsecure, stripEXIF bool
+	var resizeWidth int
 	fs.StringVar(&pn, "provider", "", "provider name")
 	fs.StringVar(&format, "format", "", "url, markdown, html, or json")
 	fs.BoolVar(&copyFlag, "copy", false, "copy output")
@@ -108,9 +109,11 @@ func (c *CLI) upload(ctx context.Context, args []string) int {
 	fs.StringVar(&name, "name", "", "remote file name")
 	fs.BoolVar(&overwrite, "overwrite", false, "overwrite existing object")
 	fs.BoolVar(&verbose, "verbose", false, "verbose logging")
-	fs.BoolVar(&optimizeFlag, "optimize", false, "compress images before upload (JPEG→q85, opaque PNG→JPEG)")
+	fs.BoolVar(&optimizeFlag, "optimize", false, "compress images before upload")
+	fs.BoolVar(&stripEXIF, "strip-exif", false, "strip EXIF/GPS metadata from JPEG before upload")
+	fs.IntVar(&resizeWidth, "resize", 0, "downscale to this max width in pixels before upload")
 	fs.BoolVar(&allowInsecure, "allow-insecure", false, "allow fetching source URLs over plain HTTP")
-	ordered, err := reorder(args, map[string]bool{"--provider": true, "--format": true, "--path": true, "--name": true})
+	ordered, err := reorder(args, map[string]bool{"--provider": true, "--format": true, "--path": true, "--name": true, "--resize": true})
 	if err != nil {
 		fmt.Fprintln(c.Err, "Error:", err)
 		return 2
@@ -166,7 +169,7 @@ func (c *CLI) upload(ctx context.Context, args []string) int {
 		fmt.Fprintln(c.Err, "Error:", err)
 		return 2
 	}
-	results := upload.Run(ctx, p, cfg.Upload, files, upload.Options{Path: path, Name: name, Overwrite: overwrite, Optimize: optimizeFlag, AllowInsecure: allowInsecure})
+	results := upload.Run(ctx, p, cfg.Upload, files, upload.Options{Path: path, Name: name, Overwrite: overwrite, Optimize: optimizeFlag, StripEXIF: stripEXIF, MaxWidth: resizeWidth, AllowInsecure: allowInsecure})
 	// In verbose mode, report compression savings for each optimised file.
 	if verbose && optimizeFlag {
 		for _, r := range results {
@@ -222,14 +225,17 @@ func (c *CLI) rewrite(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("rewrite", flag.ContinueOnError)
 	fs.SetOutput(c.Err)
 	var pn, path string
-	var overwrite, optimize, allowInsecure, toStdout bool
+	var overwrite, optimize, allowInsecure, toStdout, stripEXIF bool
+	var resizeWidth int
 	fs.StringVar(&pn, "provider", "", "provider name")
 	fs.StringVar(&path, "path", "", "remote path prefix")
 	fs.BoolVar(&overwrite, "overwrite", false, "overwrite existing objects")
 	fs.BoolVar(&optimize, "optimize", false, "compress images before upload")
+	fs.BoolVar(&stripEXIF, "strip-exif", false, "strip EXIF/GPS metadata from JPEG before upload")
+	fs.IntVar(&resizeWidth, "resize", 0, "downscale to this max width in pixels before upload")
 	fs.BoolVar(&allowInsecure, "allow-insecure", false, "allow fetching source URLs over plain HTTP")
 	fs.BoolVar(&toStdout, "stdout", false, "write result to stdout instead of rewriting the file")
-	ordered, err := reorder(args, map[string]bool{"--provider": true, "--path": true})
+	ordered, err := reorder(args, map[string]bool{"--provider": true, "--path": true, "--resize": true})
 	if err != nil {
 		fmt.Fprintln(c.Err, "Error:", err)
 		return 2
@@ -327,6 +333,8 @@ func (c *CLI) rewrite(ctx context.Context, args []string) int {
 		Path:          path,
 		Overwrite:     overwrite,
 		Optimize:      optimize,
+		StripEXIF:     stripEXIF,
+		MaxWidth:      resizeWidth,
 		AllowInsecure: allowInsecure,
 	})
 
@@ -433,6 +441,10 @@ func (c *CLI) screenshot(ctx context.Context, args []string) int {
 	fs.BoolVar(&noCopy, "no-copy", false, "do not copy result to clipboard")
 	fs.BoolVar(&optimize, "optimize", false, "compress image before upload")
 	fs.BoolVar(&verbose, "verbose", false, "verbose logging")
+	var stripEXIF bool
+	var resizeWidth int
+	fs.BoolVar(&stripEXIF, "strip-exif", false, "strip EXIF/GPS metadata before upload")
+	fs.IntVar(&resizeWidth, "resize", 0, "downscale to this max width in pixels")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -494,7 +506,7 @@ func (c *CLI) screenshot(ctx context.Context, args []string) int {
 	}
 
 	results := upload.Run(ctx, p, cfg.Upload, []string{tmpPath},
-		upload.Options{Path: remotePath, Optimize: optimize})
+		upload.Options{Path: remotePath, Optimize: optimize, StripEXIF: stripEXIF, MaxWidth: resizeWidth})
 
 	doQuiet := cfg.Output.Quiet
 	if !doQuiet {
@@ -539,11 +551,14 @@ func (c *CLI) serveCmd(ctx context.Context, args []string) int {
 	fs.SetOutput(c.Err)
 	var pn, bind string
 	var port int
-	var optimize bool
+	var optimize, stripEXIF bool
+	var resizeWidth int
 	fs.StringVar(&pn, "provider", "", "provider name")
 	fs.StringVar(&bind, "bind", "127.0.0.1", "address to bind")
 	fs.IntVar(&port, "port", 36677, "port to listen on")
 	fs.BoolVar(&optimize, "optimize", false, "compress images before upload")
+	fs.BoolVar(&stripEXIF, "strip-exif", false, "strip EXIF/GPS metadata from JPEG before upload")
+	fs.IntVar(&resizeWidth, "resize", 0, "downscale to this max width in pixels before upload")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -582,7 +597,7 @@ func (c *CLI) serveCmd(ctx context.Context, args []string) int {
 	s := &serve.Server{
 		Provider: p,
 		Cfg:      cfg.Upload,
-		Opts:     serve.Options{UploadOpts: upload.Options{Optimize: optimize}},
+		Opts:     serve.Options{UploadOpts: upload.Options{Optimize: optimize, StripEXIF: stripEXIF, MaxWidth: resizeWidth}},
 		Out:      c.Out,
 		Err:      c.Err,
 	}

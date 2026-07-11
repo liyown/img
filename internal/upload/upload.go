@@ -35,6 +35,8 @@ type Options struct {
 	Path, Name    string
 	Overwrite     bool
 	Optimize      bool
+	StripEXIF     bool // strip EXIF/XMP metadata from JPEG before upload
+	MaxWidth      int  // downscale to fit this width (px); 0 = no resize
 	AllowInsecure bool // permit fetching source URLs over plain HTTP
 	Now           time.Time
 }
@@ -115,20 +117,58 @@ func one(ctx context.Context, p model.Provider, c config.Upload, src string, o O
 		now = time.Now()
 	}
 
-	// Optimise before path generation so the remote extension can reflect the
-	// (possibly converted) output format.
+	// ── Pre-processing ────────────────────────────────────────────────────────
+	// Apply lossless EXIF stripping and/or downscaling before the format
+	// optimiser so that each step can work on already-processed bytes.
 	body := newReader()
 	var originalSize int64
+
+	// Step 1: EXIF strip (lossless, JPEG only).
+	if o.StripEXIF && typ == "image/jpeg" {
+		if raw, err := io.ReadAll(newReader()); err == nil {
+			if stripped, changed := optimize.StripJPEGMetadata(raw); changed {
+				if originalSize == 0 {
+					originalSize = size
+				}
+				size = int64(len(stripped))
+				captured := stripped
+				newReader = func() io.ReadSeeker { return bytes.NewReader(captured) }
+				body = newReader()
+			}
+		}
+	}
+
+	// Step 2: Scale down (decode → CatmullRom → encode as JPEG/WebP).
+	if o.MaxWidth > 0 {
+		res, err := optimize.ScaleDown(newReader(), typ, size, o.MaxWidth, 0)
+		if err == nil && res.Reduced {
+			if originalSize == 0 {
+				originalSize = res.OriginalSize
+			}
+			size = res.Size
+			typ = res.ContentType
+			captured, _ := io.ReadAll(res.Body)
+			newReader = func() io.ReadSeeker { return bytes.NewReader(captured) }
+			body = newReader()
+			if newExt := extForType(typ); newExt != "" {
+				lower := strings.ToLower(name)
+				if !strings.HasSuffix(lower, newExt) && !(newExt == ".jpg" && strings.HasSuffix(lower, ".jpeg")) {
+					name = strings.TrimSuffix(name, filepath.Ext(name)) + newExt
+				}
+			}
+		}
+	}
+
+	// Step 3: Format compression (JPEG re-encode / PNG→WebP / etc.).
 	if o.Optimize {
 		res, oerr := optimize.TryCompress(newReader(), typ, size)
 		if oerr == nil && res.Reduced {
+			if originalSize == 0 {
+				originalSize = res.OriginalSize
+			}
 			body = res.Body
-			originalSize = res.OriginalSize
 			size = res.Size
 			typ = res.ContentType
-			// If the format changed (e.g. PNG→JPEG or PNG→WebP), update the
-			// name hint used for remote-path generation so {ext} and {filename}
-			// stay consistent with the uploaded bytes.
 			if newExt := extForType(res.ContentType); newExt != "" {
 				lower := strings.ToLower(name)
 				if !strings.HasSuffix(lower, newExt) && !(newExt == ".jpg" && strings.HasSuffix(lower, ".jpeg")) {

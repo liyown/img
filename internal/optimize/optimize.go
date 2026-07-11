@@ -17,12 +17,15 @@ package optimize
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
 	"image/png"
 	"io"
+
+	xdraw "golang.org/x/image/draw"
 
 	"github.com/HugoSmits86/nativewebp"
 )
@@ -208,4 +211,173 @@ func hasTransparency(img image.Image) bool {
 		}
 	}
 	return false
+}
+
+// ─── EXIF stripping ───────────────────────────────────────────────────────────
+
+// StripJPEGMetadata removes EXIF, XMP, and other APP1 metadata markers from a
+// JPEG byte slice without re-encoding (lossless). It returns the stripped data
+// and true when metadata was found. For non-JPEG input it returns nil, false.
+//
+// Privacy note: APP1 markers carry EXIF data including GPS coordinates, device
+// model, and timestamps embedded by cameras and smartphones.
+func StripJPEGMetadata(data []byte) ([]byte, bool) {
+	if len(data) < 4 || data[0] != 0xFF || data[1] != 0xD8 {
+		return nil, false // not a JPEG
+	}
+
+	var out bytes.Buffer
+	out.Grow(len(data))
+	out.WriteByte(0xFF)
+	out.WriteByte(0xD8) // SOI
+
+	stripped := false
+	i := 2
+	for i < len(data) {
+		if data[i] != 0xFF {
+			// We are past SOS — image-compressed data, copy verbatim.
+			out.Write(data[i:])
+			break
+		}
+		if i+1 >= len(data) {
+			break
+		}
+		marker := data[i+1]
+		i += 2
+
+		// Markers with no payload: RST0-RST7, SOI, EOI.
+		if marker == 0xD8 || marker == 0xD9 || (marker >= 0xD0 && marker <= 0xD7) {
+			out.WriteByte(0xFF)
+			out.WriteByte(marker)
+			if marker == 0xD9 {
+				break
+			}
+			continue
+		}
+		if i+1 >= len(data) {
+			break
+		}
+		// Segment length is big-endian and includes the 2 length bytes.
+		segLen := int(binary.BigEndian.Uint16(data[i : i+2]))
+		if i+segLen > len(data) {
+			break
+		}
+		payload := data[i : i+segLen]
+		i += segLen
+
+		// Strip APP1 (EXIF/XMP). Keep APP0 (JFIF/JFXX) for compatibility and
+		// all other markers (colour profiles, quantisation tables, etc.).
+		if marker == 0xE1 {
+			stripped = true
+			continue
+		}
+		out.WriteByte(0xFF)
+		out.WriteByte(marker)
+		out.Write(payload)
+
+		// SOS is followed by raw compressed image data — handled at the top
+		// of the loop when data[i] != 0xFF.
+	}
+
+	if !stripped {
+		return nil, false
+	}
+	return out.Bytes(), true
+}
+
+// ─── Resize ───────────────────────────────────────────────────────────────────
+
+// ScaleDown decodes the image in r and scales it so that neither dimension
+// exceeds maxWidth / maxHeight (zero means "no constraint on that axis"). Only
+// downscaling is performed; if the image already fits, Result.Reduced is false.
+// The resized image is encoded as whichever of JPEG q85 and lossless WebP is
+// smaller, so ScaleDown implicitly compresses as well as resizes.
+func ScaleDown(r io.ReadSeeker, contentType string, origSize int64, maxWidth, maxHeight int) (Result, error) {
+	passthrough := func() (Result, error) {
+		if _, err := r.Seek(0, io.SeekStart); err != nil {
+			return Result{}, err
+		}
+		return Result{Body: r, ContentType: contentType, Size: origSize, OriginalSize: origSize}, nil
+	}
+	if maxWidth <= 0 && maxHeight <= 0 {
+		return passthrough()
+	}
+	if _, err := r.Seek(0, io.SeekStart); err != nil {
+		return Result{}, fmt.Errorf("rewind for resize: %w", err)
+	}
+	src, _, err := image.Decode(r)
+	if err != nil {
+		return passthrough() // can't decode → skip silently
+	}
+	scaled := scaleImage(src, maxWidth, maxHeight)
+	if scaled == nil {
+		return passthrough() // already fits
+	}
+	return encodeScaled(scaled, origSize), nil
+}
+
+// scaleImage returns a downscaled copy of src that fits within maxW×maxH
+// (zero = unlimited). Returns nil when no scaling is required.
+func scaleImage(src image.Image, maxW, maxH int) image.Image {
+	b := src.Bounds()
+	w, h := b.Dx(), b.Dy()
+	if w == 0 || h == 0 {
+		return nil
+	}
+	newW, newH := w, h
+	if maxW > 0 && newW > maxW {
+		newH = newH * maxW / newW
+		newW = maxW
+	}
+	if maxH > 0 && newH > maxH {
+		newW = newW * maxH / newH
+		newH = maxH
+	}
+	if newW >= w && newH >= h {
+		return nil // nothing changed
+	}
+	if newW < 1 {
+		newW = 1
+	}
+	if newH < 1 {
+		newH = 1
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, newW, newH))
+	xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, b, xdraw.Over, nil)
+	return dst
+}
+
+// encodeScaled encodes img as both JPEG q85 and lossless WebP and returns the
+// smaller result. origSize is the pre-resize byte count, used only for the
+// OriginalSize field in the returned Result.
+func encodeScaled(img image.Image, origSize int64) Result {
+	best := Result{ContentType: "", Size: origSize + 1, OriginalSize: origSize}
+	var bestBytes []byte
+
+	// JPEG candidate (lossy; skip if image has transparency)
+	if !hasTransparency(img) {
+		var jbuf bytes.Buffer
+		if err := jpeg.Encode(&jbuf, img, &jpeg.Options{Quality: jpegQuality}); err == nil {
+			if int64(jbuf.Len()) < best.Size {
+				bestBytes = jbuf.Bytes()
+				best = Result{ContentType: "image/jpeg", Size: int64(len(bestBytes)), OriginalSize: origSize, Reduced: true}
+			}
+		}
+	}
+
+	// WebP candidate (lossless; preserves transparency)
+	var wbuf bytes.Buffer
+	if err := nativewebp.Encode(&wbuf, img, &nativewebp.Options{}); err == nil {
+		if int64(wbuf.Len()) < best.Size {
+			bestBytes = wbuf.Bytes()
+			best = Result{ContentType: "image/webp", Size: int64(len(bestBytes)), OriginalSize: origSize, Reduced: true}
+		}
+	}
+
+	if best.Reduced {
+		best.Body = bytes.NewReader(bestBytes)
+		return best
+	}
+	// Both encoders failed or produced larger output — return empty (caller falls back).
+	return Result{}
 }

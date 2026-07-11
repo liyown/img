@@ -182,3 +182,117 @@ func TestBodyAlwaysReadable(t *testing.T) {
 		t.Fatalf("body unreadable after corrupt input: %v", err)
 	}
 }
+
+// ─── EXIF stripping tests ─────────────────────────────────────────────────────
+
+func makeJPEGWithFakeEXIF(t *testing.T) []byte {
+	t.Helper()
+	// Build a minimal JPEG: SOI + fake APP1 (EXIF marker) + APP0 (JFIF) + EOI.
+	var buf bytes.Buffer
+	buf.Write([]byte{0xFF, 0xD8}) // SOI
+
+	// Fake APP1 (0xFFE1) with some payload — simulates EXIF.
+	exifPayload := []byte("Exif\x00\x00fake-gps-data")
+	app1Len := uint16(2 + len(exifPayload))
+	buf.Write([]byte{0xFF, 0xE1})
+	buf.WriteByte(byte(app1Len >> 8))
+	buf.WriteByte(byte(app1Len))
+	buf.Write(exifPayload)
+
+	// APP0 (0xFFE0, JFIF) — should be kept.
+	jfifPayload := []byte("JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00")
+	app0Len := uint16(2 + len(jfifPayload))
+	buf.Write([]byte{0xFF, 0xE0})
+	buf.WriteByte(byte(app0Len >> 8))
+	buf.WriteByte(byte(app0Len))
+	buf.Write(jfifPayload)
+
+	buf.Write([]byte{0xFF, 0xD9}) // EOI
+	return buf.Bytes()
+}
+
+func TestStripJPEGMetadataRemovesAPP1(t *testing.T) {
+	data := makeJPEGWithFakeEXIF(t)
+	stripped, changed := StripJPEGMetadata(data)
+	if !changed {
+		t.Fatal("expected metadata to be stripped")
+	}
+	if len(stripped) >= len(data) {
+		t.Fatalf("stripped (%d bytes) should be smaller than original (%d bytes)", len(stripped), len(data))
+	}
+	// APP1 marker should be gone.
+	for i := 0; i+1 < len(stripped); i++ {
+		if stripped[i] == 0xFF && stripped[i+1] == 0xE1 {
+			t.Fatal("APP1 (EXIF) marker still present after stripping")
+		}
+	}
+	// APP0 (JFIF) should still be present.
+	found := false
+	for i := 0; i+1 < len(stripped); i++ {
+		if stripped[i] == 0xFF && stripped[i+1] == 0xE0 {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("APP0 (JFIF) was incorrectly stripped")
+	}
+}
+
+func TestStripJPEGMetadataIgnoresNonJPEG(t *testing.T) {
+	_, changed := StripJPEGMetadata([]byte("\x89PNG\r\n\x1a\n"))
+	if changed {
+		t.Fatal("non-JPEG input should not be changed")
+	}
+}
+
+func TestStripJPEGMetadataNoOpWhenNoEXIF(t *testing.T) {
+	// A minimal JPEG with no APP1.
+	data := []byte{0xFF, 0xD8, 0xFF, 0xD9}
+	_, changed := StripJPEGMetadata(data)
+	if changed {
+		t.Fatal("JPEG without APP1 should not be changed")
+	}
+}
+
+// ─── ScaleDown tests ──────────────────────────────────────────────────────────
+
+func TestScaleDownReducesPNG(t *testing.T) {
+	// Create a 400×200 opaque PNG.
+	img := image.NewRGBA(image.Rect(0, 0, 400, 200))
+	for y := 0; y < 200; y++ {
+		for x := 0; x < 400; x++ {
+			img.SetRGBA(x, y, color.RGBA{R: uint8(x), G: uint8(y), B: 100, A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	png.Encode(&buf, img)
+	data := buf.Bytes()
+
+	res, err := ScaleDown(bytes.NewReader(data), "image/png", int64(len(data)), 200, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Reduced {
+		t.Fatal("400-wide image should be scaled down to max-width 200")
+	}
+	// The output must be a supported type.
+	if res.ContentType != "image/jpeg" && res.ContentType != "image/webp" {
+		t.Fatalf("unexpected content type: %s", res.ContentType)
+	}
+}
+
+func TestScaleDownPassthroughWhenAlreadySmall(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 100, 50))
+	var buf bytes.Buffer
+	png.Encode(&buf, img)
+	data := buf.Bytes()
+
+	res, err := ScaleDown(bytes.NewReader(data), "image/png", int64(len(data)), 800, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Reduced {
+		t.Fatal("100-wide image should not be scaled when max-width is 800")
+	}
+}

@@ -185,6 +185,22 @@ img screenshot.png --optimize --verbose   # 显示每张图的压缩率
 | PNG（含透明） | 尝试无损 WebP（保留透明度） |
 | SVG / GIF / WebP / AVIF | 原样上传 |
 
+上传前剥离 EXIF 元数据（适合手机照片，避免泄露 GPS 位置）：
+
+```sh
+img photo.jpg --strip-exif
+img photo.jpg --strip-exif --optimize    # 组合使用
+```
+
+上传前缩放（只缩小，不放大）：
+
+```sh
+img photo.jpg --resize 1200              # 限制最大宽度为 1200px
+img photo.jpg --resize 1200 --optimize  # 缩放 + 压缩
+```
+
+以上三个选项同样适用于 `screenshot`、`rewrite`、`serve` 命令。
+
 ## 截图即上传
 
 截图后直接上传，结果自动复制到剪贴板：
