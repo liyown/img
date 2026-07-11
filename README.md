@@ -1,6 +1,7 @@
 # img
 
 [![CI](https://github.com/liyown/img/actions/workflows/ci.yml/badge.svg)](https://github.com/liyown/img/actions/workflows/ci.yml)
+&nbsp;[English](README.en.md)
 
 `img` 是一个为 AI Agent 和命令行用户设计的图片上传工具。把本地图片、截图或外链 URL 上传到已配置的图床，返回 URL、Markdown 或 JSON。
 
