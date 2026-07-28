@@ -1,0 +1,96 @@
+{
+  "name": "img-uploader",
+  "title": "img Uploader",
+  "description": "Upload images to your configured img host — screenshot, clipboard, or file. Supports Cloudflare R2, S3, OSS, GitHub, and HTTP endpoints.",
+  "icon": "extension-icon.png",
+  "author": "liyown",
+  "categories": ["Productivity", "Developer Tools"],
+  "license": "MIT",
+  "commands": [
+    {
+      "name": "upload-screenshot",
+      "title": "Upload Screenshot",
+      "subtitle": "img",
+      "description": "Capture a screenshot (full screen or region) and upload it. The Markdown link is copied to clipboard.",
+      "mode": "no-view"
+    },
+    {
+      "name": "upload-clipboard",
+      "title": "Upload Clipboard Image",
+      "subtitle": "img",
+      "description": "Upload the image currently on the clipboard. The result is copied back.",
+      "mode": "no-view"
+    },
+    {
+      "name": "upload-file",
+      "title": "Upload Image File",
+      "subtitle": "img",
+      "description": "Pick one or more image files to upload.",
+      "mode": "view"
+    }
+  ],
+  "preferences": [
+    {
+      "name": "imgPath",
+      "title": "img executable",
+      "description": "Path to the img binary (must be in PATH or provide absolute path)",
+      "type": "textfield",
+      "default": "img",
+      "required": false
+    },
+    {
+      "name": "outputFormat",
+      "title": "Output format",
+      "description": "Format of the link copied to clipboard after upload",
+      "type": "dropdown",
+      "default": "markdown",
+      "required": false,
+      "data": [
+        { "title": "Markdown  ![alt](url)", "value": "markdown" },
+        { "title": "URL only",              "value": "url" },
+        { "title": "HTML <img>",            "value": "html" }
+      ]
+    },
+    {
+      "name": "provider",
+      "title": "Provider override",
+      "description": "Override the default img provider (leave empty to use default)",
+      "type": "textfield",
+      "default": "",
+      "required": false
+    },
+    {
+      "name": "optimize",
+      "title": "Compress before upload",
+      "description": "Pass --optimize to img",
+      "type": "checkbox",
+      "default": false,
+      "required": false,
+      "label": "Optimize"
+    },
+    {
+      "name": "stripExif",
+      "title": "Strip EXIF metadata",
+      "description": "Pass --strip-exif to img (JPEG photos only)",
+      "type": "checkbox",
+      "default": false,
+      "required": false,
+      "label": "Strip EXIF"
+    }
+  ],
+  "dependencies": {
+    "@raycast/api": "^1.70.0"
+  },
+  "devDependencies": {
+    "@raycast/utils": "^1.15.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0"
+  },
+  "scripts": {
+    "build": "ray build -e dist",
+    "dev": "ray develop",
+    "fix-lint": "ray lint --fix",
+    "lint": "ray lint",
+    "publish": "npx @raycast/api@latest publish"
+  }
+}

@@ -359,6 +359,44 @@ img upload a.png b.png --format json --no-copy
 
 ---
 
+## 集成
+
+### Shell 补全
+
+```sh
+img completion bash      # eval "$(img completion bash)"
+img completion zsh       # eval "$(img completion zsh)" 或写入 _img 函数文件
+img completion fish      # img completion fish > ~/.config/fish/completions/img.fish
+```
+
+### VS Code 扩展
+
+`integrations/vscode/` — 在 Markdown 编辑器里 `Cmd+Alt+V` 粘贴剪贴板图片自动上传，右键资源管理器里的图片可以上传。
+
+### Raycast 扩展
+
+`integrations/raycast/` — macOS Raycast 里三个命令：截图上传、剪贴板上传、文件上传。
+
+### GitHub Action
+
+在文档仓库里自动把本地图片路径转 CDN URL：
+
+```yaml
+- uses: liyown/img@v0.2
+  with:
+    provider-type: s3
+    s3-endpoint: https://ACCOUNT.r2.cloudflarestorage.com
+    s3-bucket: images
+    s3-access-key: ${{ secrets.R2_ACCESS_KEY }}
+    s3-secret-key: ${{ secrets.R2_SECRET_KEY }}
+    s3-public-url: https://img.example.com
+    optimize: 'true'
+```
+
+详细配置见 [action.yml](action.yml)。
+
+---
+
 ## 给 Agent 使用
 
 仓库包含配套 Skill：[skills/img-uploader](skills/img-uploader)。

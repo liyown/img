@@ -1,0 +1,179 @@
+name: 'img rewrite'
+description: >
+  Upload and rewrite images in Markdown files using img.
+  Converts local image paths and external URLs to CDN-hosted links,
+  then commits the changes back to the repository.
+
+branding:
+  icon: upload-cloud
+  color: blue
+
+inputs:
+  files:
+    description: 'Glob pattern of Markdown files to process'
+    required: false
+    default: '**/*.md'
+  provider-type:
+    description: 'Provider type: s3 or github'
+    required: true
+  # ── S3 / R2 / OSS ──────────────────────────────────────────────────────────
+  s3-endpoint:
+    description: 'S3-compatible endpoint URL (e.g. https://ACCOUNT.r2.cloudflarestorage.com)'
+    required: false
+  s3-region:
+    description: 'S3 region (default: auto)'
+    required: false
+    default: 'auto'
+  s3-bucket:
+    description: 'S3 bucket name'
+    required: false
+  s3-access-key:
+    description: 'S3 access key'
+    required: false
+  s3-secret-key:
+    description: 'S3 secret key'
+    required: false
+  s3-public-url:
+    description: 'Public base URL for the bucket'
+    required: false
+  s3-path-style:
+    description: 'Use S3 path-style URLs (needed for some providers)'
+    required: false
+    default: 'false'
+  # ── GitHub provider ─────────────────────────────────────────────────────────
+  gh-owner:
+    description: 'GitHub owner (user or org)'
+    required: false
+  gh-repo:
+    description: 'GitHub repository name'
+    required: false
+  gh-branch:
+    description: 'GitHub branch'
+    required: false
+    default: 'main'
+  gh-token:
+    description: 'GitHub token with contents:write permission'
+    required: false
+  # ── Processing ──────────────────────────────────────────────────────────────
+  optimize:
+    description: 'Compress images before upload'
+    required: false
+    default: 'false'
+  strip-exif:
+    description: 'Strip EXIF metadata from JPEG images'
+    required: false
+    default: 'false'
+  resize:
+    description: 'Downscale to this max width in pixels (0 = no resize)'
+    required: false
+    default: '0'
+  remote-path:
+    description: 'Remote path prefix (e.g. blog/assets)'
+    required: false
+    default: ''
+  # ── Commit ──────────────────────────────────────────────────────────────────
+  commit:
+    description: 'Commit and push the rewritten files'
+    required: false
+    default: 'true'
+  commit-message:
+    description: 'Commit message'
+    required: false
+    default: 'chore: rewrite image links to CDN [img-action]'
+
+outputs:
+  files-changed:
+    description: 'Number of files that were modified'
+    value: ${{ steps.rewrite.outputs.files-changed }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install img
+      shell: bash
+      run: |
+        set -e
+        OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+        ARCH="$(uname -m)"
+        case "$ARCH" in
+          x86_64) ARCH="amd64" ;;
+          aarch64|arm64) ARCH="arm64" ;;
+        esac
+        URL="https://github.com/liyown/img/releases/latest/download/img_${OS}_${ARCH}.tar.gz"
+        echo "Installing img from $URL"
+        curl -fsSL "$URL" | tar -xz -C /usr/local/bin img
+        img version
+
+    - name: Configure provider
+      shell: bash
+      env:
+        IMG_S3_ACCESS_KEY: ${{ inputs.s3-access-key }}
+        IMG_S3_SECRET_KEY: ${{ inputs.s3-secret-key }}
+        IMG_GH_TOKEN: ${{ inputs.gh-token }}
+      run: |
+        set -e
+        TYPE="${{ inputs.provider-type }}"
+        case "$TYPE" in
+          s3)
+            img init \
+              --type s3 --name ci \
+              --endpoint "${{ inputs.s3-endpoint }}" \
+              --region "${{ inputs.s3-region }}" \
+              --bucket "${{ inputs.s3-bucket }}" \
+              --access-key '${IMG_S3_ACCESS_KEY}' \
+              --secret-key '${IMG_S3_SECRET_KEY}' \
+              --public-url "${{ inputs.s3-public-url }}" \
+              $( [[ "${{ inputs.s3-path-style }}" == "true" ]] && echo "--path-style" )
+            ;;
+          github)
+            img init \
+              --type github --name ci \
+              --owner "${{ inputs.gh-owner }}" \
+              --repo "${{ inputs.gh-repo }}" \
+              --branch "${{ inputs.gh-branch }}" \
+              --token '${IMG_GH_TOKEN}'
+            ;;
+          *)
+            echo "Error: unsupported provider-type '$TYPE' (use s3 or github)"
+            exit 1
+            ;;
+        esac
+        img config validate
+
+    - name: Rewrite image links
+      id: rewrite
+      shell: bash
+      run: |
+        set -e
+        # Build extra flags
+        EXTRA_FLAGS=""
+        [[ "${{ inputs.optimize }}"   == "true" ]] && EXTRA_FLAGS="$EXTRA_FLAGS --optimize"
+        [[ "${{ inputs.strip-exif }}" == "true" ]] && EXTRA_FLAGS="$EXTRA_FLAGS --strip-exif"
+        [[ "${{ inputs.resize }}"     != "0"    ]] && EXTRA_FLAGS="$EXTRA_FLAGS --resize ${{ inputs.resize }}"
+        [[ -n "${{ inputs.remote-path }}"       ]] && EXTRA_FLAGS="$EXTRA_FLAGS --path ${{ inputs.remote-path }}"
+
+        # Collect matching files
+        FILES=$(find . -path './.git' -prune -o -name '*.md' -print | \
+                grep -E '${{ inputs.files }}' 2>/dev/null || \
+                git ls-files '${{ inputs.files }}' 2>/dev/null || true)
+        COUNT=0
+        for f in $FILES; do
+          [[ -f "$f" ]] || continue
+          BEFORE=$(sha256sum "$f")
+          img rewrite "$f" $EXTRA_FLAGS || true
+          AFTER=$(sha256sum "$f")
+          [[ "$BEFORE" != "$AFTER" ]] && COUNT=$((COUNT + 1))
+        done
+        echo "files-changed=$COUNT" >> "$GITHUB_OUTPUT"
+        echo "Modified $COUNT file(s)."
+
+    - name: Commit changes
+      if: inputs.commit == 'true' && steps.rewrite.outputs.files-changed != '0'
+      shell: bash
+      run: |
+        git config user.name  "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add -A
+        git diff --cached --quiet || \
+          git commit -m "${{ inputs.commit-message }}"
+        git push

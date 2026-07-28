@@ -67,6 +67,8 @@ func (c *CLI) Run(ctx context.Context, args []string) int {
 		return c.serveCmd(ctx, rest)
 	case "info":
 		return c.info(rest)
+	case "completion":
+		return c.completion(rest)
 	case "init":
 		err = c.init(rest)
 	case "provider":
@@ -89,7 +91,8 @@ func (c *CLI) Run(ctx context.Context, args []string) int {
 func known(s string) bool {
 	switch s {
 	case "upload", "init", "provider", "config", "version",
-		"rewrite", "screenshot", "serve", "info", "help", "--help", "-h":
+		"rewrite", "screenshot", "serve", "info", "completion",
+		"help", "--help", "-h":
 		return true
 	}
 	return false
@@ -1059,6 +1062,282 @@ func (c *CLI) usage() {
 			"       img info <file...> [--format json]\n"+
 			"       img init | provider | config | version")
 }
+
+// completion outputs a shell completion script for the given shell.
+//
+//	img completion bash   # paste or source into ~/.bashrc
+//	img completion zsh    # paste or add to $fpath
+//	img completion fish   # paste or save to ~/.config/fish/completions/img.fish
+func (c *CLI) completion(args []string) int {
+	shell := "bash"
+	if len(args) > 0 {
+		shell = args[0]
+	}
+	switch shell {
+	case "bash":
+		fmt.Fprint(c.Out, bashCompletion)
+	case "zsh":
+		fmt.Fprint(c.Out, zshCompletion)
+	case "fish":
+		fmt.Fprint(c.Out, fishCompletion)
+	default:
+		fmt.Fprintf(c.Err, "Error: unknown shell %q (supported: bash, zsh, fish)\n", shell)
+		return 2
+	}
+	return 0
+}
+
+const bashCompletion = `# img bash completion
+# Add to ~/.bashrc:  source <(img completion bash)
+_img() {
+    local cur prev words cword
+    _init_completion 2>/dev/null || {
+        COMPREPLY=()
+        cur="${COMP_WORDS[COMP_CWORD]}"
+        prev="${COMP_WORDS[COMP_CWORD-1]}"
+    }
+    local cmds="upload screenshot serve rewrite info init provider config version completion"
+    local common_flags="--provider --format --path --optimize --strip-exif --resize --allow-insecure --overwrite --verbose"
+    local format_vals="url markdown html json"
+    case $COMP_CWORD in
+    1)  COMPREPLY=($(compgen -W "$cmds" -- "$cur")) ;;
+    *)  case ${COMP_WORDS[1]} in
+        upload)
+            case $prev in
+            --format) COMPREPLY=($(compgen -W "$format_vals" -- "$cur")) ;;
+            --provider) COMPREPLY=($(img provider list 2>/dev/null | awk 'NR>1{print $1}')) ;;
+            *) COMPREPLY=($(compgen -W "$common_flags --name --copy --no-copy --quiet" -- "$cur")
+                          $(compgen -f -- "$cur")) ;;
+            esac ;;
+        screenshot)
+            case $prev in
+            --format) COMPREPLY=($(compgen -W "$format_vals" -- "$cur")) ;;
+            --provider) COMPREPLY=($(img provider list 2>/dev/null | awk 'NR>1{print $1}')) ;;
+            *) COMPREPLY=($(compgen -W "--region --window --format --provider --path --optimize --strip-exif --resize --no-copy --verbose" -- "$cur")) ;;
+            esac ;;
+        serve)
+            case $prev in
+            --provider) COMPREPLY=($(img provider list 2>/dev/null | awk 'NR>1{print $1}')) ;;
+            --port|--bind) ;;
+            *) COMPREPLY=($(compgen -W "--port --bind --provider --optimize --strip-exif --resize" -- "$cur")) ;;
+            esac ;;
+        rewrite)
+            case $prev in
+            --provider) COMPREPLY=($(img provider list 2>/dev/null | awk 'NR>1{print $1}')) ;;
+            *) COMPREPLY=($(compgen -W "--provider --path --optimize --strip-exif --resize --overwrite --allow-insecure --stdout" -- "$cur")
+                          $(compgen -f -- "$cur")) ;;
+            esac ;;
+        info)
+            case $prev in
+            --format) COMPREPLY=($(compgen -W "text json" -- "$cur")) ;;
+            *) COMPREPLY=($(compgen -W "--format" -- "$cur")
+                          $(compgen -f -- "$cur")) ;;
+            esac ;;
+        provider)
+            local sub="${COMP_WORDS[2]}"
+            if [[ $COMP_CWORD -eq 2 ]]; then
+                COMPREPLY=($(compgen -W "list show use test remove" -- "$cur"))
+            elif [[ $COMP_CWORD -ge 3 && "$sub" != "list" ]]; then
+                COMPREPLY=($(img provider list 2>/dev/null | awk 'NR>1{print $1}'))
+            fi ;;
+        config)
+            local sub="${COMP_WORDS[2]}"
+            if [[ $COMP_CWORD -eq 2 ]]; then
+                COMPREPLY=($(compgen -W "path list validate get set unset" -- "$cur"))
+            elif [[ "$sub" == "get" || "$sub" == "set" || "$sub" == "unset" ]]; then
+                COMPREPLY=($(compgen -W "output.format output.copy output.quiet default_provider upload.concurrency upload.strip_exif upload.max_width upload.retry_count" -- "$cur"))
+            fi ;;
+        completion)
+            COMPREPLY=($(compgen -W "bash zsh fish" -- "$cur")) ;;
+        esac ;;
+    esac
+}
+complete -F _img -o default img
+`
+
+const zshCompletion = `#compdef img
+# img zsh completion
+# Add to ~/.zshrc:  source <(img completion zsh)
+# Or:  img completion zsh > "${fpath[1]}/_img"
+
+_img() {
+    local state line
+    typeset -A opt_args
+
+    local -a cmds
+    cmds=(
+        'upload:Upload image files or URLs'
+        'screenshot:Capture screen and upload'
+        'serve:PicGo-compatible local upload proxy'
+        'rewrite:Rehost all images in Markdown files'
+        'info:Inspect image metadata'
+        'init:Configure a provider'
+        'provider:Manage providers'
+        'config:Manage configuration'
+        'version:Print version'
+        'completion:Print shell completion script'
+    )
+
+    local -a common_upload_opts
+    common_upload_opts=(
+        '--optimize[Compress before upload]'
+        '--strip-exif[Strip EXIF metadata]'
+        '--resize[Max width in pixels]:width'
+        '--overwrite[Overwrite existing file]'
+        '--allow-insecure[Allow HTTP sources]'
+        '(--provider -p)--provider[Provider name]:provider:_img_providers'
+        '(--path)--path[Remote path prefix]:path'
+    )
+
+    _arguments -C '1: :->cmd' '*: :->args' && return
+
+    case $state in
+    cmd) _describe 'command' cmds ;;
+    args)
+        case $line[1] in
+        upload)
+            _arguments \
+                $common_upload_opts \
+                '--format[Output format]:format:(url markdown html json)' \
+                '--name[Remote filename]:name' \
+                '--copy[Copy result to clipboard]' \
+                '--no-copy[Do not copy]' \
+                '--quiet[Suppress stdout]' \
+                '--verbose[Verbose logging]' \
+                '*:file:_files' ;;
+        screenshot)
+            _arguments \
+                $common_upload_opts \
+                '--region[Interactive region selection]' \
+                '--window[Active window capture]' \
+                '--format[Output format]:format:(url markdown html json)' \
+                '--no-copy[Do not copy]' \
+                '--verbose[Verbose logging]' ;;
+        serve)
+            _arguments \
+                '--port[Listen port]:port' \
+                '--bind[Bind address]:addr' \
+                $common_upload_opts ;;
+        rewrite)
+            _arguments \
+                $common_upload_opts \
+                '--stdout[Write to stdout]' \
+                '*:file:_files -g "*.md"' ;;
+        info)
+            _arguments \
+                '--format[Output format]:format:(text json)' \
+                '*:file:_files' ;;
+        provider)
+            local -a subcmds
+            subcmds=(list show use test remove)
+            _arguments '1: :('"${subcmds[*]}"')' '2:provider:_img_providers' ;;
+        config)
+            local -a subcmds
+            subcmds=(path list validate get set unset)
+            local -a keys
+            keys=(output.format output.copy output.quiet default_provider
+                  upload.concurrency upload.strip_exif upload.max_width upload.retry_count)
+            _arguments '1: :('"${subcmds[*]}"')' '2:key:('"${keys[*]}"')' ;;
+        completion)
+            _arguments '1:shell:(bash zsh fish)' ;;
+        esac ;;
+    esac
+}
+
+_img_providers() {
+    local -a providers
+    providers=(${(f)"$(img provider list 2>/dev/null | awk 'NR>1{print $1}')"})
+    _describe 'provider' providers
+}
+
+_img "$@"
+`
+
+const fishCompletion = `# img fish completion
+# Save to: ~/.config/fish/completions/img.fish
+# Or run:  img completion fish > ~/.config/fish/completions/img.fish
+
+# Disable file completion by default
+complete -c img -f
+
+# Helper: list configured provider names
+function __img_providers
+    img provider list 2>/dev/null | tail -n +2 | awk '{print $1}'
+end
+
+function __img_subcommand
+    set -l cmd (commandline -opc)
+    if test (count $cmd) -gt 1
+        echo $cmd[2]
+    end
+end
+
+function __img_no_subcommand
+    not __fish_seen_subcommand_from upload screenshot serve rewrite info init provider config version completion
+end
+
+# Top-level subcommands
+complete -c img -n __img_no_subcommand -a upload      -d 'Upload image files or URLs'
+complete -c img -n __img_no_subcommand -a screenshot  -d 'Capture screen and upload'
+complete -c img -n __img_no_subcommand -a serve       -d 'PicGo-compatible local upload proxy'
+complete -c img -n __img_no_subcommand -a rewrite     -d 'Rehost all images in Markdown files'
+complete -c img -n __img_no_subcommand -a info        -d 'Inspect image metadata'
+complete -c img -n __img_no_subcommand -a init        -d 'Configure a provider'
+complete -c img -n __img_no_subcommand -a provider    -d 'Manage providers'
+complete -c img -n __img_no_subcommand -a config      -d 'Manage configuration'
+complete -c img -n __img_no_subcommand -a version     -d 'Print version'
+complete -c img -n __img_no_subcommand -a completion  -d 'Print shell completion script'
+
+# upload / rewrite / info accept files
+complete -c img -n '__fish_seen_subcommand_from upload rewrite info' -F
+
+# completion shell argument
+complete -c img -n '__fish_seen_subcommand_from completion' -a 'bash zsh fish'
+
+# Shared processing flags
+for sub in upload screenshot rewrite serve
+    complete -c img -n "__fish_seen_subcommand_from $sub" -l optimize      -d 'Compress before upload'
+    complete -c img -n "__fish_seen_subcommand_from $sub" -l strip-exif    -d 'Strip EXIF metadata'
+    complete -c img -n "__fish_seen_subcommand_from $sub" -l resize        -d 'Max width in pixels' -r
+    complete -c img -n "__fish_seen_subcommand_from $sub" -l provider      -d 'Provider name' -ra '(__img_providers)'
+    complete -c img -n "__fish_seen_subcommand_from $sub" -l allow-insecure -d 'Allow HTTP sources'
+end
+
+# upload-specific flags
+complete -c img -n '__fish_seen_subcommand_from upload' -l format  -d 'Output format' -ra 'url markdown html json'
+complete -c img -n '__fish_seen_subcommand_from upload' -l path    -d 'Remote path prefix' -r
+complete -c img -n '__fish_seen_subcommand_from upload' -l name    -d 'Remote filename' -r
+complete -c img -n '__fish_seen_subcommand_from upload' -l overwrite -d 'Overwrite existing'
+complete -c img -n '__fish_seen_subcommand_from upload' -l copy    -d 'Copy result'
+complete -c img -n '__fish_seen_subcommand_from upload' -l no-copy -d 'Do not copy'
+complete -c img -n '__fish_seen_subcommand_from upload' -l quiet   -d 'Suppress stdout'
+complete -c img -n '__fish_seen_subcommand_from upload' -l verbose -d 'Verbose output'
+
+# screenshot flags
+complete -c img -n '__fish_seen_subcommand_from screenshot' -l region -d 'Interactive region selection'
+complete -c img -n '__fish_seen_subcommand_from screenshot' -l window -d 'Active window'
+complete -c img -n '__fish_seen_subcommand_from screenshot' -l format -d 'Output format' -ra 'url markdown html json'
+complete -c img -n '__fish_seen_subcommand_from screenshot' -l no-copy -d 'Do not copy'
+
+# serve flags
+complete -c img -n '__fish_seen_subcommand_from serve' -l port -d 'Listen port' -r
+complete -c img -n '__fish_seen_subcommand_from serve' -l bind -d 'Bind address' -r
+
+# rewrite flags
+complete -c img -n '__fish_seen_subcommand_from rewrite' -l stdout    -d 'Write to stdout'
+complete -c img -n '__fish_seen_subcommand_from rewrite' -l overwrite -d 'Overwrite existing'
+
+# info flags
+complete -c img -n '__fish_seen_subcommand_from info' -l format -d 'Output format' -ra 'text json'
+
+# provider subcommands
+complete -c img -n '__fish_seen_subcommand_from provider' -a 'list show use test remove'
+complete -c img -n '__fish_seen_subcommand_from provider' -a '(__img_providers)'
+
+# config subcommands and keys
+complete -c img -n '__fish_seen_subcommand_from config' -a 'path list validate get set unset'
+complete -c img -n '__fish_seen_subcommand_from config' -a 'output.format output.copy output.quiet default_provider upload.concurrency upload.strip_exif upload.max_width upload.retry_count'
+`
 
 // formatBytes formats a byte count as a human-readable string (KB / MB).
 func formatBytes(n int64) string {

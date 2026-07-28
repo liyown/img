@@ -351,6 +351,44 @@ On partial failure, successful results are preserved and the process exits with 
 
 ---
 
+## Integrations
+
+### Shell completions
+
+```sh
+img completion bash      # eval "$(img completion bash)"
+img completion zsh       # eval "$(img completion zsh)" or write to a file in $fpath
+img completion fish      # img completion fish > ~/.config/fish/completions/img.fish
+```
+
+### VS Code extension
+
+`integrations/vscode/` — in Markdown editors, press `Cmd+Alt+V` (macOS) / `Ctrl+Alt+V` to paste a clipboard image and upload it. Right-click image files in the Explorer to upload.
+
+### Raycast extension
+
+`integrations/raycast/` — three commands for macOS Raycast: upload screenshot, upload clipboard image, upload file.
+
+### GitHub Action
+
+In a documentation repository, this Action automatically rewrites local image paths in Markdown to CDN URLs on every push:
+
+```yaml
+- uses: liyown/img@v0.2
+  with:
+    provider-type: s3
+    s3-endpoint: https://ACCOUNT.r2.cloudflarestorage.com
+    s3-bucket: images
+    s3-access-key: ${{ secrets.R2_ACCESS_KEY }}
+    s3-secret-key: ${{ secrets.R2_SECRET_KEY }}
+    s3-public-url: https://img.example.com
+    optimize: 'true'
+```
+
+Full configuration in [action.yml](action.yml).
+
+---
+
 ## AI Agent usage
 
 The repository ships a companion Skill: [skills/img-uploader](skills/img-uploader).

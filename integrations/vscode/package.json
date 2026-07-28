@@ -1,0 +1,99 @@
+{
+  "name": "img-uploader",
+  "displayName": "img Uploader",
+  "description": "Paste or upload images to your configured img image host. Supports Cloudflare R2, S3, OSS, GitHub, and any HTTP endpoint.",
+  "version": "0.1.0",
+  "publisher": "liyown",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "keywords": ["image", "upload", "cdn", "markdown", "r2", "s3", "oss"],
+  "icon": "icon.png",
+  "activationEvents": ["onLanguage:markdown"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "img.pasteImage",
+        "title": "img: Paste and Upload Image",
+        "category": "img"
+      },
+      {
+        "command": "img.uploadFile",
+        "title": "img: Upload Image File",
+        "category": "img"
+      },
+      {
+        "command": "img.uploadFileFromExplorer",
+        "title": "Upload with img",
+        "category": "img"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "img.pasteImage",
+          "when": "editorLangId == markdown",
+          "group": "9_cutcopypaste"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "img.uploadFileFromExplorer",
+          "when": "resourceExtname =~ /\\.(png|jpg|jpeg|gif|webp|svg|avif)$/i",
+          "group": "navigation"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "img.pasteImage",
+        "key": "ctrl+alt+v",
+        "mac": "cmd+alt+v",
+        "when": "editorLangId == markdown"
+      }
+    ],
+    "configuration": {
+      "title": "img Uploader",
+      "properties": {
+        "img.executablePath": {
+          "type": "string",
+          "default": "img",
+          "description": "Path to the img executable. Defaults to 'img' (must be in PATH)."
+        },
+        "img.outputFormat": {
+          "type": "string",
+          "enum": ["url", "markdown", "html"],
+          "default": "markdown",
+          "description": "Format of the inserted link after upload."
+        },
+        "img.provider": {
+          "type": "string",
+          "default": "",
+          "description": "Override the default provider (leave empty to use img's default)."
+        },
+        "img.optimize": {
+          "type": "boolean",
+          "default": false,
+          "description": "Compress images before upload."
+        },
+        "img.stripExif": {
+          "type": "boolean",
+          "default": false,
+          "description": "Strip EXIF metadata from JPEG images before upload."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0",
+    "@vscode/vsce": "^2.22.0"
+  }
+}
