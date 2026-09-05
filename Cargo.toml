@@ -1,0 +1,15 @@
+[workspace]
+members = ["crates/img-core"]
+default-members = ["crates/img-core"]
+resolver = "3"
+
+[workspace.package]
+version = "0.3.0"
+edition = "2024"
+repository = "https://github.com/liyown/img"
+
+[profile.dev]
+debug = 0
+
+[profile.release]
+strip = "debuginfo"
