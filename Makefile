@@ -1,4 +1,4 @@
-.PHONY: build test lint fmt install
+.PHONY: build test lint fmt install desktop desktop-preview desktop-bundle desktop-test
 build:
 	cargo build --locked --release -p img-cli
 	mkdir -p bin
@@ -11,3 +11,11 @@ fmt:
 	cargo fmt --all
 install:
 	cargo install --locked --path crates/img-cli --force
+desktop-bundle:
+	./desktop/bundle.sh
+desktop: desktop-bundle
+	./target/Img.app/Contents/MacOS/img-desktop
+desktop-preview: desktop-bundle
+	./target/Img.app/Contents/MacOS/img-desktop --reference
+desktop-test:
+	cargo test --locked -p img-desktop

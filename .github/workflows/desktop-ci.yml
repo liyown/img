@@ -1,0 +1,22 @@
+name: Desktop CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  desktop:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - run: rustup toolchain install 1.98.1 --profile minimal --component rustfmt && rustup default 1.98.1
+      - run: cargo fmt --all -- --check
+      - run: cargo test --locked --workspace
+      - name: Build local app bundle
+        run: ./desktop/bundle.sh
+      - name: Check bundled engine and signature
+        run: |
+          target/Img.app/Contents/MacOS/img version
+          codesign --verify --deep --strict target/Img.app
+          plutil -lint target/Img.app/Contents/Info.plist
