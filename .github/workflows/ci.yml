@@ -1,4 +1,4 @@
-name: CI
+name: CLI CI
 on:
   push:
     branches: [main]
@@ -7,23 +7,15 @@ permissions:
   contents: read
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, macos-15, windows-latest]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-        with:
-          go-version-file: go.mod
-      - run: go test -race ./...
-      - run: go vet ./...
-      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
-  windows-installer:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-      - name: Install released CLI
-        shell: powershell
-        env:
-          IMG_INSTALL_DIR: ${{ runner.temp }}\img-bin
-        run: |
-          .\install.ps1
-          & "$env:IMG_INSTALL_DIR\img.exe" version
+      - name: Set up Rust
+        run: rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy
+      - run: cargo +1.98.1 fmt --all -- --check
+      - run: cargo +1.98.1 test --locked -p img-core -p img-cli
+      - run: cargo +1.98.1 clippy --locked -p img-core -p img-cli --all-targets -- -D warnings

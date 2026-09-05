@@ -1,29 +1,13 @@
-BINARY := img
-VERSION ?= dev
-COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || printf unknown)
-DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
-
-GOVULNCHECK_VERSION ?= v1.6.0
-
-.PHONY: build test lint fmt vuln install cross
+.PHONY: build test lint fmt install
 build:
+	cargo build --locked --release -p img-cli
 	mkdir -p bin
-	go build -trimpath -ldflags "$(LDFLAGS)" -o bin/$(BINARY) ./cmd/img
+	cp target/release/img bin/img
 test:
-	go test -race ./...
+	cargo test --locked -p img-core -p img-cli
 lint:
-	go vet ./...
+	cargo clippy --locked -p img-core -p img-cli --all-targets -- -D warnings
 fmt:
-	gofmt -w cmd internal
-vuln:
-	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+	cargo fmt --all
 install:
-	go install -trimpath -ldflags "$(LDFLAGS)" ./cmd/img
-cross:
-	mkdir -p dist
-	GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags "$(LDFLAGS)" -o dist/img-darwin-amd64 ./cmd/img
-	GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "$(LDFLAGS)" -o dist/img-darwin-arm64 ./cmd/img
-	GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$(LDFLAGS)" -o dist/img-linux-amd64 ./cmd/img
-	GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "$(LDFLAGS)" -o dist/img-linux-arm64 ./cmd/img
-	GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "$(LDFLAGS)" -o dist/img-windows-amd64.exe ./cmd/img
+	cargo install --locked --path crates/img-cli --force
