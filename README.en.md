@@ -3,7 +3,7 @@
 [![CI](https://github.com/liyown/img/actions/workflows/ci.yml/badge.svg)](https://github.com/liyown/img/actions/workflows/ci.yml)
 &nbsp;[中文](README.md)
 
-`img` is a CLI image uploader designed for AI agents and developers. It uploads local files, screenshots, or remote URLs to your configured image host and returns a URL, Markdown link, or JSON.
+`img` is a Rust image uploader with a standalone CLI and a native macOS GUI that includes the same CLI. It uploads local files, screenshots, or remote URLs to your configured image host and returns a URL, Markdown link, or JSON.
 
 **Supported hosts:** Cloudflare R2, generic S3, Alibaba Cloud OSS, GitHub repository, custom HTTP endpoint
 
@@ -18,23 +18,35 @@ $ img screenshot --region --format markdown
 
 ## Installation
 
-macOS / Linux:
+This workspace is the **0.3.0 Rust migration**, not yet published remotely. Choose the standalone CLI or the macOS GUI, which includes the same complete CLI.
+
+| Product | Platforms | Contents |
+| --- | --- | --- |
+| CLI | macOS, Linux, Windows | Standalone `img`, no GUI or language runtime required |
+| GUI | macOS 13+, Apple silicon / Intel | Native GPUI app plus the same Rust CLI |
+
+Build/install from this checkout:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/liyown/img/v0.1.1/install.sh | sh
+make install          # CLI only, installs into Cargo's bin directory
+make cli-package      # Standalone CLI archive
+make desktop-package  # GUI DMG / ZIP with CLI included
 ```
 
-Windows PowerShell:
+Building requires Rust 1.98.1 and platform build tools, with no Go dependency. Installed binaries do not require Rust.
 
-```powershell
-irm https://raw.githubusercontent.com/liyown/img/v0.1.1/install.ps1 | iex
-```
-
-Verify:
+After release, the checked-in installer supports:
 
 ```sh
-img version
+sh install.sh --cli   # CLI only (default)
+sh install.sh --gui   # macOS GUI plus a terminal command
 ```
+
+The default CLI path is `~/.local/bin/img`. The GUI goes to `~/Applications/Img.app`, and its terminal command links to the bundled `Contents/MacOS/img`. Override these using `IMG_INSTALL_DIR` and `IMG_APP_DIR`. Add the CLI directory to PATH if needed. Windows uses `install.ps1 -Product cli`.
+
+The drag-and-drop DMG also includes the CLI; use Settings → About & Updates → Add terminal command to add it to your command directory.
+
+Run `img version` to verify the version and `implementation: Rust`. See [release instructions](desktop/RELEASING.md) for local packages, offline installation and publishing.
 
 ---
 
@@ -262,7 +274,7 @@ img photo.jpg --optimize --verbose   # show per-file savings
 
 ### --strip-exif
 
-Remove EXIF metadata (GPS coordinates, device model, timestamps) from JPEG files before upload. Lossless — no re-encoding:
+Remove EXIF metadata (GPS coordinates, device model, timestamps) from JPEG files before upload. Metadata-only removal avoids re-encoding when orientation is already normal. Rotated photos are oriented correctly before metadata is removed:
 
 ```sh
 img photo.jpg --strip-exif
@@ -413,3 +425,7 @@ npx skills add liyown/img --skill img-uploader --agent codex --global --yes
 - Overwriting requires an explicit `--overwrite` flag
 
 See [config.example.toml](config.example.toml) for a full configuration example.
+
+## Rust workspace
+
+`crates/img-core` provides configuration, credentials, providers and image processing. `crates/img-cli` builds the standalone `img` binary. `desktop` bundles that same CLI with the native Rust GUI. Existing commands, JSON results, exit codes and v1 TOML configuration remain compatible, and desktop data stays in its existing location.

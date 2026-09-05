@@ -3,7 +3,7 @@
 [![CI](https://github.com/liyown/img/actions/workflows/ci.yml/badge.svg)](https://github.com/liyown/img/actions/workflows/ci.yml)
 &nbsp;[English](README.en.md)
 
-`img` 是一个为 AI Agent 和命令行用户设计的图片上传工具。把本地图片、截图或外链 URL 上传到已配置的图床，返回 URL、Markdown 或 JSON。
+`img` 是使用 Rust 编写的图片上传工具，提供独立 CLI 和原生 macOS GUI；安装 GUI 时已包含完整 CLI。把本地图片、截图或外链 URL 上传到已配置的图床，返回 URL、Markdown 或 JSON。
 
 支持图床：Cloudflare R2、通用 S3、阿里云 OSS、GitHub 仓库、自定义 HTTP 接口
 
@@ -18,23 +18,43 @@ $ img screenshot --region --format markdown
 
 ## 安装
 
-macOS / Linux：
+选择适合自己的版本：
+
+| 版本 | 平台 | 包含内容 |
+| --- | --- | --- |
+| CLI | macOS、Linux、Windows | 独立 `img` 命令，无需图形界面或语言运行时 |
+| GUI | macOS 13+，Apple silicon / Intel | 原生图形界面 + 同版本完整 CLI |
+
+当前工作区为 **0.3.0 Rust 迁移版**，尚未发布远端版本。现在可从源码安装，或使用本地构建的安装包：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/liyown/img/v0.1.1/install.sh | sh
+make install          # 只安装 CLI 到 Cargo bin 目录
+make desktop-package  # 构建 GUI 的 DMG / ZIP，内置 CLI
+make cli-package      # 构建独立 CLI 压缩包
 ```
 
-Windows PowerShell：
+源码构建需要 Rust 1.98.1 和平台编译工具；不需要 Go。安装后的 CLI / GUI 无需 Rust 工具链。
 
-```powershell
-irm https://raw.githubusercontent.com/liyown/img/v0.1.1/install.ps1 | iex
+正式版本发布后，仓库根目录的安装器支持两种选择：
+
+```sh
+sh install.sh --cli   # 只安装命令行（默认）
+sh install.sh --gui   # macOS：安装 GUI，并同时添加 img 终端命令
 ```
 
-确认安装：
+CLI 默认安装到 `~/.local/bin/img`；GUI 默认安装到 `~/Applications/Img.app`，终端命令链接到包内 `Contents/MacOS/img`，更新应用后沿用新版。目录可通过 `IMG_INSTALL_DIR`、`IMG_APP_DIR` 指定。若该命令目录不在 PATH，安装器会提示添加。
+
+Windows 使用 `install.ps1 -Product cli`。直接拖动 DMG 安装 GUI 时 CLI 也已在应用内，可在「设置 → 关于与更新 → 添加终端命令」启用终端入口。
+
+验证安装：
 
 ```sh
 img version
+# img 0.3.0
+# implementation: Rust
 ```
+
+详细构建、离线安装及发布方式见 [发行说明](desktop/RELEASING.md)。
 
 ---
 
@@ -421,3 +441,11 @@ npx skills add liyown/img --skill img-uploader --agent codex --global --yes
 - 覆盖操作需显式传入 `--overwrite`
 
 完整配置示例见 [config.example.toml](config.example.toml)。
+
+## Rust 工作区
+
+- `crates/img-core`：配置、凭据解析、HTTP / S3 / GitHub、图片处理、路径与上传队列。
+- `crates/img-cli`：独立 `img` 可执行文件、截图、Markdown 替换和 PicGo 代理。
+- `desktop`：Rust / GPUI 原生 GUI，使用包内同版本 `img` 完成上传。
+
+CLI 命令、JSON 文件结果、退出码与 v1 TOML 配置保持兼容；已有 GUI 队列和偏好目录不变。S3 使用 AWS Rust 凭据链与签名库，保留环境变量、配置引用及 macOS 钥匙串支持。迁移验证见 [验收记录](design-qa.md)。
