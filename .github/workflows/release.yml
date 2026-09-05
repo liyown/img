@@ -1,0 +1,74 @@
+name: CLI release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: read
+concurrency:
+  group: cli-release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: aarch64-apple-darwin
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - name: Set up Rust
+        run: rustup toolchain install 1.98.1 --profile minimal && rustup default 1.98.1
+        shell: bash
+      - run: cargo test --locked -p img-core -p img-cli
+      - name: Package standalone CLI
+        shell: bash
+        env:
+          IMG_TARGET: ${{ matrix.target }}
+        run: ./scripts/package-cli.sh
+      - name: Verify macOS CLI installer against this build
+        if: runner.os == 'macOS'
+        run: python3 scripts/test-installers.py --cli-only
+      - name: Verify Windows CLI installer against this build
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          IMG_LOCAL_PACKAGE_DIR: ${{ github.workspace }}/dist/cli/${{ matrix.target }}
+          IMG_INSTALL_DIR: ${{ runner.temp }}/img-bin
+        run: |
+          ./install.ps1 -Product cli
+          & "$env:IMG_INSTALL_DIR/img.exe" version
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cli-${{ matrix.target }}
+          path: dist/cli/${{ matrix.target }}/
+          if-no-files-found: error
+  publish:
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: cli-*
+          path: packages
+      - name: Verify and publish all CLI targets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -eu
+          for dir in packages/cli-*; do (cd "$dir" && sha256sum -c checksums.txt); done
+          cat packages/cli-*/checksums.txt > packages/checksums.txt
+          gh release create "$RELEASE_TAG" packages/cli-*/*.tar.gz packages/cli-*/*.zip packages/checksums.txt --verify-tag --generate-notes --latest --title "img CLI ${RELEASE_TAG#v}"

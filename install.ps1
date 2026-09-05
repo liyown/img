@@ -1,3 +1,9 @@
+param(
+    [ValidateSet("cli", "gui")]
+    [string]$Product = "cli"
+)
+if ($Product -eq "gui") { throw "The GUI currently supports macOS. Use -Product cli on Windows." }
+
 $ErrorActionPreference = "Stop"
 
 $repo = if ($env:IMG_REPO) { $env:IMG_REPO } else { "liyown/img" }
@@ -24,8 +30,13 @@ $expanded = Join-Path $tempDir "expanded"
 try {
     New-Item -ItemType Directory -Path $tempDir | Out-Null
     Write-Host "Downloading img..."
-    Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/$asset" -OutFile $archive
-    Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/checksums.txt" -OutFile $checksums
+    if ($env:IMG_LOCAL_PACKAGE_DIR) {
+        Copy-Item (Join-Path $env:IMG_LOCAL_PACKAGE_DIR $asset) $archive
+        Copy-Item (Join-Path $env:IMG_LOCAL_PACKAGE_DIR "checksums.txt") $checksums
+    } else {
+        Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/$asset" -OutFile $archive
+        Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/checksums.txt" -OutFile $checksums
+    }
 
     $checksumLine = Get-Content $checksums | Where-Object { $_ -match "\s+$([regex]::Escape($asset))$" } | Select-Object -First 1
     if (-not $checksumLine) {

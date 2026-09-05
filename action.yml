@@ -92,17 +92,11 @@ runs:
     - name: Install img
       shell: bash
       run: |
-        set -e
-        OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
-        ARCH="$(uname -m)"
-        case "$ARCH" in
-          x86_64) ARCH="amd64" ;;
-          aarch64|arm64) ARCH="arm64" ;;
-        esac
-        URL="https://github.com/liyown/img/releases/latest/download/img_${OS}_${ARCH}.tar.gz"
-        echo "Installing img from $URL"
-        curl -fsSL "$URL" | tar -xz -C /usr/local/bin img
-        img version
+        set -eu
+        export IMG_INSTALL_DIR="$RUNNER_TEMP/img-bin"
+        sh "$GITHUB_ACTION_PATH/install.sh" --cli
+        echo "$IMG_INSTALL_DIR" >> "$GITHUB_PATH"
+        "$IMG_INSTALL_DIR/img" version
 
     - name: Configure provider
       shell: bash

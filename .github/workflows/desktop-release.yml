@@ -1,0 +1,101 @@
+name: Desktop release
+on:
+  push:
+    tags: ["desktop-v*"]
+permissions:
+  contents: read
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    environment: desktop-release
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - name: Set up Rust
+        run: rustup toolchain install 1.98.1 --profile minimal && rustup default 1.98.1
+      - name: Tests
+        run: |
+          cargo test --locked --workspace
+      - name: Import publishing credentials into an ephemeral keychain
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          TEAM_ID: ${{ secrets.MACOS_TEAM_ID }}
+        run: |
+          set -eu
+          test -n "$CERTIFICATE_BASE64"
+          test -n "$APPLE_ID"
+          test -n "$APPLE_APP_PASSWORD"
+          test -n "$TEAM_ID"
+          certificate="$RUNNER_TEMP/img-signing.p12"
+          keychain="$RUNNER_TEMP/img-signing.keychain-db"
+          keychain_password=$(openssl rand -hex 24)
+          export IMG_CI_CERTIFICATE="$certificate"
+          python3 - <<'PY'
+          import base64, os
+          path = os.environ['IMG_CI_CERTIFICATE']
+          with open(path, 'wb') as f: f.write(base64.b64decode(os.environ['CERTIFICATE_BASE64'], validate=True))
+          os.chmod(path, 0o600)
+          PY
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          xcrun notarytool store-credentials img-notary --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$APPLE_APP_PASSWORD" --keychain "$keychain"
+          security default-keychain -d user -s "$keychain"
+          rm -f "$certificate"
+      - name: Build, sign and notarize installers
+        env:
+          IMG_ARCH: ${{ matrix.arch }}
+          IMG_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          IMG_SIGNING_TEAM: ${{ secrets.MACOS_TEAM_ID }}
+          IMG_NOTARY_PROFILE: img-notary
+        run: ./desktop/package.sh
+      - name: Verify GUI installs with the bundled CLI
+        run: python3 scripts/test-installers.py --gui-only
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: desktop-${{ matrix.arch }}
+          path: dist/desktop/${{ matrix.arch }}/
+          if-no-files-found: error
+      - name: Remove ephemeral credentials
+        if: always()
+        run: |
+          security default-keychain -d user -s login.keychain-db || true
+          security delete-keychain "$RUNNER_TEMP/img-signing.keychain-db" || true
+          rm -f "$RUNNER_TEMP/img-signing.p12"
+  publish:
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: desktop-*
+          path: packages
+      - name: Publish both architectures together
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -eu
+          for arch in arm64 x86_64; do
+            (cd "packages/desktop-$arch" && sha256sum -c *.sha256)
+          done
+          gh release create "$RELEASE_TAG" packages/desktop-*/*.dmg packages/desktop-*/*.zip packages/desktop-*/*.sha256 --verify-tag --generate-notes --latest=false --title "img desktop ${RELEASE_TAG#desktop-v}"
