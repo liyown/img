@@ -11,9 +11,7 @@ pub fn os() -> &'static str {
 pub fn capture_command(binary: &Path, path: &Path) -> Command {
     let mut command = Command::new(binary);
     command.arg("screenshot").arg("--output").arg(path);
-    if !cfg!(windows) {
-        command.arg("--region");
-    }
+    command.arg("--region");
     command
 }
 pub fn open_path(path: &Path) -> std::io::Result<()> {

@@ -22,18 +22,22 @@ impl ImgDesktop {
         self.message(text, true, cx);
     }
     pub fn hide_to_background(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !cfg!(target_os = "macos") {
-            self.request_close(window, cx);
-            return;
-        }
         if !DesktopRuntime::can_hide(cx) {
-            self.message("菜单栏不可用，窗口保持打开；可按 ⌘Q 退出。", true, cx);
+            if cfg!(target_os = "macos") {
+                self.message("菜单栏不可用，窗口保持打开；可按 ⌘Q 退出。", true, cx);
+            } else {
+                self.request_close(window, cx);
+            }
             return;
         }
         self.visible = false;
         self.thumbnails
             .update(cx, |cache, cx| cache.clear(window, cx));
-        cx.hide();
+        if cfg!(target_os = "macos") {
+            cx.hide();
+        } else {
+            window.minimize_window();
+        }
     }
     pub fn show_from_background(
         &mut self,
@@ -69,6 +73,8 @@ impl ImgDesktop {
             return;
         }
         match event {
+            #[cfg(target_os = "linux")]
+            DesktopEvent::Notice(message) => self.message(message, false, cx),
             DesktopEvent::Open => self.show_from_background(None, window, cx),
             DesktopEvent::Hide => self.hide_to_background(window, cx),
             DesktopEvent::Quit => {

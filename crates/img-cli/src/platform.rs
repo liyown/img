@@ -76,6 +76,28 @@ fn capture(path: &Path, region: bool, window: bool) -> Result<()> {
 }
 #[cfg(target_os = "linux")]
 fn capture(path: &Path, region: bool, window: bool) -> Result<()> {
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        let uri = runtime.block_on(async {
+            Ok::<_, anyhow::Error>(
+                ashpd::desktop::screenshot::Screenshot::request()
+                    .interactive(region || window)
+                    .modal(true)
+                    .send()
+                    .await?
+                    .response()?
+                    .uri()
+                    .to_string(),
+            )
+        })?;
+        let source = url::Url::parse(&uri)?
+            .to_file_path()
+            .map_err(|_| anyhow::anyhow!("portal returned a non-local screenshot"))?;
+        std::fs::copy(source, path)?;
+        return Ok(());
+    }
     let mut candidates = vec![];
     if !window {
         candidates.push((
@@ -129,15 +151,21 @@ fn capture(path: &Path, region: bool, window: bool) -> Result<()> {
 }
 #[cfg(target_os = "windows")]
 fn capture(path: &Path, region: bool, window: bool) -> Result<()> {
-    ensure!(
-        !region && !window,
-        "region and window capture are not supported on Windows"
-    );
-    let script = r#"$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $s=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds; $b=New-Object System.Drawing.Bitmap($s.Width,$s.Height); $g=[System.Drawing.Graphics]::FromImage($b); $g.CopyFromScreen($s.Location,[System.Drawing.Point]::Empty,$s.Size); $g.Dispose(); $b.Save($env:IMG_CAPTURE_PATH,[System.Drawing.Imaging.ImageFormat]::Png); $b.Dispose()"#;
+    let script = include_str!("capture-windows.ps1");
     ensure!(
         Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", script])
+            .args(["-NoProfile", "-STA", "-NonInteractive", "-Command", script])
             .env("IMG_CAPTURE_PATH", path)
+            .env(
+                "IMG_CAPTURE_MODE",
+                if region {
+                    "region"
+                } else if window {
+                    "window"
+                } else {
+                    "screen"
+                }
+            )
             .status()?
             .success(),
         "screenshot failed"

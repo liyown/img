@@ -44,6 +44,9 @@ pub struct Native {
     leases: std::collections::HashMap<u32, std::fs::File>,
 }
 impl Native {
+    pub fn has_tray(&self) -> bool {
+        true
+    }
     pub fn new(sender: async_channel::Sender<DesktopEvent>) -> Result<Self> {
         let mtm = MainThreadMarker::new().context("菜单栏必须在主线程初始化")?;
         let target = ImgMenuTarget::alloc(mtm).set_ivars(MenuIvars {

@@ -9,6 +9,8 @@ use std::{
 
 #[derive(Clone, Debug)]
 pub enum DesktopEvent {
+    #[cfg(target_os = "linux")]
+    Notice(String),
     Open,
     Hide,
     Paste,
@@ -164,7 +166,9 @@ impl DesktopRuntime {
         });
     }
     pub fn can_hide(cx: &App) -> bool {
-        cfg!(target_os = "macos") && cx.try_global::<Self>().is_some_and(|s| s.native.is_some())
+        cx.try_global::<Self>()
+            .and_then(|s| s.native.as_ref())
+            .is_some_and(|n| n.has_tray())
     }
     pub fn status(cx: &App, text: &str, paused: bool) {
         if let Some(native) = cx.try_global::<Self>().and_then(|s| s.native.as_ref()) {
