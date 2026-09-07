@@ -176,8 +176,18 @@ mod tests {
         let control = Control::default();
         let other = control.clone();
         let task = std::thread::spawn(move || {
-            let mut command = Command::new("/bin/sleep");
-            command.arg("20");
+            #[cfg(unix)]
+            let command = {
+                let mut command = Command::new("/bin/sleep");
+                command.arg("20");
+                command
+            };
+            #[cfg(windows)]
+            let command = {
+                let mut command = Command::new("powershell");
+                command.args(["-NoProfile", "-Command", "Start-Sleep -Seconds 20"]);
+                command
+            };
             run(command, &other).unwrap()
         });
         std::thread::sleep(Duration::from_millis(60));

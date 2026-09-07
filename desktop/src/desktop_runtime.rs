@@ -28,8 +28,18 @@ impl Default for Shortcuts {
     fn default() -> Self {
         Self {
             enabled: true,
-            clipboard: "Cmd+Alt+U".into(),
-            screenshot: "Cmd+Alt+S".into(),
+            clipboard: if cfg!(target_os = "macos") {
+                "Cmd+Alt+U"
+            } else {
+                "Ctrl+Alt+U"
+            }
+            .into(),
+            screenshot: if cfg!(target_os = "macos") {
+                "Cmd+Alt+S"
+            } else {
+                "Ctrl+Alt+S"
+            }
+            .into(),
         }
     }
 }
@@ -92,7 +102,10 @@ impl DesktopRuntime {
                 Some(native)
             }
             Err(_) => {
-                errors.push("菜单栏初始化失败，窗口将保持可用；请重新启动 img。".into());
+                errors.push(
+                    "系统快捷操作不可用，仍可在窗口内上传；Linux Wayland 可使用系统截图与粘贴。"
+                        .into(),
+                );
                 None
             }
         };
@@ -151,7 +164,7 @@ impl DesktopRuntime {
         });
     }
     pub fn can_hide(cx: &App) -> bool {
-        cx.try_global::<Self>().is_some_and(|s| s.native.is_some())
+        cfg!(target_os = "macos") && cx.try_global::<Self>().is_some_and(|s| s.native.is_some())
     }
     pub fn status(cx: &App, text: &str, paused: bool) {
         if let Some(native) = cx.try_global::<Self>().and_then(|s| s.native.as_ref()) {

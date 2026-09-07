@@ -393,6 +393,17 @@ impl ProviderConfig {
                             .map_err(|_| anyhow::anyhow!("cannot read desktop credential {key}"))
                             .and_then(|v| String::from_utf8(v).context("credential is not UTF-8"));
                         }
+                        #[cfg(any(target_os = "windows", target_os = "linux"))]
+                        if key.starts_with("IMG_DESKTOP_") {
+                            return keyring::Entry::new("dev.img.desktop.storage", key)?
+                                .get_secret()
+                                .map_err(|_| {
+                                    anyhow::anyhow!("cannot read desktop credential {key}")
+                                })
+                                .and_then(|v| {
+                                    String::from_utf8(v).context("credential is not UTF-8")
+                                });
+                        }
                         bail!("required environment variable {key} is not set")
                     })?
                 }

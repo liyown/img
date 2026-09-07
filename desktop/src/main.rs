@@ -1,3 +1,4 @@
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 mod assets;
 mod desktop_runtime;
 mod diagnostics;
@@ -5,6 +6,7 @@ mod engine;
 mod installer;
 mod model;
 mod native;
+mod platform;
 mod preferences;
 mod queue_store;
 mod record_index;
@@ -49,7 +51,11 @@ fn main() -> anyhow::Result<()> {
         .map_err(|_| anyhow::anyhow!("img 已在运行，请使用已打开的窗口"))?;
     let engine = std::env::var_os("APERTURE_ENGINE")
         .map(std::path::PathBuf::from)
-        .unwrap_or(std::env::current_exe()?.with_file_name("img"));
+        .unwrap_or(std::env::current_exe()?.with_file_name(if cfg!(windows) {
+            "img.exe"
+        } else {
+            "img"
+        }));
     let application = gpui_kit::application().with_assets(assets::Assets);
     application.on_reopen(|cx| desktop_runtime::DesktopRuntime::open(cx, None));
     application.run(move |cx| {
@@ -136,6 +142,15 @@ fn main() -> anyhow::Result<()> {
                 let view = cx
                     .new(|cx| ImgDesktop::new(root.clone(), engine.clone(), reference, window, cx));
                 view.update(cx, |view, cx| view.startup_update_check(cx));
+                if std::env::args().any(|arg| arg == "--smoke-test") {
+                    cx.spawn(async move |cx| {
+                        cx.background_executor()
+                            .timer(std::time::Duration::from_secs(3))
+                            .await;
+                        cx.update(|cx| cx.quit());
+                    })
+                    .detach();
+                }
                 #[cfg(feature = "perf")]
                 view.update(cx, |view, cx| view.start_benchmark(window, cx));
                 cx.on_action(|_: &Quit, cx| {

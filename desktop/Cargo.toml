@@ -8,6 +8,7 @@ publish = false
 perf = ["dep:gpui-profiler"]
 
 [dependencies]
+global-hotkey = "0.8"
 gpui-profiler = { package = "gpui-pre", version = "=0.3.3", features = ["profiler"], optional = true }
 gpui-kit = "=0.6.0"
 anyhow = "1"
@@ -30,7 +31,11 @@ async-channel = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3.7"
-global-hotkey = "0.8"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSStatusBar", "NSStatusItem", "NSStatusBarButton", "NSButton", "NSMenu", "NSMenuItem", "NSApplication", "NSWindow"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSObject", "NSString"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "=3.6.3", features = ["windows-native"] }
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "=3.6.3", features = ["sync-secret-service", "crypto-rust"] }

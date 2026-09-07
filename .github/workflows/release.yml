@@ -26,6 +26,9 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - name: Linux credential store dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - name: Set up Rust
         run: rustup toolchain install 1.98.1 --profile minimal && rustup default 1.98.1
         shell: bash

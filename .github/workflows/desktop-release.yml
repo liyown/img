@@ -2,6 +2,7 @@ name: Desktop release
 on:
   push:
     tags: ["desktop-v*"]
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
@@ -15,19 +16,31 @@ jobs:
         include:
           - runner: macos-15
             arch: arm64
+            artifact: arm64
           - runner: macos-15-intel
             arch: x86_64
+            artifact: x86_64
+          - runner: ubuntu-24.04
+            arch: x86_64
+            artifact: linux-x86_64
+          - runner: windows-latest
+            arch: x86_64
+            artifact: windows-x86_64
     runs-on: ${{ matrix.runner }}
     environment: desktop-release
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libfontconfig1-dev libssl-dev libasound2-dev libvulkan-dev libgit2-dev cmake clang pkg-config xvfb mesa-vulkan-drivers
       - name: Set up Rust
         run: rustup toolchain install 1.98.1 --profile minimal && rustup default 1.98.1
       - name: Tests
+        shell: bash
         run: |
           cargo test --locked --workspace
       - name: Import publishing credentials into an ephemeral keychain
-        if: vars.DESKTOP_SIGNING == 'true'
+        if: runner.os == 'macOS' && vars.DESKTOP_SIGNING == 'true'
         env:
           CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
           CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
@@ -59,7 +72,8 @@ jobs:
           xcrun notarytool store-credentials img-notary --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$APPLE_APP_PASSWORD" --keychain "$keychain"
           security default-keychain -d user -s "$keychain"
           rm -f "$certificate"
-      - name: Build, sign and notarize installers
+      - name: Build macOS installers
+        if: runner.os == 'macOS'
         env:
           IMG_ARCH: ${{ matrix.arch }}
           IMG_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
@@ -71,20 +85,34 @@ jobs:
           else
             ./desktop/package.sh --unsigned
           fi
+      - name: Build Windows or Linux installers
+        if: runner.os != 'macOS'
+        run: python scripts/package-desktop.py
+      - name: Verify native Windows or Linux installer
+        if: runner.os != 'macOS'
+        run: python scripts/test-desktop-package.py
       - name: Verify GUI installs with the bundled CLI
+        if: runner.os == 'macOS'
         run: python3 scripts/test-installers.py --gui-only
+      - name: Native window smoke test (Linux software renderer)
+        if: runner.os == 'Linux'
+        run: dbus-run-session -- xvfb-run -a python3 scripts/smoke-desktop.py
+      - name: Native window smoke test
+        if: runner.os != 'Linux'
+        run: python scripts/smoke-desktop.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: desktop-${{ matrix.arch }}
-          path: dist/desktop/${{ matrix.arch }}/
+          name: desktop-${{ matrix.artifact }}
+          path: dist/desktop/${{ matrix.artifact }}/
           if-no-files-found: error
       - name: Remove ephemeral credentials
-        if: always() && vars.DESKTOP_SIGNING == 'true'
+        if: always() && runner.os == 'macOS' && vars.DESKTOP_SIGNING == 'true'
         run: |
           security default-keychain -d user -s login.keychain-db || true
           security delete-keychain "$RUNNER_TEMP/img-signing.keychain-db" || true
           rm -f "$RUNNER_TEMP/img-signing.p12"
   publish:
+    if: startsWith(github.ref, 'refs/tags/desktop-v')
     needs: package
     runs-on: ubuntu-latest
     permissions:
@@ -102,7 +130,8 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           set -eu
-          for arch in arm64 x86_64; do
+          for arch in arm64 x86_64 windows-x86_64 linux-x86_64; do
             (cd "packages/desktop-$arch" && sha256sum -c *.sha256)
           done
-          gh release create "$RELEASE_TAG" packages/desktop-*/*.dmg packages/desktop-*/*.zip packages/desktop-*/*.sha256 --verify-tag --notes-file desktop/RELEASE-NOTES.md --generate-notes --latest=false --title "img desktop ${RELEASE_TAG#desktop-v}"
+          mapfile -t assets < <(find packages -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' -o -name '*.deb' -o -name '*.sha256' \))
+          gh release create "$RELEASE_TAG" "${assets[@]}" --verify-tag --notes-file desktop/RELEASE-NOTES.md --generate-notes --latest=false --title "img desktop ${RELEASE_TAG#desktop-v}"

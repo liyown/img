@@ -30,3 +30,8 @@ security-framework = "3.7"
 
 [dev-dependencies]
 tiny_http = "0.12"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "=3.6.3", features = ["windows-native"] }
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "=3.6.3", features = ["sync-secret-service", "crypto-rust"] }

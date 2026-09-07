@@ -698,10 +698,12 @@ impl ImgDesktop {
         if self.preparing {
             return;
         }
-        #[cfg(target_os = "macos")]
         {
             self.preparing = true;
-            window.minimize_window();
+            if cfg!(target_os = "macos") {
+                window.minimize_window();
+            }
+            let binary = self.engine.clone();
             let control = Control::default();
             self.queue
                 .auxiliary
@@ -711,8 +713,7 @@ impl ImgDesktop {
                 let _completion = control.completion();
                 let directory = tempfile::tempdir()?;
                 let path = directory.path().join("screenshot.png");
-                let mut command = std::process::Command::new("/usr/sbin/screencapture");
-                command.args(["-i", "-x"]).arg(&path);
+                let command = crate::platform::capture_command(&binary, &path);
                 let status = engine::run(command, &control)?;
                 if !path.exists() {
                     return Ok::<_, anyhow::Error>(None);
@@ -760,8 +761,6 @@ impl ImgDesktop {
             })
             .detach();
         }
-        #[cfg(not(target_os = "macos"))]
-        self.message("请使用系统截图工具，复制后按粘贴按钮", false, cx);
     }
     fn copy(&mut self, item: &Item, cx: &mut Context<Self>) {
         if let Some(url) = &item.url {
@@ -1591,7 +1590,7 @@ impl ImgDesktop {
             let _ = this.update(cx, |this, cx| {
                 this.update_notice = Some(match result {
                     Ok(output) if output.status.success() => (
-                        "命令行已安装到 ~/.local/bin/img；若终端还找不到 img，请将 ~/.local/bin 加入 PATH。".into(), false),
+                        String::from_utf8_lossy(&output.stdout).trim().to_owned(), false),
                     Ok(_) => ("命令入口已存在或目录不可写。可直接使用应用内的 Contents/MacOS/img，或选择其他 CLI 安装目录。".into(), true),
                     Err(_) => ("无法启动内置 CLI，请重新安装应用。".into(), true),
                 });
@@ -1606,15 +1605,21 @@ impl ImgDesktop {
             .gap(px(14.))
             .child(label("关于与更新", 16., TEXT).font_weight(FontWeight::SEMIBOLD))
             .child(label(
-                format!("img {} · macOS", crate::updates::CURRENT_VERSION),
+                format!(
+                    "img {} · {}",
+                    crate::updates::CURRENT_VERSION,
+                    crate::platform::os()
+                ),
                 13.,
                 TEXT,
             ))
             .child(label(
                 if option_env!("IMG_SIGNING_TEAM").is_some() {
                     "已签名发行版"
-                } else {
+                } else if cfg!(target_os = "macos") {
                     "社区安装包 · 未经 Apple 公证，首次打开请按安装说明允许运行"
+                } else {
+                    "社区安装包 · 请从官方 Releases 下载，按系统安装器提示安装"
                 },
                 12.,
                 MUTED,
@@ -1714,7 +1719,7 @@ impl ImgDesktop {
                                 .label(if self.install_preparing {
                                     "正在准备…"
                                 } else {
-                                    "退出并安装更新"
+                                    crate::installer::install_label()
                                 })
                                 .primary()
                                 .small()
@@ -1737,11 +1742,7 @@ impl ImgDesktop {
                                 .small()
                                 .disabled(self.queue.batch.is_some())
                                 .on_click(cx.listener(move |this, _, _, cx| {
-                                    if std::process::Command::new("/usr/bin/open")
-                                        .arg(&manual)
-                                        .spawn()
-                                        .is_err()
-                                    {
+                                    if crate::platform::open_path(&manual).is_err() {
                                         this.message("无法打开安装包", true, cx);
                                     }
                                 })),

@@ -246,6 +246,12 @@ fn run(cli: Cli, control: &Control) -> Result<i32> {
             }
         }
         Command::Screenshot(v) => {
+            if let Some(output) = &v.output {
+                let image = platform::screenshot(v.region, v.window)?;
+                std::fs::copy(image.path(), output)?;
+                println!("{}", serde_json::json!({"path": output}));
+                return Ok(0);
+            }
             let cfg = load(&path)?;
             let p = provider(&cfg, &v.processing.provider)?;
             let image = platform::screenshot(v.region, v.window)?;

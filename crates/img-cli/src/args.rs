@@ -117,6 +117,9 @@ pub struct Fetch {
 }
 #[derive(Args)]
 pub struct Screenshot {
+    /// Save the capture locally without uploading or copying a link
+    #[arg(long)]
+    pub output: Option<std::path::PathBuf>,
     #[command(flatten)]
     pub processing: Processing,
     #[arg(long, conflicts_with = "window")]

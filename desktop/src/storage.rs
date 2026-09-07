@@ -378,8 +378,13 @@ impl CredentialStore for SystemCredentials {
         }
         #[cfg(not(target_os = "macos"))]
         {
-            let _ = (key, value);
-            anyhow::bail!("当前系统暂不支持安全保存凭据")
+            keyring::Entry::new(KEYCHAIN_SERVICE, key)?
+                .set_secret(value)
+                .map_err(|_| {
+                    anyhow::anyhow!(
+                        "无法保存系统凭据，请解锁系统密钥环（Linux 需要 Secret Service）"
+                    )
+                })
         }
     }
     fn get(&self, key: &str) -> Result<Vec<u8>> {
@@ -390,11 +395,16 @@ impl CredentialStore for SystemCredentials {
         }
         #[cfg(not(target_os = "macos"))]
         {
-            let _ = key;
-            anyhow::bail!("当前系统暂不支持读取凭据")
+            keyring::Entry::new(KEYCHAIN_SERVICE, key)?
+                .get_secret()
+                .map_err(|_| anyhow::anyhow!("无法读取系统凭据，请解锁密钥环或重新保存存储源"))
         }
     }
     fn delete(&self, key: &str) {
+        #[cfg(not(target_os = "macos"))]
+        if let Ok(entry) = keyring::Entry::new(KEYCHAIN_SERVICE, key) {
+            let _ = entry.delete_credential();
+        }
         #[cfg(target_os = "macos")]
         {
             let _ = security_framework::passwords::delete_generic_password(KEYCHAIN_SERVICE, key);

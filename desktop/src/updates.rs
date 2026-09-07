@@ -43,7 +43,16 @@ fn architecture() -> &'static str {
     }
 }
 
-fn select_release(bytes: &[u8], current: &str, arch: &str) -> Result<Option<Update>> {
+fn asset_name(version: &str, os: &str, arch: &str) -> String {
+    let extension = match os {
+        "windows" => "exe",
+        "linux" => "deb",
+        _ => "dmg",
+    };
+    format!("img-desktop_{version}_{os}_{arch}.{extension}")
+}
+
+fn select_release(bytes: &[u8], current: &str, os: &str, arch: &str) -> Result<Option<Update>> {
     let releases: Vec<Release> =
         serde_json::from_slice(bytes).context("更新服务返回了无法读取的信息")?;
     let current = Version::parse(current)?;
@@ -62,7 +71,7 @@ fn select_release(bytes: &[u8], current: &str, arch: &str) -> Result<Option<Upda
         if version <= current || !version.pre.is_empty() {
             continue;
         }
-        let name = format!("img-desktop_{version}_macos_{arch}.dmg");
+        let name = asset_name(&version.to_string(), os, arch);
         let base = format!("{REPOSITORY}/releases/download/desktop-v{version}");
         if let Some(asset) = release.assets.iter().find(|a| {
             a.name == name
@@ -93,7 +102,11 @@ fn select_release(bytes: &[u8], current: &str, arch: &str) -> Result<Option<Upda
 }
 
 fn curl(url: &str, timeout: &str) -> Command {
-    let mut command = Command::new("/usr/bin/curl");
+    let mut command = Command::new(if cfg!(windows) {
+        "curl.exe"
+    } else {
+        "/usr/bin/curl"
+    });
     command.args([
         "--fail",
         "--silent",
@@ -161,7 +174,12 @@ pub fn check() -> Result<Option<Update>> {
     command.args(["--max-filesize", "2097152"]);
     let result = crate::engine::run(command, &crate::engine::Control::default())?;
     if result.success {
-        return select_release(&result.stdout, CURRENT_VERSION, architecture());
+        return select_release(
+            &result.stdout,
+            CURRENT_VERSION,
+            crate::platform::os(),
+            architecture(),
+        );
     }
     // Anonymous API quota can be shared with other apps on the same network.
     // The public release feed provides a read-only fallback without credentials.
@@ -280,20 +298,29 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(
-            select_release(&bytes, "0.2.0", "arm64")
+            select_release(&bytes, "0.2.0", "macos", "arm64")
                 .unwrap()
                 .unwrap()
                 .version,
             "0.3.0"
         );
-        assert!(select_release(&bytes, "0.3.0", "arm64").unwrap().is_none());
-        assert!(select_release(&bytes, "0.2.0", "x86_64").unwrap().is_none());
+        assert!(
+            select_release(&bytes, "0.3.0", "macos", "arm64")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            select_release(&bytes, "0.2.0", "macos", "x86_64")
+                .unwrap()
+                .is_none()
+        );
         let mut malicious = release("0.3.0");
         malicious["assets"][0]["browser_download_url"] = "https://evil.test/app.dmg".into();
         assert!(
             select_release(
                 &serde_json::to_vec(&vec![malicious]).unwrap(),
                 "0.2.0",
+                "macos",
                 "arm64"
             )
             .unwrap()

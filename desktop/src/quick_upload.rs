@@ -22,6 +22,10 @@ impl ImgDesktop {
         self.message(text, true, cx);
     }
     pub fn hide_to_background(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !cfg!(target_os = "macos") {
+            self.request_close(window, cx);
+            return;
+        }
         if !DesktopRuntime::can_hide(cx) {
             self.message("菜单栏不可用，窗口保持打开；可按 ⌘Q 退出。", true, cx);
             return;
@@ -222,8 +226,7 @@ impl ImgDesktop {
                     QuickInput::Screenshot => {
                         let dir = tempfile::tempdir()?;
                         let path = dir.path().join("screenshot.png");
-                        let mut command = std::process::Command::new("/usr/sbin/screencapture");
-                        command.args(["-i", "-x"]).arg(&path);
+                        let command = crate::platform::capture_command(&binary, &path);
                         let output = engine::run(command, &control)?;
                         if !path.is_file() || output.stopped != 0 {
                             vec![]
