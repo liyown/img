@@ -1,5 +1,12 @@
 #[path = "diagnostic_ui.rs"]
 mod diagnostic_ui;
+#[path = "gallery_ui.rs"]
+mod gallery_ui;
+#[cfg(feature = "perf")]
+#[path = "performance.rs"]
+mod performance;
+#[path = "queue.rs"]
+mod queue;
 
 use crate::{
     assets::icon,
@@ -59,32 +66,21 @@ enum Filter {
     Failed,
 }
 
-struct UploadBatch {
-    pending: VecDeque<String>,
-    completed: Vec<Item>,
-    failed: usize,
-    target: String,
-    preferences: Preferences,
-    options: UploadOptions,
-    paused: bool,
-    cancelled: bool,
-    order: Vec<String>,
-}
-
-struct ActiveUpload {
-    control: Control,
-    requeue: bool,
-}
-
 pub struct ImgDesktop {
     focus: FocusHandle,
     search: Entity<InputState>,
     url_input: Entity<InputState>,
     show_url_input: bool,
     _subscriptions: Vec<Subscription>,
+    queue: queue::UploadController,
+    records_revision: u64,
+    record_index: std::cell::RefCell<crate::record_index::RecordIndex>,
+    list_scroll: UniformListScrollHandle,
+    #[cfg(feature = "perf")]
+    legacy_scroll: ScrollHandle,
+    thumbnails: Entity<crate::thumbnails::ThumbnailCache>,
     root: PathBuf,
     engine: PathBuf,
-    items: Vec<Item>,
     providers: Vec<(String, String)>,
     provider: String,
     page: Page,
@@ -95,11 +91,8 @@ pub struct ImgDesktop {
     filter: Filter,
     preferences: Preferences,
     storage_settings: Entity<StorageSettings>,
-    batch: Option<UploadBatch>,
-    active: HashMap<String, ActiveUpload>,
     upload_options: UploadOptions,
     upload_settings: Entity<UploadSettings>,
-    quit_when_done: bool,
     update_checking: bool,
     update_downloading: bool,
     available_update: Option<crate::updates::Update>,
@@ -107,9 +100,6 @@ pub struct ImgDesktop {
     update_notice: Option<(String, bool)>,
     reference: bool,
     preparing: bool,
-    persistence_ok: bool,
-    persistence_generation: u64,
-    queue_store: crate::queue_store::QueueStore,
     simulating: bool,
     notice: Option<(String, bool)>,
     copied: Option<String>,
@@ -213,9 +203,11 @@ fn dashed_outline() -> impl IntoElement {
     .size_full()
 }
 
-fn thumbnail(item: &Item) -> AnyElement {
+fn thumbnail(item: &Item, cache: &Entity<crate::thumbnails::ThumbnailCache>) -> AnyElement {
+    let use_cache = !cfg!(feature = "perf") || std::env::var_os("IMG_PERF_BASELINE").is_none();
     if let Some(path) = &item.thumbnail {
         img(path.clone())
+            .when(use_cache, |image| image.image_cache(cache))
             .size_full()
             .object_fit(ObjectFit::Cover)
             .rounded(px(10.))
@@ -231,6 +223,7 @@ fn thumbnail(item: &Item) -> AnyElement {
             .into_any_element()
     } else {
         img(item.asset.clone())
+            .image_cache(cache)
             .size_full()
             .object_fit(ObjectFit::Cover)
             .rounded(px(10.))
@@ -248,7 +241,7 @@ impl ImgDesktop {
     ) -> Self {
         let focus = cx.focus_handle();
         let search =
-            cx.new(|cx| InputState::new(window, cx).placeholder("搜索文件、URL 或标签..."));
+            cx.new(|cx| InputState::new(window, cx).placeholder("搜索文件、存储源或 URL..."));
         let url_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("https://example.com/image.png"));
         let subscription = cx.subscribe(&search, |_, _, event: &InputEvent, cx| {
@@ -364,10 +357,15 @@ impl ImgDesktop {
             url_input,
             show_url_input: false,
             _subscriptions: subscriptions,
-            queue_store: crate::queue_store::QueueStore::new(root.clone()),
+            queue: queue::UploadController::new(root.clone(), items, persistence_ok),
+            records_revision: 1,
+            record_index: Default::default(),
+            list_scroll: UniformListScrollHandle::new(),
+            #[cfg(feature = "perf")]
+            legacy_scroll: ScrollHandle::new(),
+            thumbnails: crate::thumbnails::ThumbnailCache::new(root.clone(), cx),
             root,
             engine,
-            items,
             providers,
             provider,
             page: Page::Queue,
@@ -378,11 +376,8 @@ impl ImgDesktop {
             filter: Filter::All,
             preferences,
             storage_settings,
-            batch: None,
-            active: HashMap::new(),
             upload_options,
             upload_settings,
-            quit_when_done: false,
             update_checking: false,
             update_downloading: false,
             available_update: None,
@@ -390,8 +385,6 @@ impl ImgDesktop {
             update_notice: None,
             reference,
             preparing: false,
-            persistence_ok,
-            persistence_generation: 0,
             simulating: false,
             notice,
             copied: None,
@@ -402,16 +395,17 @@ impl ImgDesktop {
         cx.notify();
     }
     fn persist(&mut self, cx: &mut Context<Self>) -> bool {
-        if !self.persistence_ok {
+        self.records_revision += 1;
+        if !self.queue.persistence_ok {
             self.message("本地队列需要修复，当前无法保存或开始上传。", true, cx);
             return false;
         }
-        let saved = self.queue_store.save(self.items.clone());
-        let generation = self.persistence_generation;
+        let saved = self.queue.queue_store.save(self.queue.items.clone());
+        let generation = self.queue.persistence_generation;
         cx.spawn(async move |this, cx| {
             if let Err(e) = crate::queue_store::acknowledged(saved).await {
                 let _ = this.update(cx, |this, cx| {
-                    if generation == this.persistence_generation {
+                    if generation == this.queue.persistence_generation {
                         this.persistence_failed(e, cx);
                     }
                 });
@@ -428,6 +422,9 @@ impl ImgDesktop {
         self.show_page(page, window, cx);
     }
     fn show_page(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
+        self.thumbnails
+            .update(cx, |cache, cx| cache.clear(window, cx));
+        self.list_scroll = UniformListScrollHandle::new();
         if self.page != page {
             self.content_revision = self.content_revision.wrapping_add(1);
         }
@@ -498,7 +495,7 @@ impl ImgDesktop {
                 for result in results {
                     match result {
                         Ok(item) => {
-                            this.items.push(item);
+                            this.queue.items.push(item);
                             count += 1;
                         }
                         Err(e) => errors.push(e),
@@ -554,7 +551,7 @@ impl ImgDesktop {
                         this.preparing = false;
                         match result {
                             Ok(item) => {
-                                this.items.push(item);
+                                this.queue.items.push(item);
                                 this.page = Page::Queue;
                                 this.filter = Filter::All;
                                 if this.persist(cx) {
@@ -618,7 +615,7 @@ impl ImgDesktop {
                 for result in results {
                     match result {
                         Ok(item) => {
-                            this.items.push(item);
+                            this.queue.items.push(item);
                             count += 1;
                         }
                         Err(e) => errors.push(e.to_string()),
@@ -686,7 +683,7 @@ impl ImgDesktop {
                     cx.activate(true);
                     match result {
                         Some(Ok(item)) => {
-                            this.items.push(item);
+                            this.queue.items.push(item);
                             this.page = Page::Queue;
                             if this.persist(cx) {
                                 this.message("截图已添加到队列", false, cx);
@@ -701,511 +698,6 @@ impl ImgDesktop {
         }
         #[cfg(not(target_os = "macos"))]
         self.message("请使用系统截图工具，复制后按粘贴按钮", false, cx);
-    }
-    fn start_upload(&mut self, id: &str, cx: &mut Context<Self>) {
-        if self.items.iter().any(|i| i.id == id && i.simulated) {
-            self.simulate(cx);
-            return;
-        }
-        self.begin_upload(vec![id.to_owned()], cx);
-    }
-    fn start_all_uploads(&mut self, cx: &mut Context<Self>) {
-        let ids = self
-            .items
-            .iter()
-            .filter(|i| !i.simulated && i.status == Status::Ready)
-            .map(|i| i.id.clone())
-            .collect::<Vec<_>>();
-        self.begin_upload(ids, cx);
-    }
-    fn begin_upload(&mut self, ids: Vec<String>, cx: &mut Context<Self>) {
-        if self.batch.is_some() {
-            self.message("请先完成、暂停或取消当前批次", false, cx);
-            return;
-        }
-        if ids.is_empty() {
-            self.message("没有可以上传的图片", false, cx);
-            return;
-        }
-        if !self.providers.iter().any(|(p, _)| p == &self.provider) {
-            self.message("请在设置中添加并选择存储源，再开始上传", true, cx);
-            return;
-        }
-        self.batch = Some(UploadBatch {
-            pending: ids.clone().into(),
-            order: ids,
-            completed: vec![],
-            failed: 0,
-            target: self.provider.clone(),
-            preferences: self.preferences,
-            options: self.upload_options.clone(),
-            paused: false,
-            cancelled: false,
-        });
-        self.storage_settings.update(cx, |settings, cx| {
-            settings.uploading = true;
-            cx.notify();
-        });
-        self.upload_next(cx);
-    }
-    fn finish_uploads(&mut self, cx: &mut Context<Self>) {
-        let Some(mut batch) = self.batch.take() else {
-            return;
-        };
-        self.storage_settings.update(cx, |settings, cx| {
-            settings.uploading = false;
-            cx.notify();
-        });
-        batch.completed.sort_by_key(|item| {
-            batch
-                .order
-                .iter()
-                .position(|id| id == &item.id)
-                .unwrap_or(usize::MAX)
-        });
-        let count = batch.completed.len();
-        let copied = batch.preferences.auto_copy && count > 0;
-        if copied {
-            let links = batch
-                .completed
-                .iter()
-                .filter_map(|item| {
-                    item.url
-                        .as_ref()
-                        .map(|url| batch.preferences.copy_format.render(&item.name, url))
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            cx.write_to_clipboard(ClipboardItem::new_string(links));
-            self.copied = batch.completed.last().map(|item| item.id.clone());
-        }
-        self.message(
-            format!(
-                "已上传 {count} 张{}{}{}",
-                if copied {
-                    format!(" · 已复制为 {}", batch.preferences.copy_format.label())
-                } else {
-                    String::new()
-                },
-                if batch.failed > 0 {
-                    format!(" · {} 张失败，可批量重试", batch.failed)
-                } else {
-                    String::new()
-                },
-                if batch.cancelled {
-                    " · 本批剩余上传已取消"
-                } else {
-                    ""
-                }
-            ),
-            batch.failed > 0,
-            cx,
-        );
-        if self.quit_when_done {
-            cx.quit();
-        }
-    }
-    fn upload_next(&mut self, cx: &mut Context<Self>) {
-        loop {
-            let Some(batch) = &mut self.batch else {
-                return;
-            };
-            if batch.paused || self.active.len() >= batch.options.concurrency {
-                return;
-            }
-            let Some(id) = batch.pending.pop_front() else {
-                if self.active.is_empty() {
-                    self.finish_uploads(cx);
-                }
-                return;
-            };
-            let Some(index) = self.items.iter().position(|i| {
-                i.id == id
-                    && !i.simulated
-                    && matches!(
-                        i.status,
-                        Status::Ready | Status::Failed | Status::Paused | Status::Cancelled
-                    )
-            }) else {
-                continue;
-            };
-            let options = batch.options.clone();
-            self.items[index].target = batch.target.clone();
-            self.items[index].status = Status::Running;
-            self.items[index].progress = None;
-            self.items[index].error = None;
-            self.items[index].error_code = None;
-            self.items[index].http_status = None;
-            self.items[index].retryable = None;
-            if !self.persist(cx) {
-                self.items[index].status = Status::Paused;
-                self.pause_all(cx);
-                return;
-            }
-            let item = self.items[index].clone();
-            let root = self.root.clone();
-            let engine = self.engine.clone();
-            let control = Control::default();
-            self.active.insert(
-                id.clone(),
-                ActiveUpload {
-                    control: control.clone(),
-                    requeue: false,
-                },
-            );
-            let progress_id = id.clone();
-            let meter = control.clone();
-            cx.spawn(async move |this, cx| {
-                while !meter.finished.load(Ordering::SeqCst) {
-                    cx.background_executor()
-                        .timer(Duration::from_millis(80))
-                        .await;
-                    if this
-                        .update(cx, |this, cx| {
-                            if let Some(item) = this
-                                .items
-                                .iter_mut()
-                                .find(|i| i.id == progress_id && i.status == Status::Running)
-                            {
-                                item.progress = meter.progress().percent();
-                                cx.notify();
-                            }
-                        })
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-            })
-            .detach();
-            let saved = self.queue_store.barrier();
-            let task = cx.background_executor().spawn(async move {
-                crate::queue_store::acknowledged(saved).await?;
-                model::upload(&item, &root, &engine, &options, &control)
-            });
-            cx.spawn(async move |this, cx| {
-                let result = task.await;
-                let _ = this.update(cx, |this, cx| {
-                    let active = this.active.remove(&id);
-                    if let Some(item) = this.items.iter_mut().find(|i| i.id == id) {
-                        match result {
-                            Ok(model::UploadOutcome::Done(result)) => {
-                                item.status = Status::Done;
-                                item.progress = Some(100);
-                                item.url = Some(result.url);
-                                item.uploaded_size = result.size;
-                                item.error = None;
-                                if let Some(batch) = &mut this.batch {
-                                    batch.completed.push(item.clone());
-                                }
-                            }
-                            Ok(model::UploadOutcome::Paused) => {
-                                item.status = Status::Paused;
-                                item.progress = None;
-                                item.error = Some(
-                                    "已暂停，继续时重新上传此文件；中断前服务端可能已收到图片。"
-                                        .into(),
-                                );
-                                if active.is_some_and(|a| a.requeue)
-                                    && let Some(batch) = &mut this.batch
-                                    && !batch.cancelled
-                                {
-                                    batch.pending.push_front(id.clone());
-                                }
-                            }
-                            Ok(model::UploadOutcome::Cancelled) => {
-                                item.status = Status::Cancelled;
-                                item.progress = None;
-                                item.error =
-                                    Some("已取消本地请求；不会删除服务端可能已接收的图片。".into());
-                            }
-                            Err(error) => {
-                                item.status = Status::Failed;
-                                item.progress = None;
-                                let failure = crate::diagnostics::Failure::from_error(&error);
-                                item.error = Some(failure.summary().into());
-                                item.error_code = Some(failure.error_code);
-                                item.http_status = failure.http_status;
-                                item.retryable = failure.retryable;
-                                if let Some(batch) = &mut this.batch {
-                                    batch.failed += 1;
-                                }
-                            }
-                        }
-                    }
-                    if this.persist(cx) {
-                        let saved = this.queue_store.barrier();
-                        cx.spawn(async move |this, cx| {
-                            match crate::queue_store::acknowledged(saved).await {
-                                Ok(()) => {
-                                    let _ = this.update(cx, |this, cx| this.upload_next(cx));
-                                }
-                                Err(e) => {
-                                    let _ =
-                                        this.update(cx, |this, cx| this.persistence_failed(e, cx));
-                                }
-                            }
-                        })
-                        .detach();
-                    } else {
-                        this.pause_all(cx);
-                    }
-                    cx.notify();
-                });
-            })
-            .detach();
-            cx.notify();
-        }
-    }
-    fn pause_all(&mut self, cx: &mut Context<Self>) {
-        if let Some(batch) = &mut self.batch {
-            batch.paused = true;
-        }
-        for active in self.active.values_mut() {
-            active.requeue = true;
-            active.control.stop(engine::PAUSE);
-        }
-        self.message("队列已暂停，继续时重新上传被中断的文件", false, cx);
-    }
-    fn resume_all(&mut self, cx: &mut Context<Self>) {
-        if let Some(batch) = &mut self.batch {
-            batch.paused = false;
-            self.upload_next(cx);
-        } else {
-            let ids = self
-                .items
-                .iter()
-                .filter(|i| !i.simulated && matches!(i.status, Status::Ready | Status::Paused))
-                .map(|i| i.id.clone())
-                .collect();
-            self.begin_upload(ids, cx);
-        }
-        cx.notify();
-    }
-    fn cancel_all(&mut self, cx: &mut Context<Self>) {
-        if let Some(batch) = &mut self.batch {
-            batch.cancelled = true;
-            batch.paused = false;
-            for id in batch.pending.drain(..) {
-                if let Some(item) = self.items.iter_mut().find(|i| i.id == id) {
-                    item.status = Status::Cancelled;
-                    item.progress = None;
-                }
-            }
-        }
-        for active in self.active.values_mut() {
-            active.requeue = false;
-            active.control.stop(engine::CANCEL);
-        }
-        self.persist(cx);
-        self.upload_next(cx);
-        cx.notify();
-    }
-    fn stop_item(&mut self, id: &str, reason: u8, cx: &mut Context<Self>) {
-        if let Some(active) = self.active.get_mut(id) {
-            active.requeue = false;
-            active.control.stop(reason);
-        } else {
-            if let Some(batch) = &mut self.batch {
-                batch.pending.retain(|p| p != id);
-            }
-            if let Some(item) = self.items.iter_mut().find(|i| i.id == id) {
-                item.status = if reason == engine::PAUSE {
-                    Status::Paused
-                } else {
-                    Status::Cancelled
-                };
-                item.progress = None;
-                item.error = None;
-            }
-            self.persist(cx);
-            self.upload_next(cx);
-        }
-        cx.notify();
-    }
-    fn retry_failed(&mut self, cx: &mut Context<Self>) {
-        let ids = self
-            .items
-            .iter()
-            .filter(|i| !i.simulated && i.status == Status::Failed)
-            .map(|i| i.id.clone())
-            .collect();
-        self.begin_upload(ids, cx);
-    }
-    fn remove_records(&mut self, ids: Vec<String>, window: &mut Window, cx: &mut Context<Self>) {
-        let ids: Vec<_> = ids
-            .into_iter()
-            .filter(|id| {
-                !self.active.contains_key(id)
-                    && !self.batch.as_ref().is_some_and(|b| b.pending.contains(id))
-            })
-            .collect();
-        if ids.is_empty() {
-            self.message("没有可清理的记录，请先取消正在等待的任务", false, cx);
-            return;
-        }
-        let prompt = window.prompt(
-            PromptLevel::Warning,
-            &format!("清理 {} 条记录？", ids.len()),
-            Some("删除这些记录和应用内的图片缓存。你选择的原始文件与远端图片会保留。"),
-            &["取消", "清理"],
-            cx,
-        );
-        cx.spawn(async move |this, cx| {
-            if prompt.await.ok() != Some(1) {
-                return;
-            }
-            let _ = this.update(cx, |this, cx| {
-                let ids: Vec<_> = ids
-                    .into_iter()
-                    .filter(|id| {
-                        !this.active.contains_key(id)
-                            && !this.batch.as_ref().is_some_and(|b| b.pending.contains(id))
-                    })
-                    .collect();
-                if !this.persistence_ok {
-                    this.message("本地队列无法读取，不能清理记录", true, cx);
-                    return;
-                }
-                let removed: Vec<_> = this
-                    .items
-                    .iter()
-                    .filter(|i| ids.contains(&i.id))
-                    .cloned()
-                    .collect();
-                this.items.retain(|i| !ids.contains(&i.id));
-                let saved = this.queue_store.save(this.items.clone());
-                let root = this.root.clone();
-                cx.spawn(async move |this, cx| {
-                    match crate::queue_store::acknowledged(saved).await {
-                        Ok(()) => {
-                            let count = removed.len();
-                            cx.background_executor()
-                                .spawn(async move {
-                                    model::remove_cache(&root, &removed);
-                                })
-                                .await;
-                            let _ = this.update(cx, |this, cx| {
-                                this.message(format!("已清理 {count} 条记录和图片缓存"), false, cx)
-                            });
-                        }
-                        Err(e) => {
-                            let _ = this.update(cx, |this, cx| this.persistence_failed(e, cx));
-                        }
-                    }
-                })
-                .detach();
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-    fn prepare_shutdown(&mut self) -> (Vec<Control>, crate::queue_store::Pending<()>) {
-        let controls: Vec<_> = self.active.values().map(|a| a.control.clone()).collect();
-        for control in &controls {
-            control.stop(engine::PAUSE);
-        }
-        for item in &mut self.items {
-            if item.status == Status::Running && !item.simulated {
-                item.status = Status::Paused;
-                item.progress = None;
-                item.error = Some("退出时已中断上传，继续时将重新上传。".into());
-            }
-        }
-        let saved = if self.persistence_ok {
-            self.queue_store.save(self.items.clone())
-        } else {
-            self.queue_store.barrier()
-        };
-        (controls, saved)
-    }
-    pub fn request_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if window.has_active_prompt() {
-            return;
-        }
-        if self.active.is_empty() {
-            cx.quit();
-            return;
-        }
-        let prompt = window.prompt(
-            PromptLevel::Warning,
-            "还有图片正在上传",
-            Some("可以等本批完成后退出，或暂停上传并保存队列。"),
-            &["继续使用", "上传完成后退出", "暂停并退出"],
-            cx,
-        );
-        cx.spawn(async move |this, cx| {
-            let answer = prompt.await.ok();
-            let _ = this.update(cx, |this, cx| match answer {
-                Some(1) => {
-                    this.quit_when_done = true;
-                    if this.active.is_empty() {
-                        cx.quit();
-                    } else {
-                        this.message("本批上传完成后自动退出", false, cx);
-                    }
-                }
-                Some(2) => cx.quit(),
-                _ => {}
-            });
-        })
-        .detach();
-    }
-    fn simulate(&mut self, cx: &mut Context<Self>) {
-        if self.simulating {
-            return;
-        }
-        if !self
-            .items
-            .iter()
-            .any(|i| i.simulated && i.status != Status::Done)
-        {
-            self.items.push(Item::fixture(
-                "banner_spring.webp",
-                3_711_959,
-                "SM.MS",
-                "queue-coast.png",
-                0,
-            ));
-        }
-        for item in &mut self.items {
-            if item.simulated && item.status != Status::Done {
-                item.status = Status::Running;
-            }
-        }
-        self.simulating = true;
-        self.message("模拟上传已开始，仅演示进度，不会上传图片", false, cx);
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(180))
-                    .await;
-                let keep_going = this
-                    .update(cx, |this, cx| {
-                        let mut active = false;
-                        for item in &mut this.items {
-                            if item.simulated && item.status == Status::Running {
-                                let next = item.progress.unwrap_or(0).saturating_add(3).min(100);
-                                item.progress = Some(next);
-                                if next == 100 {
-                                    item.status = Status::Done;
-                                    item.url = Some(format!("https://example.com/{}", item.name));
-                                } else {
-                                    active = true;
-                                }
-                            }
-                        }
-                        this.simulating = active;
-                        cx.notify();
-                        active
-                    })
-                    .unwrap_or(false);
-                if !keep_going {
-                    break;
-                }
-            }
-        })
-        .detach();
     }
     fn copy(&mut self, item: &Item, cx: &mut Context<Self>) {
         if let Some(url) = &item.url {
@@ -1289,29 +781,21 @@ impl ImgDesktop {
             )
             .into_any_element()
     }
-    fn filtered(&self, cx: &App) -> Vec<Item> {
-        let query = self.search.read(cx).value();
-        self.items
-            .iter()
-            .filter(|i| i.matches(&query))
-            .filter(|i| {
-                self.page != Page::Queue
-                    || match self.filter {
-                        Filter::All => true,
-                        Filter::Running => i.status == Status::Running,
-                        Filter::Done => i.status == Status::Done,
-                        Filter::Failed => i.status == Status::Failed,
-                    }
-            })
-            .filter(|i| match self.page {
-                Page::Library => i.status == Status::Done,
-                Page::History => {
-                    matches!(i.status, Status::Done | Status::Failed | Status::Cancelled)
-                }
-                _ => true,
-            })
+    fn filtered(&self, cx: &App) -> std::sync::Arc<Vec<String>> {
+        self.record_index.borrow_mut().rows(
+            &self.queue.items,
+            self.records_revision,
+            &self.search.read(cx).value(),
+            self.page as u8,
+            self.filter as u8,
+        )
+    }
+    fn indexed_item(&self, id: &str) -> Option<Item> {
+        self.record_index
+            .borrow()
+            .position(id)
+            .and_then(|n| self.queue.items.get(n))
             .cloned()
-            .collect()
     }
     fn toggle_sidebar(&mut self, _: &ToggleSidebar, _: &mut Window, cx: &mut Context<Self>) {
         self.preferences.sidebar_collapsed = !self.preferences.sidebar_collapsed;
@@ -1319,6 +803,7 @@ impl ImgDesktop {
     }
     fn sidebar(&self, active_y: Pixels, cx: &mut Context<Self>) -> AnyElement {
         let done = self
+            .queue
             .items
             .iter()
             .filter(|i| i.status == Status::Done)
@@ -1351,7 +836,7 @@ impl ImgDesktop {
                 Page::Queue,
                 "上传队列",
                 "upload-simple",
-                Some(self.items.len()),
+                Some(self.queue.items.len()),
             ),
             (Page::History, "历史记录", "clock-counter-clockwise", None),
             (Page::Settings, "设置", "gear", None),
@@ -1710,6 +1195,7 @@ impl ImgDesktop {
     }
     fn upload_actions(&self, cx: &mut Context<Self>) -> AnyElement {
         let ready = self
+            .queue
             .items
             .iter()
             .filter(|i| !i.simulated && i.status == Status::Ready)
@@ -1775,9 +1261,9 @@ impl ImgDesktop {
             .child(
                 action(
                     "upload-pending",
-                    &if self.batch.as_ref().is_some_and(|b| b.paused) {
+                    &if self.queue.batch.as_ref().is_some_and(|b| b.paused) {
                         "已暂停".into()
-                    } else if self.batch.is_some() {
+                    } else if self.queue.batch.is_some() {
                         "上传中…".into()
                     } else if ready == 0 {
                         "上传".into()
@@ -1787,7 +1273,7 @@ impl ImgDesktop {
                 )
                 .primary()
                 .icon(Icon::default().path("icons/upload-simple.svg"))
-                .disabled(self.preparing || self.batch.is_some() || ready == 0)
+                .disabled(self.preparing || self.queue.batch.is_some() || ready == 0)
                 .on_click(cx.listener(|this, _, _, cx| this.start_all_uploads(cx))),
             )
             .into_any_element()
@@ -1892,392 +1378,6 @@ impl ImgDesktop {
                 )
             })
             .into_any_element()
-    }
-    fn display_progress(&self, item: &Item) -> Option<u8> {
-        // The supplied mock labels its approximately 82% track as 87%.
-        // Preserve that static composition only for the reference fixture.
-        if self.reference && !self.simulating && item.simulated && item.progress == Some(87) {
-            Some(82)
-        } else {
-            item.progress
-        }
-    }
-    fn queue_row(&self, item: Item, cx: &mut Context<Self>) -> AnyElement {
-        let color = match item.status {
-            Status::Done => GREEN,
-            Status::Failed => RED,
-            _ => ORANGE,
-        };
-        let status = match item.status {
-            Status::Ready => "待上传".into(),
-            Status::Running => self
-                .active
-                .get(&item.id)
-                .map(|a| a.control.progress().label())
-                .unwrap_or_else(|| {
-                    item.progress
-                        .map(|p| format!("{p}%"))
-                        .unwrap_or("上传中".into())
-                }),
-            Status::Done => "完成".into(),
-            Status::Failed => "失败".into(),
-            Status::Paused => "已暂停".into(),
-            Status::Cancelled => "已取消".into(),
-        };
-        let preview_item = item.clone();
-        let id = item.id.clone();
-        let pause_id = id.clone();
-        let cancel_id = id.clone();
-        let remove_id = id.clone();
-        let failure_item = item.clone();
-        let title = div()
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .h(px(22.))
-            .min_w(px(0.))
-            .child(label(item.name.clone(), 13., TEXT).text_ellipsis())
-            .child(
-                mono(
-                    format!(
-                        "{} · {}",
-                        item.size_label(),
-                        if item.target.is_empty() {
-                            "未选择存储源"
-                        } else {
-                            &item.target
-                        }
-                    ),
-                    10.,
-                    MUTED,
-                )
-                .whitespace_nowrap(),
-            )
-            .child(div().flex_1())
-            .when(item.status == Status::Done, |this| {
-                this.child(self.copy_actions(&item, "queue", cx))
-            })
-            .when(item.status == Status::Failed, |this| {
-                this.child(
-                    Button::new(SharedString::from(format!("error-{}", failure_item.id)))
-                        .ghost()
-                        .xsmall()
-                        .label("详情 / 处理")
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.failure_details(failure_item.clone(), window, cx)
-                        })),
-                )
-            })
-            .when(item.status == Status::Running && !item.simulated, |this| {
-                this.child(
-                    Button::new(SharedString::from(format!("pause-{pause_id}")))
-                        .ghost()
-                        .xsmall()
-                        .label("暂停")
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.stop_item(&pause_id, engine::PAUSE, cx)
-                        })),
-                )
-                .child(
-                    Button::new(SharedString::from(format!("cancel-{cancel_id}")))
-                        .ghost()
-                        .xsmall()
-                        .label("取消")
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.stop_item(&cancel_id, engine::CANCEL, cx)
-                        })),
-                )
-            })
-            .when(item.status != Status::Running, |this| {
-                this.child(
-                    Button::new(SharedString::from(format!("remove-{remove_id}")))
-                        .ghost()
-                        .xsmall()
-                        .label("清理")
-                        .disabled(
-                            self.batch
-                                .as_ref()
-                                .is_some_and(|b| b.pending.contains(&remove_id)),
-                        )
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.remove_records(vec![remove_id.clone()], window, cx)
-                        })),
-                )
-            })
-            .when(
-                matches!(
-                    item.status,
-                    Status::Ready | Status::Failed | Status::Paused | Status::Cancelled
-                ),
-                |this| {
-                    this.child(
-                        Button::new(SharedString::from(format!("start-{id}")))
-                            .ghost()
-                            .xsmall()
-                            .h(px(22.))
-                            .text_color(rgb(ORANGE))
-                            .text_size(px(11.))
-                            .disabled(self.batch.is_some())
-                            .label(if item.status == Status::Ready {
-                                "开始上传"
-                            } else {
-                                "重试"
-                            })
-                            .on_click(
-                                cx.listener(move |this, _, _, cx| this.start_upload(&id, cx)),
-                            ),
-                    )
-                },
-            );
-        let row = div()
-            .id(SharedString::from(format!("row-{}", item.id)))
-            .w_full()
-            .min_h(px(74.))
-            .p(px(12.))
-            .rounded(px(16.))
-            .border_1()
-            .border_color(rgb(BORDER))
-            .bg(rgb(CARD))
-            .flex()
-            .items_center()
-            .gap(px(14.))
-            .child(
-                Button::new(SharedString::from(format!("preview-{}", item.id)))
-                    .accessibility_label(format!("预览 {}", item.name))
-                    .ghost()
-                    .p_0()
-                    .size(px(48.))
-                    .rounded(px(10.))
-                    .overflow_hidden()
-                    .child(thumbnail(&item))
-                    .tooltip(format!("预览 {}", item.name))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.open_preview(preview_item.clone(), window, cx);
-                    })),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(6.))
-                    .child(title)
-                    .child(progress(self.display_progress(&item), color))
-                    .when_some(item.error.clone(), |this, error| {
-                        this.child(
-                            label(
-                                error,
-                                11.,
-                                if item.status == Status::Failed {
-                                    RED
-                                } else {
-                                    MUTED
-                                },
-                            )
-                            .mt(px(2.)),
-                        )
-                    }),
-            )
-            .child(
-                div()
-                    .min_w(px(48.))
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .justify_end()
-                    .gap(px(4.))
-                    .child(mono(status, 11., color))
-                    .when(item.status == Status::Done, |this| {
-                        this.child(icon("check", 12.).text_color(rgb(GREEN)))
-                    }),
-            );
-        row.into_any_element()
-    }
-    fn library_view_switch(&self, cx: &mut Context<Self>) -> AnyElement {
-        let mut switch = div()
-            .h(px(34.))
-            .flex()
-            .items_center()
-            .p(px(3.))
-            .gap(px(2.))
-            .border_1()
-            .border_color(rgb(BORDER))
-            .rounded(px(10.));
-        for (view, title) in [(LibraryView::Grid, "网格"), (LibraryView::List, "列表")] {
-            let selected = self.preferences.library_view == view;
-            switch = switch.child(
-                Button::new(SharedString::from(format!("library-view-{title}")))
-                    .accessibility_label(format!("{title}展示"))
-                    .selected(selected)
-                    .ghost()
-                    .small()
-                    .h(px(26.))
-                    .px(px(12.))
-                    .rounded(px(7.))
-                    .text_size(px(12.))
-                    .bg(rgb(if selected { TEXT } else { CANVAS }))
-                    .text_color(rgb(if selected { CARD } else { MUTED }))
-                    .label(title)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if this.preferences.library_view != view {
-                            this.content_revision = this.content_revision.wrapping_add(1);
-                        }
-                        this.preferences.library_view = view;
-                        this.save_preferences(cx);
-                    }))
-                    .with_spring(
-                        SharedString::from(format!("library-transition-{title}")),
-                        SpringAnimation::new(SpringConfig::new(700., 54., 1.))
-                            .to(AnimationPhase(if selected { 1. } else { 0. })),
-                        |this, phase| {
-                            this.bg(phase.interpolate_between_clamped(
-                                0.0..=1.0,
-                                rgb(CANVAS),
-                                rgb(TEXT),
-                            ))
-                            .text_color(
-                                phase.interpolate_between_clamped(0.0..=1.0, rgb(MUTED), rgb(CARD)),
-                            )
-                        },
-                    ),
-            );
-        }
-        switch.into_any_element()
-    }
-    fn library_grid_card(&self, item: Item, cx: &mut Context<Self>) -> AnyElement {
-        let preview = item.clone();
-        div()
-            .min_w(px(0.))
-            .p(px(10.))
-            .border_1()
-            .border_color(rgb(BORDER))
-            .rounded(px(14.))
-            .bg(rgb(CARD))
-            .flex()
-            .flex_col()
-            .gap(px(10.))
-            .child(
-                Button::new(SharedString::from(format!("grid-preview-{}", item.id)))
-                    .accessibility_label(format!("预览 {}", item.name))
-                    .ghost()
-                    .p_0()
-                    .w_full()
-                    .h_auto()
-                    .aspect_ratio(4. / 3.)
-                    .rounded(px(10.))
-                    .overflow_hidden()
-                    .child(thumbnail(&item))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.open_preview(preview.clone(), window, cx);
-                    })),
-            )
-            .child(label(item.name.clone(), 13., TEXT).text_ellipsis())
-            .child(
-                mono(
-                    format!("{} · {}", item.size_label(), item.target),
-                    10.,
-                    MUTED,
-                )
-                .text_ellipsis(),
-            )
-            .child(
-                div()
-                    .flex()
-                    .justify_end()
-                    .child(self.copy_actions(&item, "grid", cx)),
-            )
-            .into_any_element()
-    }
-    fn library_list_row(&self, item: Item, cx: &mut Context<Self>) -> AnyElement {
-        let preview = item.clone();
-        div()
-            .w_full()
-            .h(px(74.))
-            .px(px(12.))
-            .border_b_1()
-            .border_color(rgb(BORDER))
-            .flex()
-            .items_center()
-            .gap(px(14.))
-            .child(
-                Button::new(SharedString::from(format!("list-preview-{}", item.id)))
-                    .accessibility_label(format!("预览 {}", item.name))
-                    .ghost()
-                    .p_0()
-                    .size(px(48.))
-                    .rounded(px(10.))
-                    .overflow_hidden()
-                    .child(thumbnail(&item))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.open_preview(preview.clone(), window, cx);
-                    })),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(5.))
-                    .child(label(item.name.clone(), 13., TEXT).text_ellipsis())
-                    .child(label(item.url.clone().unwrap_or_default(), 11., MUTED).text_ellipsis()),
-            )
-            .child(
-                label(item.target.clone(), 11., MUTED)
-                    .w(px(90.))
-                    .text_ellipsis(),
-            )
-            .child(mono(item.size_label(), 10., MUTED).w(px(66.)))
-            .child(
-                div()
-                    .w(px(108.))
-                    .flex()
-                    .justify_end()
-                    .child(self.copy_actions(&item, "list", cx)),
-            )
-            .into_any_element()
-    }
-    fn library(&self, rows: Vec<Item>, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        match self.preferences.library_view {
-            LibraryView::Grid => div()
-                .w_full()
-                .grid()
-                .grid_cols(if window.viewport_size().width < px(1180.) {
-                    3
-                } else {
-                    4
-                })
-                .gap(px(14.))
-                .children(
-                    rows.into_iter()
-                        .map(|item| self.library_grid_card(item, cx)),
-                )
-                .into_any_element(),
-            LibraryView::List => div()
-                .w_full()
-                .rounded(px(14.))
-                .border_1()
-                .border_color(rgb(BORDER))
-                .overflow_hidden()
-                .bg(rgb(CARD))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(14.))
-                        .h(px(38.))
-                        .px(px(12.))
-                        .border_b_1()
-                        .border_color(rgb(BORDER))
-                        .child(label("图片", 11., MUTED).flex_1())
-                        .child(label("存储源", 11., MUTED).w(px(90.)))
-                        .child(label("大小", 11., MUTED).w(px(66.)))
-                        .child(label("链接", 11., MUTED).w(px(108.)).text_right()),
-                )
-                .children(rows.into_iter().map(|item| self.library_list_row(item, cx)))
-                .into_any_element(),
-        }
     }
     pub fn startup_update_check(&mut self, cx: &mut Context<Self>) {
         if !self.reference && self.preferences.check_updates && crate::updates::due(&self.root) {
@@ -2458,7 +1558,7 @@ impl ImgDesktop {
                                 .label("打开安装包")
                                 .outline()
                                 .small()
-                                .disabled(self.batch.is_some())
+                                .disabled(self.queue.batch.is_some())
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     match std::process::Command::new("/usr/bin/open")
                                         .arg(&file)
@@ -2585,8 +1685,9 @@ impl ImgDesktop {
             .into_any_element()
     }
     fn queue_controls(&self, cx: &mut Context<Self>) -> AnyElement {
-        let paused = self.batch.as_ref().is_some_and(|b| b.paused);
+        let paused = self.queue.batch.as_ref().is_some_and(|b| b.paused);
         let has_paused = self
+            .queue
             .items
             .iter()
             .any(|i| !i.simulated && i.status == Status::Paused);
@@ -2598,16 +1699,16 @@ impl ImgDesktop {
             .mb(px(12.))
             .child(
                 Button::new("pause-all")
-                    .label(if paused || self.batch.is_none() {
+                    .label(if paused || self.queue.batch.is_none() {
                         "继续队列"
                     } else {
                         "暂停全部"
                     })
                     .outline()
                     .small()
-                    .disabled(self.batch.is_none() && !has_paused)
+                    .disabled(self.queue.batch.is_none() && !has_paused)
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        if paused || this.batch.is_none() {
+                        if paused || this.queue.batch.is_none() {
                             this.resume_all(cx);
                         } else {
                             this.pause_all(cx);
@@ -2619,7 +1720,7 @@ impl ImgDesktop {
                     .label("取消本批")
                     .ghost()
                     .small()
-                    .disabled(self.batch.is_none())
+                    .disabled(self.queue.batch.is_none())
                     .on_click(cx.listener(|this, _, _, cx| this.cancel_all(cx))),
             )
             .child(
@@ -2628,8 +1729,9 @@ impl ImgDesktop {
                     .ghost()
                     .small()
                     .disabled(
-                        self.batch.is_some()
+                        self.queue.batch.is_some()
                             || !self
+                                .queue
                                 .items
                                 .iter()
                                 .any(|i| !i.simulated && i.status == Status::Failed),
@@ -2642,11 +1744,12 @@ impl ImgDesktop {
                     .label("清理已结束记录")
                     .ghost()
                     .small()
-                    .disabled(!self.items.iter().any(|i| {
+                    .disabled(!self.queue.items.iter().any(|i| {
                         matches!(i.status, Status::Done | Status::Failed | Status::Cancelled)
                     }))
                     .on_click(cx.listener(|this, _, window, cx| {
                         let ids = this
+                            .queue
                             .items
                             .iter()
                             .filter(|i| {
@@ -2664,7 +1767,13 @@ impl ImgDesktop {
     }
     fn content(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let rows = self.filtered(cx);
-        let mut body = div().flex().flex_col().w_full().p(px(24.));
+        let mut body = div()
+            .flex()
+            .flex_col()
+            .w_full()
+            .min_h(px(0.))
+            .p(px(24.))
+            .when(self.page != Page::Settings, |body| body.h_full());
         if self.page == Page::Settings {
             body = body.child(self.settings(cx));
         } else {
@@ -2725,7 +1834,7 @@ impl ImgDesktop {
                             if self.page == Page::Library && self.search.read(cx).value().is_empty()
                             {
                                 "还没有已上传的图片"
-                            } else if self.items.is_empty() {
+                            } else if self.queue.items.is_empty() {
                                 "还没有上传记录"
                             } else {
                                 "没有符合条件的图片"
@@ -2737,7 +1846,7 @@ impl ImgDesktop {
                             if self.page == Page::Library && self.search.read(cx).value().is_empty()
                             {
                                 "上传完成后，图片会自动出现在图库中"
-                            } else if self.items.is_empty() {
+                            } else if self.queue.items.is_empty() {
                                 "选择图片或拖放到上方，开始第一次上传"
                             } else if self.page != Page::Queue {
                                 "试试其他关键词，或清空搜索"
@@ -2751,20 +1860,14 @@ impl ImgDesktop {
             } else if self.page == Page::Library {
                 body = body.child(self.library(rows, window, cx));
             } else {
-                body = body.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(8.))
-                        .children(rows.into_iter().map(|item| self.queue_row(item, cx))),
-                );
+                body = body.child(self.virtual_records(rows, false, window, cx));
             }
         }
         div()
             .id("content-scroll")
             .flex_1()
             .min_h(px(0.))
-            .overflow_y_scroll()
+            .when(self.page == Page::Settings, |body| body.overflow_y_scroll())
             .child(
                 body.with_animation(
                     ("content-enter", self.content_revision),
@@ -2784,7 +1887,11 @@ impl ImgDesktop {
             .into_any_element()
     }
     fn footer(&self) -> AnyElement {
-        let active = self.items.iter().find(|i| i.status == Status::Running);
+        let active = self
+            .queue
+            .items
+            .iter()
+            .find(|i| i.status == Status::Running);
         let mut bar = div()
             .h(px(42.))
             .flex_shrink_0()
@@ -2796,7 +1903,7 @@ impl ImgDesktop {
             .gap(px(12.));
         if let Some(item) = active {
             let value = item.progress;
-            let bytes = if let Some(active) = self.active.get(&item.id) {
+            let bytes = if let Some(active) = self.queue.active.get(&item.id) {
                 let meter = active.control.progress();
                 if meter.total > 0 {
                     format!(
@@ -2827,15 +1934,20 @@ impl ImgDesktop {
                 ));
         } else {
             bar = bar
-                .child(dot(if self.items.is_empty() { MUTED } else { GREEN }))
+                .child(dot(if self.queue.items.is_empty() {
+                    MUTED
+                } else {
+                    GREEN
+                }))
                 .child(label(
                     if self.preparing {
                         "正在读取图片…".into()
                     } else {
                         format!(
                             "{} 张图片 · {} 项已完成",
-                            self.items.len(),
-                            self.items
+                            self.queue.items.len(),
+                            self.queue
+                                .items
                                 .iter()
                                 .filter(|i| i.status == Status::Done)
                                 .count()

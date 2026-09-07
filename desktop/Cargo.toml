@@ -4,7 +4,11 @@ version.workspace = true
 edition = "2024"
 publish = false
 
+[features]
+perf = ["dep:gpui-profiler"]
+
 [dependencies]
+gpui-profiler = { package = "gpui-pre", version = "=0.3.3", features = ["profiler"], optional = true }
 gpui-kit = "=0.6.0"
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }

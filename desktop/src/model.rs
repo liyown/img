@@ -284,6 +284,9 @@ pub fn prepare_bytes_with_limit(
                 .arg(&thumbnail);
             let _ = crate::engine::run(command, &crate::engine::Control::default());
         }
+        if thumbnail.exists() {
+            let _ = crate::thumbnails::prepare(root, &thumbnail);
+        }
         Ok(())
     })();
     if let Err(e) = write {

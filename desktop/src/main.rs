@@ -4,9 +4,11 @@ mod engine;
 mod model;
 mod preferences;
 mod queue_store;
+mod record_index;
 mod settings;
 mod storage;
 mod theme;
+mod thumbnails;
 mod ui;
 mod updates;
 mod upload_options;
@@ -112,6 +114,8 @@ fn main() -> anyhow::Result<()> {
                         ImgDesktop::new(root.clone(), engine.clone(), reference, window, cx)
                     });
                     view.update(cx, |view, cx| view.startup_update_check(cx));
+                    #[cfg(feature = "perf")]
+                    view.update(cx, |view, cx| view.start_benchmark(window, cx));
                     let close_view = view.downgrade();
                     let target_window = window.window_handle();
                     cx.on_action(move |_: &Quit, cx| {

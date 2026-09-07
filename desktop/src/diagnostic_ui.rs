@@ -2,11 +2,11 @@ use super::*;
 
 impl ImgDesktop {
     pub(super) fn persistence_failed(&mut self, error: anyhow::Error, cx: &mut Context<Self>) {
-        self.persistence_ok = false;
-        if let Some(batch) = &mut self.batch {
+        self.queue.persistence_ok = false;
+        if let Some(batch) = &mut self.queue.batch {
             batch.paused = true;
         }
-        for active in self.active.values() {
+        for active in self.queue.active.values() {
             active.control.stop(engine::PAUSE);
         }
         self.message(
@@ -22,13 +22,17 @@ impl ImgDesktop {
             .gap(px(12.))
             .child(label("诊断与恢复", 16., TEXT).font_weight(FontWeight::SEMIBOLD))
             .child(label(
-                if self.persistence_ok {
+                if self.queue.persistence_ok {
                     "队列正常；保留最近两份有效备份。诊断文件不包含图片与凭据。"
                 } else {
                     "队列未能安全保存，上传已停止。恢复前会保留当前队列文件。"
                 },
                 12.,
-                if self.persistence_ok { MUTED } else { RED },
+                if self.queue.persistence_ok {
+                    MUTED
+                } else {
+                    RED
+                },
             ))
             .child(
                 div()
@@ -40,14 +44,14 @@ impl ImgDesktop {
                     )
                     .child(
                         action("restore-queue", "从备份恢复")
-                            .disabled(!self.active.is_empty() || self.preparing)
+                            .disabled(!self.queue.active.is_empty() || self.preparing)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.recover_queue(false, window, cx)
                             })),
                     )
                     .child(
                         action("reset-queue", "重建空队列")
-                            .disabled(!self.active.is_empty() || self.preparing)
+                            .disabled(!self.queue.active.is_empty() || self.preparing)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.recover_queue(true, window, cx)
                             })),
@@ -56,7 +60,7 @@ impl ImgDesktop {
             .into_any_element()
     }
     fn export_diagnostics(&mut self, cx: &mut Context<Self>) {
-        let bytes = crate::diagnostics::report(&self.items);
+        let bytes = crate::diagnostics::report(&self.queue.items);
         let selected = cx.prompt_for_new_path(&self.root, Some("img-diagnostics.json"));
         cx.spawn(async move |this, cx| {
             if let Ok(Ok(Some(path))) = selected.await {
@@ -90,14 +94,14 @@ impl ImgDesktop {
             }
             let pending = this
                 .update(cx, |this, _| {
-                    if !this.active.is_empty() || this.preparing {
+                    if !this.queue.active.is_empty() || this.preparing {
                         return None;
                     }
-                    this.persistence_ok = false;
-                    this.persistence_generation += 1;
+                    this.queue.persistence_ok = false;
+                    this.queue.persistence_generation += 1;
                     this.preparing = true;
-                    this.batch = None;
-                    Some(this.queue_store.recover(empty))
+                    this.queue.batch = None;
+                    Some(this.queue.queue_store.recover(empty))
                 })
                 .ok()
                 .flatten();
@@ -109,8 +113,9 @@ impl ImgDesktop {
                 this.preparing = false;
                 match result {
                     Ok(items) => {
-                        this.items = items;
-                        this.persistence_ok = true;
+                        this.queue.items = items;
+                        this.records_revision += 1;
+                        this.queue.persistence_ok = true;
                         this.storage_settings.update(cx, |settings, cx| {
                             settings.uploading = false;
                             cx.notify();
