@@ -2,6 +2,106 @@ use super::*;
 use std::io::Write;
 
 impl ImgDesktop {
+    fn restore_document(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.workflow_busy || self.shutting_down {
+            return;
+        }
+        self.workflow_busy = true;
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some(crate::i18n::text("选择文章备份")),
+        });
+        let binary = self.engine.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let path = match paths.await {
+                Ok(Ok(Some(paths))) => paths.into_iter().next(),
+                _ => None,
+            };
+            let Some(backup) = path else {
+                let _ = this.update(cx, |this, cx| {
+                    this.workflow_busy = false;
+                    cx.notify();
+                });
+                return;
+            };
+            let source = backup.clone();
+            let prepared = cx
+                .background_executor()
+                .spawn(async move {
+                    let name = source
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .ok_or_else(|| anyhow::anyhow!("请选择 img 生成的文章备份"))?;
+                    let (original, id) = name
+                        .rsplit_once(".img-backup-")
+                        .ok_or_else(|| anyhow::anyhow!("请选择 img 生成的文章备份"))?;
+                    uuid::Uuid::parse_str(id)?;
+                    let target = source.with_file_name(original);
+                    let before = std::fs::read(&target)?;
+                    let restored = std::fs::read(&source)?;
+                    Ok::<_, anyhow::Error>((target, before, restored))
+                })
+                .await;
+            let accepted = this
+                .update_in(cx, |this, window, cx| match prepared {
+                    Ok((target, before, restored)) => {
+                        let prompt = crate::i18n::prompt(
+                            window,
+                            PromptLevel::Info,
+                            "恢复文章？",
+                            Some(&format!(
+                                "{}。当前文章会另存备份，再恢复所选版本。",
+                                target.display()
+                            )),
+                            &["取消", "恢复"],
+                            cx,
+                        );
+                        Some((prompt, target, before, restored))
+                    }
+                    Err(e) => {
+                        this.workflow_busy = false;
+                        this.message(e.to_string(), true, cx);
+                        None
+                    }
+                })
+                .ok()
+                .flatten();
+            let Some((prompt, target, before, restored)) = accepted else {
+                return;
+            };
+            if prompt.await.ok() != Some(1) {
+                let _ = this.update(cx, |this, cx| {
+                    this.workflow_busy = false;
+                    cx.notify();
+                });
+                return;
+            }
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    anyhow::ensure!(
+                        std::fs::read(&target)? == before && std::fs::read(&backup)? == restored,
+                        "文章或备份已变化，请重新选择"
+                    );
+                    let mut command = std::process::Command::new(binary);
+                    command.arg("restore-document").arg(backup).arg(target);
+                    let result = engine::run(command, &Control::default())?;
+                    anyhow::ensure!(result.success, "文章恢复未完成，原文件已保留");
+                    Ok::<_, anyhow::Error>(())
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.workflow_busy = false;
+                match result {
+                    Ok(()) => this.message("文章已恢复，恢复前版本已另存备份", false, cx),
+                    Err(e) => this.message(e.to_string(), true, cx),
+                }
+            });
+        })
+        .detach();
+    }
     pub(crate) fn show_restore_result(&mut self, cx: &mut Context<Self>) {
         let path = self.root.join("restore-result.json");
         if let Ok(bytes) = std::fs::read(&path)
@@ -73,6 +173,11 @@ impl ImgDesktop {
             .flex_col()
             .gap(px(12.))
             .child(label("文章与目录", 16., TEXT))
+            .child(
+                action("restore-document", "恢复文章备份")
+                    .disabled(self.workflow_busy)
+                    .on_click(cx.listener(|this, _, window, cx| this.restore_document(window, cx))),
+            )
             .child(label(
                 "转存文章前预览引用并保留原文备份。目录监听会自动上传新建或修改的图片。",
                 12.,

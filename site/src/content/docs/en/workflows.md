@@ -70,7 +70,7 @@ img rewrite article.md --report article-results.json
 img restore-document article.md.img-backup-UUID article.md
 ```
 
-Backups use unique names. Restoring also backs up the current document. --stdout prints the rewritten document without modifying its source. A report must use a new path.
+The desktop Restore document backup action lets you choose an img backup and confirm restoration. Backups use unique names. Restoring also backs up the current document. --stdout prints the rewritten document without modifying its source. A report must use a new path.
 
 ## Folders and watching
 

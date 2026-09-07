@@ -8,6 +8,65 @@ use std::{
 };
 const BIN: &str = env!("CARGO_BIN_EXE_img");
 #[test]
+fn webdav_lists_namespaced_properties_and_rechecks_version_before_delete() {
+    let s = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}/dav", s.server_addr());
+    let f = Fixture::new(&endpoint);
+    std::fs::write(&f.config,format!("version=1\ndefault_provider='local'\n[providers.local]\ntype='webdav'\nendpoint='{endpoint}'\npublic_url='https://cdn.test'\nallow_insecure=true\n")).unwrap();
+    let handle = std::thread::spawn(move || {
+        for _ in 0..2 {
+            let r = s.recv_timeout(Duration::from_secs(8)).unwrap().unwrap();
+            assert_eq!(r.method().as_str(), "PROPFIND");
+            assert_eq!(
+                r.headers()
+                    .iter()
+                    .find(|h| h.field.equiv("depth"))
+                    .unwrap()
+                    .value
+                    .as_str(),
+                "1"
+            );
+            r.respond(tiny_http::Response::from_string(r#"<d:multistatus xmlns:d="DAV:"><d:response><d:href>/dav/</d:href><d:propstat><d:status>HTTP/1.1 200 OK</d:status><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop></d:propstat></d:response><d:response><d:href>/dav/photo%20one.png</d:href><d:propstat><d:status>HTTP/1.1 200 OK</d:status><d:prop><d:resourcetype/><d:getcontentlength>12</d:getcontentlength><d:getetag>"v1"</d:getetag></d:prop></d:propstat></d:response></d:multistatus>"#).with_status_code(207)).unwrap();
+        }
+        let r = s.recv_timeout(Duration::from_secs(8)).unwrap().unwrap();
+        assert_eq!(r.method().as_str(), "DELETE");
+        assert_eq!(r.url(), "/dav/photo%20one.png");
+        assert_eq!(
+            r.headers()
+                .iter()
+                .find(|h| h.field.equiv("if-match"))
+                .unwrap()
+                .value
+                .as_str(),
+            "\"v1\""
+        );
+        r.respond(tiny_http::Response::empty(204)).unwrap();
+    });
+    let list = f.run(&["remote", "list"]);
+    assert!(
+        list.status.success(),
+        "{}",
+        String::from_utf8_lossy(&list.stderr)
+    );
+    assert_eq!(parsed(&list)["items"].as_array().unwrap().len(), 1);
+    assert_eq!(parsed(&list)["items"][0]["path"], "photo one.png");
+    assert_eq!(parsed(&list)["items"][0]["directory"], false);
+    let deleted = f.run(&[
+        "remote",
+        "delete",
+        "photo one.png",
+        "--version",
+        "\"v1\"",
+        "--yes",
+    ]);
+    assert!(
+        deleted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&deleted.stderr)
+    );
+    handle.join().unwrap();
+}
+#[test]
 fn remote_s3_lists_pages_and_deletes_only_with_explicit_version() {
     let s = tiny_http::Server::http("127.0.0.1:0").unwrap();
     let endpoint = format!("http://{}", s.server_addr());

@@ -70,7 +70,7 @@ img rewrite article.md --report article-results.json
 img restore-document article.md.img-backup-UUID article.md
 ```
 
-备份名称包含 UUID，不覆盖既有备份。恢复前也备份当前文章，可以撤回恢复。--stdout 只输出改写结果，不修改原文；报告路径必须为新文件。
+桌面「恢复文章备份」可选择 img 生成的备份并确认恢复。备份名称包含 UUID，不覆盖既有备份。恢复前也备份当前文章，可以撤回恢复。--stdout 只输出改写结果，不修改原文；报告路径必须为新文件。
 
 ## 文件夹与目录监听
 
