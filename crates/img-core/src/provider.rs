@@ -63,6 +63,13 @@ pub struct Request<'a> {
     pub overwrite: bool,
 }
 impl Provider {
+    pub fn reuse_scope(&self) -> Result<Option<Vec<u8>>> {
+        // Default-chain credentials can change accounts without changing config.
+        if self.cfg.kind == "s3" && self.cfg.access_key.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(serde_json::to_vec(&self.cfg)?))
+    }
     pub fn new(name: &str, config: &ProviderConfig) -> Result<Self> {
         let cfg = config.resolved()?;
         cfg.validate()?;

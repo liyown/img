@@ -129,6 +129,7 @@ const KEYS: &[&str] = &[
     "output.quiet",
     "upload.path",
     "upload.path_template",
+    "upload.reuse",
     "upload.rename",
     "upload.conflict",
     "upload.overwrite",

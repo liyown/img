@@ -176,6 +176,11 @@ impl Render for UploadSettings {
         );
         for (key, title, checked) in [
             (
+                "reuse",
+                "重复图片复用已有链接（远端删除后请关闭）",
+                self.options.reuse,
+            ),
+            (
                 "optimize",
                 "压缩图片（可能转换为 JPEG / WebP）",
                 self.options.optimize,
@@ -206,6 +211,7 @@ impl Render for UploadSettings {
                             .on_click(cx.listener(move |this, checked: &bool, _, cx| {
                                 match key {
                                     "optimize" => this.options.optimize = *checked,
+                                    "reuse" => this.options.reuse = *checked,
                                     "strip_exif" => this.options.strip_exif = *checked,
                                     "overwrite" => this.options.overwrite = *checked,
                                     _ => this.options.allow_http_sources = *checked,

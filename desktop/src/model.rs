@@ -46,9 +46,20 @@ pub struct Item {
     pub added_at: u64,
     #[serde(default)]
     pub uploaded_size: Option<u64>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub origin: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imported_record_id: Option<String>,
 }
 
 impl Item {
+    pub fn provider_label(&self) -> String {
+        if self.origin.is_empty() {
+            self.target.clone()
+        } else {
+            format!("{} · {}", self.target, self.origin)
+        }
+    }
     pub fn fixture(name: &str, size: u64, target: &str, asset: &str, progress: u8) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
@@ -72,6 +83,8 @@ impl Item {
             simulated: true,
             added_at: now(),
             uploaded_size: None,
+            origin: String::new(),
+            imported_record_id: None,
         }
     }
     pub fn reference_items() -> Vec<Self> {
@@ -109,10 +122,7 @@ impl Item {
 }
 
 pub fn data_dir() -> Result<PathBuf> {
-    Ok(directories::BaseDirs::new()
-        .context("无法确定用户目录")?
-        .data_local_dir()
-        .join("aperture"))
+    img_records::data_dir()
 }
 
 pub fn load(root: &Path) -> Result<Vec<Item>> {
@@ -312,6 +322,8 @@ pub fn prepare_bytes_with_limit(
         simulated: false,
         added_at: now(),
         uploaded_size: None,
+        origin: String::new(),
+        imported_record_id: None,
     })
 }
 

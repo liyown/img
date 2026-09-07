@@ -441,7 +441,7 @@ impl ImgDesktop {
             .child(label(item.name.clone(), 13., TEXT).text_ellipsis())
             .child(
                 mono(
-                    format!("{} · {}", item.size_label(), item.target),
+                    format!("{} · {}", item.size_label(), item.provider_label()),
                     10.,
                     MUTED,
                 )
@@ -497,7 +497,7 @@ impl ImgDesktop {
                     .child(label(item.url.clone().unwrap_or_default(), 11., MUTED).text_ellipsis()),
             )
             .child(
-                label(item.target.clone(), 11., MUTED)
+                label(item.provider_label(), 11., MUTED)
                     .w(px(90.))
                     .text_ellipsis(),
             )

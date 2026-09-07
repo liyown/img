@@ -56,6 +56,17 @@ pub enum Command {
 }
 #[derive(Args, Clone, Default)]
 pub struct Processing {
+    #[arg(
+        long,
+        help = "Reuse a previous link for identical processed bytes in this destination"
+    )]
+    pub reuse: bool,
+    #[arg(long, help = "Upload again instead of reusing a cached link")]
+    pub force: bool,
+    #[arg(long, default_value = "cli", value_parser = ["cli", "agent", "editor", "rewrite", "screenshot"], help = "Source shown in the desktop library")]
+    pub origin: String,
+    #[arg(long, help = "Do not retain a local library record or image copy")]
+    pub no_history: bool,
     #[arg(long, default_value = "", help = "Storage provider name")]
     pub provider: String,
     #[arg(long, default_value = "", help = "Remote path prefix")]
@@ -72,8 +83,26 @@ pub struct Processing {
     pub allow_insecure: bool,
 }
 impl Processing {
+    pub fn options_for(&self, origin: &str) -> img_core::upload::Options {
+        let mut options = self.options();
+        if options.record_origin.as_deref() == Some("cli") {
+            options.record_origin = Some(origin.into());
+        }
+        options
+    }
     pub fn options(&self) -> img_core::upload::Options {
         img_core::upload::Options {
+            reuse: self.reuse,
+            force: self.force,
+            record_origin: if self.no_history || std::env::var_os("IMG_DESKTOP_UPLOAD").is_some() {
+                None
+            } else {
+                Some(if self.origin.is_empty() {
+                    "cli".into()
+                } else {
+                    self.origin.clone()
+                })
+            },
             path: self.path.clone(),
             overwrite: self.overwrite,
             optimize: self.optimize,

@@ -5,6 +5,7 @@ use std::{io::Write, path::Path};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UploadOptions {
+    pub reuse: bool,
     pub optimize: bool,
     pub strip_exif: bool,
     pub max_width: u32,
@@ -20,6 +21,7 @@ pub struct UploadOptions {
 impl Default for UploadOptions {
     fn default() -> Self {
         Self {
+            reuse: false,
             optimize: false,
             strip_exif: false,
             max_width: 0,
@@ -120,6 +122,7 @@ impl UploadOptions {
             "upload".into(),
             toml::Value::Table(
                 [
+                    ("reuse".into(), toml::Value::Boolean(self.reuse)),
                     ("path".into(), toml::Value::String(self.path.clone())),
                     (
                         "path_template".into(),

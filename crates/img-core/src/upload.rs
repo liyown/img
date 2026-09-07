@@ -39,6 +39,10 @@ pub struct FileResult {
     pub http_status: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retryable: Option<bool>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub record_warning: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reused: bool,
 }
 impl FileResult {
     pub fn failure(source: &str, failure: crate::failure::Failure) -> Self {
@@ -57,6 +61,9 @@ fn zero(n: &u64) -> bool {
 }
 #[derive(Clone, Default)]
 pub struct Options {
+    pub reuse: bool,
+    pub force: bool,
+    pub record_origin: Option<String>,
     pub path: String,
     pub name: String,
     pub overwrite: bool,
@@ -165,8 +172,37 @@ fn one(
     )?;
     let data: Arc<[u8]> = processed.data.into();
     let overwrite = o.overwrite || c.overwrite || c.conflict == "overwrite";
+    let reuse = if (o.reuse || c.reuse) && o.name.is_empty() {
+        if let Some(mut scope) = p.reuse_scope()? {
+            scope.extend(serde_json::to_vec(&(
+                &p.name,
+                &c.path_template,
+                &c.rename,
+                if o.path.is_empty() { &c.path } else { &o.path },
+                &processed.content_type,
+            ))?);
+            Some(crate::reuse::Entry::acquire(&scope, &data, control)?)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let previous = if !o.force && !overwrite {
+        reuse.as_ref().and_then(|e| e.load())
+    } else {
+        None
+    };
+    let reused = previous.is_some();
+    let remote = previous
+        .as_ref()
+        .map(|r| r.remote_path.clone())
+        .unwrap_or(remote);
     let mut attempt = 0;
     let url = loop {
+        if let Some(previous) = &previous {
+            break previous.url.clone();
+        }
         let result = p.upload(
             Request {
                 name: &name,
@@ -191,7 +227,39 @@ fn one(
             }
         }
     };
-    Ok(FileResult {
+    let record_warning = if let Some(origin) = &o.record_origin {
+        let result = (|| {
+            let root = img_records::data_dir()?;
+            img_records::publish(
+                &root,
+                img_records::Record {
+                    id: String::new(),
+                    name: name.clone(),
+                    provider: p.name.clone(),
+                    url: url.clone(),
+                    remote_path: remote.clone(),
+                    content_type: processed.content_type.clone(),
+                    size: data.len() as u64,
+                    origin: origin.clone(),
+                    created_at: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)?
+                        .as_secs(),
+                },
+                &data,
+            )?;
+            Ok::<_, anyhow::Error>(())
+        })();
+        if result.is_err() {
+            "Upload succeeded, but the local library record could not be saved. Keep the returned URL.".into()
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+    let result = FileResult {
+        reused,
+        record_warning,
         local_path: source.into(),
         success: true,
         remote_path: remote,
@@ -202,7 +270,17 @@ fn one(
         content_type: processed.content_type,
         error: String::new(),
         ..Default::default()
-    })
+    };
+    if let Some(entry) = reuse
+        && entry.save(&result).is_err()
+    {
+        return Ok(FileResult {
+            record_warning: "Upload succeeded, but the duplicate-image cache could not be saved."
+                .into(),
+            ..result
+        });
+    }
+    Ok(result)
 }
 pub fn exit_code(results: &[FileResult]) -> i32 {
     let n = results.iter().filter(|r| r.success).count();

@@ -31,8 +31,14 @@ impl RecordIndex {
                 .map(|i| {
                     (
                         i.id.clone(),
-                        format!("{} {} {}", i.name, i.target, i.url.as_deref().unwrap_or(""))
-                            .to_lowercase(),
+                        format!(
+                            "{} {} {} {}",
+                            i.name,
+                            i.target,
+                            i.url.as_deref().unwrap_or(""),
+                            i.origin
+                        )
+                        .to_lowercase(),
                         i.status,
                     )
                 })

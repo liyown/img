@@ -96,6 +96,11 @@ fn report(
     copy: bool,
     quiet: bool,
 ) -> Result<i32> {
+    for result in results {
+        if !result.record_warning.is_empty() {
+            eprintln!("Warning: {}", result.record_warning);
+        }
+    }
     if !quiet && !cfg.output.quiet {
         println!("{}", output::render(format, results, false)?);
     }
@@ -259,7 +264,7 @@ fn run(cli: Cli, control: &Control) -> Result<i32> {
                 &p,
                 &cfg.upload,
                 &[image.path().to_string_lossy().into_owned()],
-                &v.processing.options(),
+                &v.processing.options_for("screenshot"),
                 control,
             );
             return report(
@@ -273,7 +278,7 @@ fn run(cli: Cli, control: &Control) -> Result<i32> {
         Command::Rewrite(v) => {
             let cfg = load(&path)?;
             let p = provider(&cfg, &v.processing.provider)?;
-            let opts = v.processing.options();
+            let opts = v.processing.options_for("rewrite");
             let mut total_ok = 0;
             let mut total_failed = 0;
             if v.files.is_empty() {
@@ -337,7 +342,7 @@ fn run(cli: Cli, control: &Control) -> Result<i32> {
             serve::run(
                 p,
                 cfg.upload,
-                v.processing.options(),
+                v.processing.options_for("editor"),
                 &v.bind,
                 v.port,
                 control.clone(),

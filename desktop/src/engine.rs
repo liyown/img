@@ -96,6 +96,7 @@ pub fn run(mut command: Command, control: &Control) -> Result<ProcessOutput> {
         });
     }
     let mut child = command
+        .env("IMG_DESKTOP_UPLOAD", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

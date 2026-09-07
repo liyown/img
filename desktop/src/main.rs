@@ -3,6 +3,7 @@ mod assets;
 mod desktop_runtime;
 mod diagnostics;
 mod engine;
+mod inbox;
 mod installer;
 mod model;
 mod native;

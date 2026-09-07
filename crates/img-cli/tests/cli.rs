@@ -24,6 +24,7 @@ impl Fixture {
     fn command(&self) -> Command {
         let mut c = Command::new(BIN);
         c.current_dir(self.dir.path())
+            .env("IMG_DATA_DIR", self.dir.path().join("data"))
             .arg("--config")
             .arg(&self.config);
         for e in [
@@ -76,6 +77,79 @@ fn parsed(out: &Output) -> serde_json::Value {
         String::from_utf8_lossy(&out.stderr)
     );
     serde_json::from_slice(&out.stdout).unwrap()
+}
+#[test]
+fn uploads_publish_agent_records_and_local_failure_keeps_remote_success() {
+    let (url, _, handle) = server(vec![(200, ok_body()), (200, ok_body()), (200, ok_body())]);
+    let f = Fixture::new(&url);
+    let out = f.run(&[
+        "upload",
+        f.image.to_str().unwrap(),
+        "--format",
+        "json",
+        "--origin",
+        "agent",
+    ]);
+    assert!(out.status.success());
+    let data = f.dir.path().join("data/upload-inbox");
+    let entries: Vec<_> = std::fs::read_dir(&data).unwrap().collect();
+    assert_eq!(entries.len(), 1);
+    let record: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(entries[0].as_ref().unwrap().path().join("record.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(record["origin"], "agent");
+    assert_eq!(record["url"], "https://cdn.test/picture.png");
+    let out = f.run(&[
+        "upload",
+        f.image.to_str().unwrap(),
+        "--no-history",
+        "--format",
+        "json",
+    ]);
+    assert!(out.status.success());
+    assert_eq!(std::fs::read_dir(&data).unwrap().count(), 1);
+    let blocked = f.dir.path().join("blocked-data");
+    std::fs::write(&blocked, b"preserve").unwrap();
+    let out = f
+        .command()
+        .env("IMG_DATA_DIR", &blocked)
+        .args(["upload", f.image.to_str().unwrap(), "--format", "json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let result = parsed(&out);
+    assert_eq!(result["files"][0]["success"], true);
+    assert!(
+        result["files"][0]["record_warning"]
+            .as_str()
+            .unwrap()
+            .contains("could not be saved")
+    );
+    assert_eq!(std::fs::read(blocked).unwrap(), b"preserve");
+    handle.join().unwrap();
+}
+#[test]
+fn repeated_bytes_reuse_only_with_opt_in_and_force_transfers_again() {
+    let (url, seen, handle) = server(vec![(200, ok_body()), (200, ok_body())]);
+    let f = Fixture::new(&url);
+    let args = [
+        "upload",
+        f.image.to_str().unwrap(),
+        "--reuse",
+        "--format",
+        "json",
+    ];
+    assert_eq!(
+        parsed(&f.run(&args))["files"][0]["reused"],
+        serde_json::Value::Null
+    );
+    assert_eq!(parsed(&f.run(&args))["files"][0]["reused"], true);
+    let out = f.command().args(args).arg("--force").output().unwrap();
+    assert!(out.status.success());
+    assert_eq!(parsed(&out)["files"][0]["reused"], serde_json::Value::Null);
+    handle.join().unwrap();
+    assert_eq!(seen.lock().unwrap().len(), 2);
 }
 #[test]
 fn json_setup_errors_keep_exit_code_and_hide_config_contents() {

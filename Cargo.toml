@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/img-core", "crates/img-cli", "desktop"]
+members = ["crates/img-core", "crates/img-cli", "crates/img-records", "desktop"]
 default-members = ["crates/img-core", "crates/img-cli"]
 resolver = "3"
 

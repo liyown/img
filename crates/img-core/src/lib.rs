@@ -6,4 +6,5 @@ pub mod network;
 pub mod output;
 pub mod pathgen;
 pub mod provider;
+mod reuse;
 pub mod upload;

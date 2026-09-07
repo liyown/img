@@ -58,6 +58,7 @@ impl Default for Output {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Upload {
+    pub reuse: bool,
     pub path: String,
     pub path_template: String,
     pub rename: String,
@@ -72,6 +73,7 @@ pub struct Upload {
 impl Default for Upload {
     fn default() -> Self {
         Self {
+            reuse: false,
             path: String::new(),
             path_template: "{year}/{month}/{filename}".into(),
             rename: "original".into(),

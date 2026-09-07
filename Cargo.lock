@@ -4117,6 +4117,7 @@ dependencies = [
  "chrono",
  "directories",
  "image",
+ "img-records",
  "keyring",
  "regex",
  "reqwest",
@@ -4145,6 +4146,7 @@ dependencies = [
  "gpui-kit",
  "gpui-pre",
  "image",
+ "img-records",
  "keyring",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
@@ -4160,6 +4162,18 @@ dependencies = [
  "tempfile",
  "toml 0.9.12+spec-1.1.0",
  "url",
+ "uuid",
+]
+
+[[package]]
+name = "img-records"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "directories",
+ "serde",
+ "serde_json",
+ "tempfile",
  "uuid",
 ]
 

@@ -86,6 +86,7 @@ pub struct ImgDesktop {
     _subscriptions: Vec<Subscription>,
     queue: queue::UploadController,
     records_revision: u64,
+    inbox_busy: bool,
     selection: crate::selection::Selection,
     record_index: std::cell::RefCell<crate::record_index::RecordIndex>,
     list_scroll: UniformListScrollHandle,
@@ -334,6 +335,18 @@ impl ImgDesktop {
         let release_subscription = cx.on_release(|this, _| {
             let _ = this.prepare_shutdown();
         });
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_secs(2)).await;
+                if this
+                    .update(cx, |this, cx| this.import_upload_inbox(cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
         let storage_focus_subscription = cx.subscribe_in(
             &storage_settings,
             window,
@@ -382,6 +395,7 @@ impl ImgDesktop {
             _subscriptions: subscriptions,
             queue: queue::UploadController::new(root.clone(), items, persistence_ok),
             records_revision: 1,
+            inbox_busy: false,
             record_index: Default::default(),
             selection: Default::default(),
             list_scroll: UniformListScrollHandle::new(),
@@ -427,6 +441,81 @@ impl ImgDesktop {
         if self.visible {
             cx.notify();
         }
+    }
+    fn import_upload_inbox(&mut self, cx: &mut Context<Self>) {
+        if self.inbox_busy || self.reference || self.shutting_down || !self.queue.persistence_ok {
+            return;
+        }
+        self.inbox_busy = true;
+        let root = self.root.clone();
+        let known = self
+            .queue
+            .items
+            .iter()
+            .filter_map(|i| i.imported_record_id.clone())
+            .collect();
+        let task = cx
+            .background_executor()
+            .spawn(async move { crate::inbox::prepare(&root, &known) });
+        cx.spawn(async move |this, cx| {
+            let prepared = task.await;
+            let pending = this
+                .update(cx, |this, cx| match prepared {
+                    Ok((items, ids)) if !ids.is_empty() => {
+                        if this.shutting_down || !this.queue.persistence_ok {
+                            model::remove_cache(&this.root, &items);
+                            this.inbox_busy = false;
+                            return None;
+                        }
+                        this.queue.items.extend(items);
+                        this.records_revision += 1;
+                        cx.notify();
+                        Some((
+                            this.queue.queue_store.save(this.queue.items.clone()),
+                            this.root.clone(),
+                            ids,
+                        ))
+                    }
+                    Ok(_) => {
+                        this.inbox_busy = false;
+                        None
+                    }
+                    Err(_) => {
+                        this.message(
+                            "上传记录同步失败，收件箱已保留。请检查数据目录后重新打开应用。",
+                            true,
+                            cx,
+                        );
+                        None
+                    }
+                })
+                .ok()
+                .flatten();
+            if let Some((saved, root, ids)) = pending {
+                let result = crate::queue_store::acknowledged(saved).await;
+                if let Err(error) = result {
+                    let _ = this.update(cx, |this, cx| this.persistence_failed(error, cx));
+                    return;
+                }
+                let result = cx
+                    .background_executor()
+                    .spawn(async move {
+                        for id in ids {
+                            img_records::acknowledge(&root, &id)?;
+                        }
+                        Ok::<_, anyhow::Error>(())
+                    })
+                    .await;
+                let _ = this.update(cx, |this, cx| {
+                    if result.is_ok() {
+                        this.inbox_busy = false;
+                    } else {
+                        this.message("图库已保存，但收件箱清理失败，请检查数据目录。", true, cx);
+                    }
+                });
+            }
+        })
+        .detach();
     }
     fn persist(&mut self, cx: &mut Context<Self>) -> bool {
         self.records_revision += 1;

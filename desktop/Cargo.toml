@@ -8,6 +8,7 @@ publish = false
 perf = ["dep:gpui-profiler"]
 
 [dependencies]
+img-records = { path = "../crates/img-records" }
 global-hotkey = "0.8"
 gpui-profiler = { package = "gpui-pre", version = "=0.3.3", features = ["profiler"], optional = true }
 gpui-kit = "=0.6.0"
