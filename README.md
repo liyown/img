@@ -5,7 +5,7 @@
 [![CI](https://github.com/liyown/img/actions/workflows/ci.yml/badge.svg)](https://github.com/liyown/img/actions/workflows/ci.yml)
 &nbsp;[English](README.en.md)
 
-`img` 是使用 Rust 编写的图片上传工具，提供独立 CLI 和原生 macOS GUI；安装 GUI 时已包含完整 CLI。把本地图片、截图或外链 URL 上传到已配置的图床，返回 URL、Markdown 或 JSON。
+`img` 是使用 Rust 编写的图片上传工具，提供独立 CLI 和原生 macOS / Windows / Linux GUI；安装 GUI 时已包含完整 CLI。把本地图片、截图或外链 URL 上传到已配置的图床，返回 URL、Markdown 或 JSON。
 
 支持图床：Cloudflare R2、通用 S3、阿里云 OSS、GitHub 仓库、自定义 HTTP 接口
 

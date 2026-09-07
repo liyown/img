@@ -8,7 +8,7 @@ order: 0
 
 ## Choose your workflow
 
-Use the native macOS GUI for drag and drop and a visual library. Use the standalone CLI for terminals, editors, and automation. The GUI includes the same-version CLI; both share the upload core and storage configuration.
+Use the native macOS / Windows / Linux GUI for drag and drop and a visual library. Use the standalone CLI for terminals, editors, and automation. The GUI includes the same-version CLI; both share the upload core and storage configuration.
 
 Get the latest desktop community build from the [installation page](/img/en/install/#gui), then follow the first-launch instructions. No compilation is needed.
 
