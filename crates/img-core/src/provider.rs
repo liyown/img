@@ -695,4 +695,53 @@ mod tests {
         assert!(!error.to_string().contains("super-secret"));
         assert!(!error.downcast_ref::<UploadError>().unwrap().retryable);
     }
+    #[test]
+    fn stalled_local_response_is_a_retryable_timeout_without_query_secrets() {
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/upload?token=private", server.server_addr());
+        let thread = std::thread::spawn(move || {
+            let mut request = server
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap()
+                .unwrap();
+            let mut body = vec![];
+            request.as_reader().read_to_end(&mut body).unwrap();
+            std::thread::sleep(Duration::from_millis(200));
+            let _ = request.respond(tiny_http::Response::from_string("private-body"));
+        });
+        let config = ProviderConfig {
+            kind: "http".into(),
+            url,
+            url_json_path: "url".into(),
+            allow_insecure: true,
+            ..Default::default()
+        };
+        let mut provider = Provider::new("local", &config).unwrap();
+        provider.client = Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_millis(75))
+            .build()
+            .unwrap();
+        let error = provider
+            .upload(
+                Request {
+                    name: "a.png",
+                    remote_path: "a.png",
+                    content_type: "image/png",
+                    data: Arc::from(&b"test-image"[..]),
+                    overwrite: false,
+                },
+                &Control::default(),
+            )
+            .unwrap_err();
+        let failure =
+            crate::failure::Failure::from_error(&error, crate::failure::ErrorCode::Unknown);
+        assert_eq!(failure.code, crate::failure::ErrorCode::Timeout);
+        assert!(failure.retryable);
+        assert_eq!(failure.http_status, None);
+        let result = crate::upload::FileResult::failure("a.png", failure);
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(!json.contains("private") && !json.contains("token="));
+        thread.join().unwrap();
+    }
 }

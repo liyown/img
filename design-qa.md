@@ -1,5 +1,7 @@
 # img desktop design QA — 2026-09-05
 
+This is the earlier design and Rust migration record. Current stability work and its incomplete acceptance items are tracked in [0.3.0 stability QA](stability-qa.md).
+
 final result: passed
 
 ## Scope and evidence

@@ -72,7 +72,7 @@ else
   mkdir -p "$app_dir"
   app_dir=$(CDPATH= cd -- "$app_dir" && pwd)
   gui_dest="$app_dir/Img.app"
-  if [ -e "$gui_dest" ] && pgrep -x img-desktop >/dev/null 2>&1; then fail 'quit img before replacing an installed GUI'; fi
+  if [ -e "$gui_dest" ] && lsof -t "$gui_dest/Contents/MacOS/img-desktop" >/dev/null 2>&1; then fail 'quit img before replacing an installed GUI'; fi
   ditto -x -k "$tmp/$asset" "$tmp/unpacked"
   app="$tmp/unpacked/Img.app"
   [ -x "$app/Contents/MacOS/img" ] && [ -x "$app/Contents/MacOS/img-desktop" ] || fail 'GUI package is missing the bundled CLI'

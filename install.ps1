@@ -1,6 +1,7 @@
 param(
     [ValidateSet("cli", "gui")]
-    [string]$Product = "cli"
+    [string]$Product = "cli",
+    [switch]$NoPathUpdate
 )
 if ($Product -eq "gui") { throw "The GUI currently supports macOS. Use -Product cli on Windows." }
 
@@ -62,11 +63,13 @@ try {
     New-Item -ItemType Directory -Force -Path $installDir | Out-Null
     Copy-Item -Force $source (Join-Path $installDir "img.exe")
 
-    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-    $pathEntries = if ($userPath) { $userPath -split ";" } else { @() }
-    if ($pathEntries -notcontains $installDir) {
-        $newUserPath = if ($userPath) { "$userPath;$installDir" } else { $installDir }
-        [Environment]::SetEnvironmentVariable("Path", $newUserPath, "User")
+    if (-not $NoPathUpdate) {
+        $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+        $pathEntries = if ($userPath) { $userPath -split ";" } else { @() }
+        if ($pathEntries -notcontains $installDir) {
+            $newUserPath = if ($userPath) { "$userPath;$installDir" } else { $installDir }
+            [Environment]::SetEnvironmentVariable("Path", $newUserPath, "User")
+        }
     }
     if (($env:Path -split ";") -notcontains $installDir) {
         $env:Path = "$installDir;$env:Path"

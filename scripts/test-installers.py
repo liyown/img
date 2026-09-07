@@ -25,10 +25,26 @@ group.add_argument('--cli-only', action='store_true')
 group.add_argument('--gui-only', action='store_true')
 opts = args.parse_args()
 arch = 'aarch64' if platform.machine() in ('arm64', 'aarch64') else 'x86_64'
-target = f'{arch}-apple-darwin'
+system = platform.system()
+if system == 'Darwin':
+    target = f'{arch}-apple-darwin'
+elif system == 'Linux':
+    target = f'{arch}-unknown-linux-gnu'
+elif system == 'Windows':
+    target = 'x86_64-pc-windows-msvc'
+else:
+    raise SystemExit('Unsupported installer test host')
+powershell = shutil.which('pwsh') or shutil.which('powershell')
+installer = ([powershell, '-NoProfile', '-File', str(ROOT / 'install.ps1'), '-Product']
+             if system == 'Windows' else ['/bin/sh', str(ROOT / 'install.sh')])
+def install_args(product):
+    return installer + ([product, '-NoPathUpdate'] if system == 'Windows' else ['--' + product])
+
 gui_arch = 'arm64' if arch == 'aarch64' else 'x86_64'
 version = re.search(r'^version = "([^"]+)"', (ROOT / 'Cargo.toml').read_text(), re.M)[1]
 products = ['cli'] if opts.cli_only else ['gui'] if opts.gui_only else ['cli', 'gui']
+if system != 'Darwin' and products != ['cli']:
+    raise SystemExit('Use --cli-only outside macOS')
 
 
 def run(argv, env, cwd, success=True):
@@ -67,7 +83,9 @@ with tempfile.TemporaryDirectory(prefix='img-rust-installer-') as tmp:
     tmp = Path(tmp)
     env = {k: v for k, v in os.environ.items() if not k.startswith(('IMG_', 'APERTURE_'))}
     # Installed products must work with no Rust, Go or source checkout on PATH.
-    env.update(PATH='/usr/bin:/bin:/usr/sbin:/sbin', IMG_VERSION=version)
+    test_path = (os.path.join(os.environ['SystemRoot'], 'System32') + os.pathsep + str(Path(powershell).parent)
+                 if system == 'Windows' else '/usr/bin:/bin:/usr/sbin:/sbin')
+    env.update(PATH=test_path, IMG_VERSION=version)
     server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
@@ -77,8 +95,8 @@ with tempfile.TemporaryDirectory(prefix='img-rust-installer-') as tmp:
             install_dir = tmp / (product + ' command directory')
             app_dir = tmp / 'Applications'
             install_env = dict(env, IMG_LOCAL_PACKAGE_DIR=str(package_dir), IMG_INSTALL_DIR=str(install_dir), IMG_APP_DIR=str(app_dir))
-            result = run(['/bin/sh', str(ROOT / 'install.sh'), '--' + product], install_env, tmp)
-            binary = install_dir / 'img'
+            result = run(install_args(product), install_env, tmp)
+            binary = install_dir / ('img.exe' if system == 'Windows' else 'img')
             assert binary.is_file()
             version_output = run([str(binary), 'version'], env, tmp).stdout
             assert f'img {version}' in version_output and 'implementation: Rust' in version_output
@@ -102,7 +120,17 @@ with tempfile.TemporaryDirectory(prefix='img-rust-installer-') as tmp:
             assert events[-1]['sent'] == events[-1]['total'] == len(Handler.received[-1])
             assert source.read_bytes() == png()
             assert hashlib.sha256(config.read_bytes()).hexdigest() == before
-            print(f'{product}: installed without toolchains; Rust version, local upload, progress, configuration and original bytes verified')
+            # Replace an existing installation while preserving representative app state.
+            state = tmp / ('data-' + product)
+            state.mkdir()
+            sentinels = {'queue.json': b'[{"id":"keep"}]', 'preferences.json': b'{"auto_copy":true}',
+                         'original.png': png(), 'config.toml': config.read_bytes()}
+            for name, content in sentinels.items(): (state / name).write_bytes(content)
+            run(install_args(product), dict(install_env, APERTURE_DATA_DIR=str(state), APERTURE_CONFIG_PATH=str(config)), tmp)
+            for name, content in sentinels.items(): assert (state / name).read_bytes() == content
+            assert hashlib.sha256(config.read_bytes()).hexdigest() == before
+            assert f'img {version}' in run([str(binary), 'version'], env, tmp).stdout
+            print(f'{product}: first and overwrite install, Rust version, local upload, progress and data retention verified without toolchains')
         for product in products:
             broken = tmp / ('corrupted-' + product)
             broken.mkdir()
@@ -110,13 +138,18 @@ with tempfile.TemporaryDirectory(prefix='img-rust-installer-') as tmp:
             for file in source_dir.iterdir():
                 if file.is_file():
                     shutil.copyfile(file, broken / file.name)
-            archive = next(broken.glob('*.tar.gz' if product == 'cli' else f'img-desktop_{version}_*.zip'))
+            archive = next(broken.glob(('*.zip' if system == 'Windows' else '*.tar.gz') if product == 'cli' else f'img-desktop_{version}_*.zip'))
             with archive.open('ab') as file:
                 file.write(b'tampered')
             bad_install = tmp / ('must remain empty ' + product)
-            run(['/bin/sh', str(ROOT / 'install.sh'), '--' + product], dict(env, IMG_INSTALL_DIR=str(bad_install), IMG_APP_DIR=str(tmp / 'must not install apps'), IMG_LOCAL_PACKAGE_DIR=str(broken)), tmp, success=False)
-            assert not (bad_install / 'img').exists()
-            print(f'tampered {product} archive: rejected before installation')
+            run(install_args(product), dict(env, IMG_INSTALL_DIR=str(bad_install), IMG_APP_DIR=str(tmp / 'must not install apps'), IMG_LOCAL_PACKAGE_DIR=str(broken)), tmp, success=False)
+            assert not (bad_install / ('img.exe' if system == 'Windows' else 'img')).exists()
+            existing = tmp / (product + ' command directory')
+            binary = existing / ('img.exe' if system == 'Windows' else 'img')
+            digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+            run(install_args(product), dict(env, IMG_INSTALL_DIR=str(existing), IMG_APP_DIR=str(tmp / 'Applications'), IMG_LOCAL_PACKAGE_DIR=str(broken)), tmp, success=False)
+            assert hashlib.sha256(binary.read_bytes()).hexdigest() == digest
+            print(f'tampered {product} archive: rejected for first install and upgrade; existing executable retained')
     finally:
         server.shutdown()
         server.server_close()

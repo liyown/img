@@ -2,6 +2,8 @@
 set -eu
 project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$project_dir"
+package_python=${IMG_PYTHON:-python3}
+if ! command -v "$package_python" >/dev/null 2>&1; then package_python=python; fi
 target=${IMG_TARGET:-$(rustc -vV | sed -n 's/^host: //p')}
 case "$target" in
     aarch64-apple-darwin) os=darwin; arch=arm64; ext= ;;
@@ -13,8 +15,8 @@ case "$target" in
 esac
 export IMG_BUILD_COMMIT="$(git rev-parse --short HEAD)"
 export IMG_BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-version=$(python3 -c 'import re; print(re.search(r"^version = \"([^\"]+)\"", open("Cargo.toml").read(), re.M)[1])')
-if [ -n "${GITHUB_REF_NAME:-}" ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+version=$("$package_python" -c 'import re; print(re.search(r"^version = \"([^\"]+)\"", open("Cargo.toml").read(), re.M)[1])')
+if [ "${GITHUB_REF_TYPE:-}" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
     echo 'CLI release tag must match the workspace version.' >&2; exit 2
 fi
 cargo build --locked --release -p img-cli --target "$target"
@@ -26,7 +28,7 @@ cp "target/$target/release/img$ext" "$staging/img$ext"
 cp README.md "$staging/README.md"
 if [ "$os" = darwin ]; then codesign --force --sign - "$staging/img"; fi
 if [ "$os" = windows ]; then
-    python3 - "$staging" "$output/img_${os}_${arch}.zip" <<'PY'
+    "$package_python" - "$staging" "$output/img_${os}_${arch}.zip" <<'PY'
 import pathlib, sys, zipfile
 with zipfile.ZipFile(sys.argv[2], 'w', zipfile.ZIP_DEFLATED) as z:
     for p in pathlib.Path(sys.argv[1]).iterdir(): z.write(p, p.name)
@@ -36,7 +38,7 @@ else
     asset="img_${os}_${arch}.tar.gz"
     tar -czf "$output/$asset" -C "$staging" "img$ext" README.md
 fi
-python3 - "$output" "$asset" "$version" "$target" <<'PY'
+"$package_python" - "$output" "$asset" "$version" "$target" <<'PY'
 import hashlib, json, pathlib, sys
 out=pathlib.Path(sys.argv[1]); asset, version, target=sys.argv[2:]
 (out/'checksums.txt').write_text(hashlib.sha256((out/asset).read_bytes()).hexdigest()+'  '+asset+'\n')

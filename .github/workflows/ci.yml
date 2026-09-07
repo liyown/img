@@ -3,6 +3,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
@@ -10,12 +11,49 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, macos-15, windows-latest]
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - runner: macos-15
+            target: aarch64-apple-darwin
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - name: Set up Rust
-        run: rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy
-      - run: cargo +1.98.1 fmt --all -- --check
-      - run: cargo +1.98.1 test --locked -p img-core -p img-cli
-      - run: cargo +1.98.1 clippy --locked -p img-core -p img-cli --all-targets -- -D warnings
+        shell: bash
+        run: rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy && rustup default 1.98.1
+      - run: cargo fmt --all -- --check
+      - run: cargo test --locked -p img-core -p img-cli
+      - run: cargo clippy --locked -p img-core -p img-cli --all-targets -- -D warnings
+      - name: Build standalone package without a release tag
+        shell: bash
+        env:
+          IMG_TARGET: ${{ matrix.target }}
+        run: ./scripts/package-cli.sh
+      - name: First install, upgrade, local upload and tamper rejection
+        run: python scripts/test-installers.py --cli-only
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cli-ci-${{ matrix.target }}
+          path: dist/cli/${{ matrix.target }}/
+          if-no-files-found: error
+  workflow-lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - name: Verify workflows with actionlint 1.7.12
+        run: |
+          curl --fail --location --proto '=https' --max-time 60 -sS -o "$RUNNER_TEMP/actionlint.tar.gz" https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $RUNNER_TEMP/actionlint.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint"
+      - name: Check packaging and installer scripts
+        run: |
+          sh -n install.sh scripts/package-cli.sh desktop/bundle.sh desktop/package.sh
+          python3 -m py_compile scripts/test-installers.py scripts/benchmark-desktop.py

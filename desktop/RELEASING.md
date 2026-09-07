@@ -40,7 +40,14 @@ make desktop-release
 
 ## GitHub Actions
 
-`.github/workflows/desktop-ci.yml` 检查 Rust 格式、整个 Rust 工作区测试和本地应用包。
+普通分支和 PR 即可运行以下检查，也可手动 `workflow_dispatch`，无需创建发布标签：
+
+- `.github/workflows/ci.yml`：独立 CLI 的 macOS / Linux arm64、x86_64 和 Windows x86_64 构建、测试、Clippy、打包、首次安装、覆盖安装、本地 HTTP 上传和篡改拒绝；另运行 actionlint 和脚本语法检查。
+- `.github/workflows/desktop-ci.yml`：Apple silicon / Intel 的工作区测试、Clippy、GUI 打包、同版本随附 CLI 安装检查、数据保留、篡改拒绝、签名与 Info.plist 验证。
+
+这些检查只上传 CI 构建产物，不创建 release。Windows 安装测试使用 `install.ps1 -NoPathUpdate`，避免修改 runner 的用户 PATH；正常安装仍保留原来的 PATH 设置行为。
+
+本轮只在 Apple silicon 实际运行本地安装验收，尚未推送或触发远端 CI。Linux、Windows、Intel 的运行结果不能由工作流配置代替，状态详见 [0.3.0 验收记录](../stability-qa.md)。
 
 `.github/workflows/desktop-release.yml` 只响应 `desktop-v*` 标签，发布时设置 `latest=false`，与原有 CLI 的 `v*` 发布互不干扰。`desktop-v0.3.0` 必须匹配根目录 `Cargo.toml` 的 workspace.package.version。macOS 15 的 arm64 与 Intel runner 分别构建，两种产物都成功后才一起创建 release；runner 标识来自 [GitHub 官方说明](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)。
 

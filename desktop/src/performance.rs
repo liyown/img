@@ -39,6 +39,18 @@ impl ImgDesktop {
         }
         searches.sort_by(f64::total_cmp);
         cx.spawn_in(window, async move |this, cx| {
+            // AppKit activation and the first drawable can arrive after the window is
+            // constructed. Wait for actual frames before measuring; an occluded
+            // window must never turn a zero-frame run into a passing benchmark.
+            let mut warmup_ready = false;
+            for _ in 0..1200 {
+                cx.background_executor().timer(Duration::from_millis(17)).await;
+                warmup_ready = this.update_in(cx, |_, window, cx| {
+                    cx.notify();
+                    window.frame_duration_snapshot().draw_duration_histogram.len() >= 30
+                }).unwrap_or(false);
+                if warmup_ready { break; }
+            }
             let mut before = None;
             let mut cache_peak = 0;
             for step in 0..if baseline && count >= 10_000 { 40 } else { 180 } {
@@ -62,7 +74,7 @@ impl ImgDesktop {
                     let _ = after.present_interval_histogram.subtract(&before.present_interval_histogram);
                 }
                 serde_json::json!({
-                    "records":count,"baseline":baseline,"search_p95_ms":searches[57],
+                    "records":count,"baseline":baseline,"warmup_ready":warmup_ready,"search_p95_ms":searches[57],
                     "draw_samples":after.draw_duration_histogram.len(),
                     "draw_p95_ms":after.draw_duration_histogram.value_at_quantile(0.95) as f64 / 1_000_000.,
                     "dirty_to_present_p95_ms":after.dirty_to_present_histogram.value_at_quantile(0.95) as f64 / 1_000_000.,

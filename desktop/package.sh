@@ -18,7 +18,7 @@ arch=${IMG_ARCH:-$(uname -m)}
 case "$arch" in aarch64) arch=arm64;; arm64|x86_64) ;; *) exit 2;; esac
 export IMG_ARCH="$arch"
 version=$(python3 -c 'import re; print(re.search(r"^version = \"([^\"]+)\"", open("Cargo.toml").read(), re.M)[1])')
-if [ -n "${GITHUB_REF_NAME:-}" ] && [ "$GITHUB_REF_NAME" != "desktop-v$version" ]; then
+if [ "${GITHUB_REF_TYPE:-}" = tag ] && [ "$GITHUB_REF_NAME" != "desktop-v$version" ]; then
     echo 'Desktop release tag must match workspace Cargo.toml.' >&2; exit 2
 fi
 app_dir="$project_dir/target/desktop/$arch/Img.app"
