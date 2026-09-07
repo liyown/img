@@ -27,6 +27,7 @@ jobs:
         run: |
           cargo test --locked --workspace
       - name: Import publishing credentials into an ephemeral keychain
+        if: vars.DESKTOP_SIGNING == 'true'
         env:
           CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
           CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
@@ -64,7 +65,12 @@ jobs:
           IMG_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
           IMG_SIGNING_TEAM: ${{ secrets.MACOS_TEAM_ID }}
           IMG_NOTARY_PROFILE: img-notary
-        run: ./desktop/package.sh
+        run: |
+          if [ "${{ vars.DESKTOP_SIGNING }}" = true ]; then
+            ./desktop/package.sh
+          else
+            ./desktop/package.sh --unsigned
+          fi
       - name: Verify GUI installs with the bundled CLI
         run: python3 scripts/test-installers.py --gui-only
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -73,7 +79,7 @@ jobs:
           path: dist/desktop/${{ matrix.arch }}/
           if-no-files-found: error
       - name: Remove ephemeral credentials
-        if: always()
+        if: always() && vars.DESKTOP_SIGNING == 'true'
         run: |
           security default-keychain -d user -s login.keychain-db || true
           security delete-keychain "$RUNNER_TEMP/img-signing.keychain-db" || true
@@ -84,6 +90,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: desktop-*
@@ -98,4 +105,4 @@ jobs:
           for arch in arm64 x86_64; do
             (cd "packages/desktop-$arch" && sha256sum -c *.sha256)
           done
-          gh release create "$RELEASE_TAG" packages/desktop-*/*.dmg packages/desktop-*/*.zip packages/desktop-*/*.sha256 --verify-tag --generate-notes --latest=false --title "img desktop ${RELEASE_TAG#desktop-v}"
+          gh release create "$RELEASE_TAG" packages/desktop-*/*.dmg packages/desktop-*/*.zip packages/desktop-*/*.sha256 --verify-tag --notes-file desktop/RELEASE-NOTES.md --generate-notes --latest=false --title "img desktop ${RELEASE_TAG#desktop-v}"

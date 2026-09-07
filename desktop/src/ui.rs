@@ -86,6 +86,7 @@ pub struct ImgDesktop {
     _subscriptions: Vec<Subscription>,
     queue: queue::UploadController,
     records_revision: u64,
+    selection: crate::selection::Selection,
     record_index: std::cell::RefCell<crate::record_index::RecordIndex>,
     list_scroll: UniformListScrollHandle,
     #[cfg(feature = "perf")]
@@ -108,7 +109,9 @@ pub struct ImgDesktop {
     update_checking: bool,
     update_downloading: bool,
     available_update: Option<crate::updates::Update>,
-    update_file: Option<PathBuf>,
+    update_file: Option<(PathBuf, String)>,
+    pending_install: Option<crate::installer::PreparedInstall>,
+    install_preparing: bool,
     update_notice: Option<(String, bool)>,
     reference: bool,
     preparing: bool,
@@ -380,6 +383,7 @@ impl ImgDesktop {
             queue: queue::UploadController::new(root.clone(), items, persistence_ok),
             records_revision: 1,
             record_index: Default::default(),
+            selection: Default::default(),
             list_scroll: UniformListScrollHandle::new(),
             #[cfg(feature = "perf")]
             legacy_scroll: ScrollHandle::new(),
@@ -402,6 +406,8 @@ impl ImgDesktop {
             update_downloading: false,
             available_update: None,
             update_file: None,
+            pending_install: None,
+            install_preparing: false,
             update_notice: None,
             reference,
             preparing: false,
@@ -455,6 +461,9 @@ impl ImgDesktop {
         self.list_scroll = UniformListScrollHandle::new();
         if self.page != page {
             self.content_revision = self.content_revision.wrapping_add(1);
+        }
+        if page != Page::Library {
+            self.selection.finish();
         }
         self.page = page;
         self.filter = Filter::All;
@@ -1439,6 +1448,9 @@ impl ImgDesktop {
             .into_any_element()
     }
     pub fn startup_update_check(&mut self, cx: &mut Context<Self>) {
+        if let Some((message, error)) = crate::installer::installation_notice(&self.root) {
+            self.message(message, error, cx);
+        }
         if !self.reference && self.preferences.check_updates && crate::updates::due(&self.root) {
             self.check_updates(cx);
         }
@@ -1488,18 +1500,83 @@ impl ImgDesktop {
             return;
         }
         let root = self.root.clone();
+        self.update_file = None;
         self.update_downloading = true;
         self.update_notice = Some(("正在下载安装包并校验完整性…".into(), false));
+        let version = update.version.clone();
         let task = cx
             .background_executor()
             .spawn(async move { crate::updates::download(&update, &root) });
-        cx.spawn(async move |this, cx| { let result = task.await; let _ = this.update(cx, |this, cx| {
-            this.update_downloading = false;
-            match result {
-                Ok(file) => { this.update_file = Some(file); this.update_notice = Some(("安装包已下载并校验。打开后将 img 拖入 Applications 替换旧版，数据会保留。".into(), false)); }
-                Err(e) => this.update_notice = Some((e.to_string(), true)),
-            } cx.notify();
-        }); }).detach();
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.update_downloading = false;
+                match result {
+                    Ok(file) => {
+                        this.update_file = Some((file, version));
+                        this.update_notice = Some((
+                            "安装包已校验，可退出并安装更新。原有配置、图库和终端命令会保留。"
+                                .into(),
+                            false,
+                        ));
+                    }
+                    Err(e) => this.update_notice = Some((e.to_string(), true)),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+    fn install_application(&mut self, update: Option<(PathBuf, String)>, cx: &mut Context<Self>) {
+        if self.install_preparing || self.shutting_down {
+            return;
+        }
+        if self.queue.batch.is_some()
+            || !self.queue.submitted.is_empty()
+            || !self.queue.quick.is_empty()
+            || self.preparing
+        {
+            self.update_notice = Some(("请先完成或取消上传和图片导入，再安装应用".into(), true));
+            cx.notify();
+            return;
+        }
+        self.install_preparing = true;
+        self.update_notice = Some((
+            "正在验证并准备安装，完成后会保存数据、退出并重新打开 img…".into(),
+            false,
+        ));
+        let root = self.root.clone();
+        let task = cx.background_executor().spawn(async move {
+            match update {
+                Some((file, version)) => crate::installer::prepare_update(&file, &version, &root),
+                None => crate::installer::prepare_current(&root),
+            }
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.install_preparing = false;
+                match result {
+                    Ok(_)
+                        if this.queue.batch.is_some()
+                            || !this.queue.submitted.is_empty()
+                            || !this.queue.quick.is_empty()
+                            || this.preparing =>
+                    {
+                        this.update_notice =
+                            Some(("安装准备期间有新上传任务，请完成后重试".into(), true));
+                    }
+                    Ok(prepared) => {
+                        this.pending_install = Some(prepared);
+                        this.begin_shutdown(cx);
+                    }
+                    Err(error) => this.update_notice = Some((error.to_string(), true)),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
         cx.notify();
     }
     fn install_cli(&mut self, cx: &mut Context<Self>) {
@@ -1533,6 +1610,25 @@ impl ImgDesktop {
                 13.,
                 TEXT,
             ))
+            .child(label(
+                if option_env!("IMG_SIGNING_TEAM").is_some() {
+                    "已签名发行版"
+                } else {
+                    "社区安装包 · 未经 Apple 公证，首次打开请按安装说明允许运行"
+                },
+                12.,
+                MUTED,
+            ))
+            .when(!crate::installer::installed(), |body| {
+                body.child(
+                    Button::new("install-application")
+                        .label("安装到应用程序并重新打开")
+                        .primary()
+                        .small()
+                        .disabled(self.install_preparing || self.shutting_down)
+                        .on_click(cx.listener(|this, _, _, cx| this.install_application(None, cx))),
+                )
+            })
             .child(
                 div()
                     .flex()
@@ -1611,20 +1707,42 @@ impl ImgDesktop {
                                 .on_click(cx.listener(|this, _, _, cx| this.download_update(cx))),
                         )
                     })
-                    .when_some(self.update_file.clone(), |this, file| {
+                    .when_some(self.update_file.clone(), |this, (file, version)| {
+                        let manual = file.clone();
                         this.child(
+                            Button::new("install-update")
+                                .label(if self.install_preparing {
+                                    "正在准备…"
+                                } else {
+                                    "退出并安装更新"
+                                })
+                                .primary()
+                                .small()
+                                .disabled(
+                                    self.install_preparing
+                                        || self.shutting_down
+                                        || self.queue.batch.is_some(),
+                                )
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.install_application(
+                                        Some((file.clone(), version.clone())),
+                                        cx,
+                                    )
+                                })),
+                        )
+                        .child(
                             Button::new("open-update")
-                                .label("打开安装包")
-                                .outline()
+                                .label("手动安装")
+                                .ghost()
                                 .small()
                                 .disabled(self.queue.batch.is_some())
                                 .on_click(cx.listener(move |this, _, _, cx| {
-                                    match std::process::Command::new("/usr/bin/open")
-                                        .arg(&file)
+                                    if std::process::Command::new("/usr/bin/open")
+                                        .arg(&manual)
                                         .spawn()
+                                        .is_err()
                                     {
-                                        Ok(_) => {}
-                                        Err(_) => this.message("无法打开安装包", true, cx),
+                                        this.message("无法打开安装包", true, cx);
                                     }
                                 })),
                         )
@@ -1872,9 +1990,30 @@ impl ImgDesktop {
                         this.child(self.queue_filters(cx))
                     })
                     .when(self.page == Page::Library, |this| {
-                        this.child(self.library_view_switch(cx))
+                        this.child(self.library_view_switch(cx)).child(
+                            Button::new("library-select")
+                                .ghost()
+                                .small()
+                                .ml(px(8.))
+                                .label(if self.selection.active {
+                                    "完成"
+                                } else {
+                                    "选择"
+                                })
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    if this.selection.active {
+                                        this.selection.finish();
+                                    } else {
+                                        this.selection.active = true;
+                                    }
+                                    cx.notify();
+                                })),
+                        )
                     }),
             );
+            if self.page == Page::Library && self.selection.active {
+                body = body.child(self.library_selection_controls(rows.clone(), cx));
+            }
             if self.page != Page::Library {
                 body = body.child(self.queue_controls(cx));
             }
@@ -2083,6 +2222,11 @@ impl Render for ImgDesktop {
         if !self.visible {
             return div().into_any_element();
         }
+        if self.page != Page::Library {
+            self.selection.finish();
+        }
+        self.selection
+            .reconcile(&self.queue.items, self.records_revision);
         // A shared spring keeps titlebar and content geometry in step. Retargeting
         // preserves velocity, so rapid clicks reverse naturally without snapping.
         let width_target = px(if self.preferences.sidebar_collapsed {

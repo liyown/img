@@ -1,5 +1,7 @@
 # img
 
+[官网 · 功能、对比与文档](https://liyown.github.io/img/)
+
 [![CI](https://github.com/liyown/img/actions/workflows/ci.yml/badge.svg)](https://github.com/liyown/img/actions/workflows/ci.yml)
 &nbsp;[English](README.en.md)
 
@@ -25,22 +27,18 @@ $ img screenshot --region --format markdown
 | CLI | macOS、Linux、Windows | 独立 `img` 命令，无需图形界面或语言运行时 |
 | GUI | macOS 13+，Apple silicon / Intel | 原生图形界面 + 同版本完整 CLI |
 
-当前工作区为 **0.3.0 本地内测版**，尚未发布远端版本。现在可从源码安装，或使用本地构建的安装包：
+桌面版请使用[官网下载入口](https://liyown.github.io/img/install/#gui)，它自动指向最新稳定桌面发行版；也可查看 [GitHub Releases](https://github.com/liyown/img/releases)。下载 DMG 后将 Img.app 拖到 Applications，无需 Rust 或 Go。
+
+社区安装包未经过 Apple 公证。若首次打开被阻止，请在「系统设置 → 隐私与安全性」中找到 img，确认来源后选择「仍要打开」，无需关闭系统保护。完整步骤见 [安装说明](desktop/INSTALL.html)。
+
+GUI 内置同版本 CLI；「设置 → 关于与更新」可添加终端命令、检查更新，并下载校验后退出安装新版。只需要独立 CLI 时可使用 CLI 发行包或源码安装。
 
 ```sh
-make install          # 只安装 CLI 到 Cargo bin 目录
-make desktop-package  # 构建 GUI 的 DMG / ZIP，内置 CLI
-make cli-package      # 构建独立 CLI 压缩包
+sh install.sh --gui   # 自动获取最新桌面版，安装 GUI 与内置 CLI
+sh install.sh --cli   # 独立 CLI 的 latest 发行版
 ```
 
-源码构建需要 Rust 1.98.1 和平台编译工具；不需要 Go。安装后的 CLI / GUI 无需 Rust 工具链。
-
-正式版本发布后，仓库根目录的安装器支持两种选择：
-
-```sh
-sh install.sh --cli   # 只安装命令行（默认）
-sh install.sh --gui   # macOS：安装 GUI，并同时添加 img 终端命令
-```
+开发者本地构建可运行 `make desktop-package` 或 `make cli-package`，源码安装 CLI 使用 `make install`。公开安装产物由 GitHub Actions 构建、验收并发布。
 
 CLI 默认安装到 `~/.local/bin/img`；GUI 默认安装到 `~/Applications/Img.app`，终端命令链接到包内 `Contents/MacOS/img`，更新应用后沿用新版。目录可通过 `IMG_INSTALL_DIR`、`IMG_APP_DIR` 指定。若该命令目录不在 PATH，安装器会提示添加。
 

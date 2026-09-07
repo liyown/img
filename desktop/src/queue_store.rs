@@ -82,6 +82,16 @@ impl QueueStore {
 pub async fn acknowledged<T>(pending: Pending<T>) -> Result<T> {
     pending.await.context("队列保存线程已停止")?
 }
+/// Run off the UI thread; never remove cache before the queue write is acknowledged.
+pub async fn finish_removal(
+    pending: Pending<()>,
+    root: PathBuf,
+    removed: Vec<Item>,
+) -> Result<usize> {
+    acknowledged(pending).await?;
+    crate::model::remove_cache(&root, &removed);
+    Ok(removed.len())
+}
 fn valid(path: &Path) -> Result<Vec<u8>> {
     let bytes = std::fs::read(path)?;
     serde_json::from_slice::<Vec<Item>>(&bytes).context("队列文件损坏")?;
@@ -151,6 +161,35 @@ mod tests {
         item.name = name.into();
         item.simulated = false;
         item
+    }
+    #[test]
+    fn removal_waits_for_persistence_and_preserves_original_on_success_and_failure() {
+        for fail in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let original = root.path().join("original.png");
+            std::fs::write(&original, b"original").unwrap();
+            let mut record = item("remove");
+            record.id = uuid::Uuid::new_v4().to_string();
+            record.source = Some(original.clone());
+            let cache = root.path().join("images").join(&record.id);
+            std::fs::create_dir_all(&cache).unwrap();
+            std::fs::write(cache.join("preview.png"), b"cache").unwrap();
+            let store = QueueStore::new(root.path().into());
+            wait(store.save(vec![record.clone()])).unwrap();
+            if fail {
+                std::fs::remove_file(root.path().join("queue.json")).unwrap();
+                std::fs::create_dir(root.path().join("queue.json")).unwrap();
+            }
+            let pending = store.save(vec![]);
+            let result = futures_lite::future::block_on(finish_removal(
+                pending,
+                root.path().into(),
+                vec![record],
+            ));
+            assert_eq!(result.is_err(), fail);
+            assert_eq!(cache.exists(), fail);
+            assert_eq!(std::fs::read(original).unwrap(), b"original");
+        }
     }
     #[test]
     fn serial_writes_barrier_and_two_valid_backups() {

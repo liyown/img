@@ -32,6 +32,25 @@ pub(super) struct UploadController {
     pub(super) queue_store: crate::queue_store::QueueStore,
 }
 impl UploadController {
+    fn removable_ids(&self, ids: &[String]) -> Vec<String> {
+        let requested: std::collections::HashSet<_> = ids.iter().collect();
+        let mut protected: std::collections::HashSet<&String> = self.active.keys().collect();
+        for batch in &self.submitted {
+            protected.extend(batch.order.iter());
+        }
+        if let Some(batch) = &self.batch {
+            protected.extend(batch.pending.iter());
+        }
+        self.items
+            .iter()
+            .filter(|item| {
+                requested.contains(&item.id)
+                    && item.status != Status::Running
+                    && !protected.contains(&item.id)
+            })
+            .map(|item| item.id.clone())
+            .collect()
+    }
     pub(super) fn manual_ids(&self, statuses: &[Status]) -> Vec<String> {
         self.items
             .iter()
@@ -426,25 +445,33 @@ impl ImgDesktop {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let ids: Vec<_> = ids
-            .into_iter()
-            .filter(|id| {
-                !self.queue.submitted.iter().any(|b| b.order.contains(id))
-                    && !self.queue.active.contains_key(id)
-                    && !self
-                        .queue
-                        .batch
-                        .as_ref()
-                        .is_some_and(|b| b.pending.contains(id))
-            })
-            .collect();
+        self.remove_records_with_hidden(ids, 0, window, cx);
+    }
+    pub(super) fn remove_records_with_hidden(
+        &mut self,
+        ids: Vec<String>,
+        hidden: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let ids = self.queue.removable_ids(&ids);
+        let hidden = if hidden > 0 {
+            ids.iter()
+                .filter(|id| !self.record_index.borrow().visible(id))
+                .count()
+        } else {
+            0
+        };
         if ids.is_empty() {
             self.message("没有可清理的记录，请先取消正在等待的任务", false, cx);
             return;
         }
         let prompt = window.prompt(
             PromptLevel::Warning,
-            &format!("清理 {} 条记录？", ids.len()),
+            &format!(
+                "清理 {} 条记录？其中 {hidden} 项不在当前搜索结果中",
+                ids.len()
+            ),
             Some("删除这些记录和应用内的图片缓存。你选择的原始文件与远端图片会保留。"),
             &["取消", "清理"],
             cx,
@@ -454,18 +481,12 @@ impl ImgDesktop {
                 return;
             }
             let _ = this.update(cx, |this, cx| {
-                let ids: Vec<_> = ids
-                    .into_iter()
-                    .filter(|id| {
-                        !this.queue.submitted.iter().any(|b| b.order.contains(id))
-                            && !this.queue.active.contains_key(id)
-                            && !this
-                                .queue
-                                .batch
-                                .as_ref()
-                                .is_some_and(|b| b.pending.contains(id))
-                    })
-                    .collect();
+                let ids = this.queue.removable_ids(&ids);
+                if ids.is_empty() {
+                    this.message("所选记录已不存在或正在上传，没有清理记录", false, cx);
+                    return;
+                }
+                let ids: std::collections::HashSet<_> = ids.into_iter().collect();
                 if !this.queue.persistence_ok {
                     this.message("本地队列无法读取，不能清理记录", true, cx);
                     return;
@@ -482,14 +503,12 @@ impl ImgDesktop {
                 let saved = this.queue.queue_store.save(this.queue.items.clone());
                 let root = this.root.clone();
                 cx.spawn(async move |this, cx| {
-                    match crate::queue_store::acknowledged(saved).await {
-                        Ok(()) => {
-                            let count = removed.len();
-                            cx.background_executor()
-                                .spawn(async move {
-                                    model::remove_cache(&root, &removed);
-                                })
-                                .await;
+                    match cx
+                        .background_executor()
+                        .spawn(crate::queue_store::finish_removal(saved, root, removed))
+                        .await
+                    {
+                        Ok(count) => {
                             let _ = this.update(cx, |this, cx| {
                                 this.message(format!("已清理 {count} 条记录和图片缓存"), false, cx)
                             });
@@ -608,6 +627,14 @@ impl ImgDesktop {
             .await;
             let _ = this.update(cx, |this, cx| match result {
                 Ok(()) => {
+                    if let Some(install) = this.pending_install.take()
+                        && let Err(error) = install.launch()
+                    {
+                        this.shutting_down = false;
+                        this.update_notice = Some((error.to_string(), true));
+                        cx.notify();
+                        return;
+                    }
                     this.shutdown_saved = true;
                     cx.quit();
                 }
@@ -616,6 +643,7 @@ impl ImgDesktop {
                     cx.quit();
                 }
                 Err(error) => {
+                    this.pending_install = None;
                     this.shutting_down = false;
                     this.persistence_failed(error, cx);
                 }
@@ -692,6 +720,38 @@ mod tests {
         preferences::Preferences,
         upload_options::UploadOptions,
     };
+    #[test]
+    fn removal_rechecks_frozen_ids_and_upload_protection() {
+        let root = tempfile::tempdir().unwrap();
+        let mut items = Item::reference_items();
+        for item in &mut items {
+            item.status = Status::Done;
+        }
+        let mut queue = UploadController::new(root.path().into(), items.clone(), true);
+        let frozen: Vec<_> = items.iter().map(|i| i.id.clone()).collect();
+        assert_eq!(queue.removable_ids(&frozen), frozen);
+        queue.items[0].status = Status::Running;
+        assert_eq!(queue.removable_ids(&frozen), vec![items[1].id.clone()]);
+        queue.items.clear();
+        assert!(queue.removable_ids(&frozen).is_empty());
+        queue.items = items;
+        queue.batch = Some(UploadBatch {
+            id: "protected".into(),
+            pending: frozen.clone().into(),
+            order: frozen.clone(),
+            completed: vec![],
+            failed: 0,
+            target: String::new(),
+            preferences: Preferences::default(),
+            options: UploadOptions::default(),
+            configuration: None,
+            paused: true,
+            cancelled: false,
+        });
+        assert!(queue.removable_ids(&frozen).is_empty());
+        queue.submitted.push_back(queue.batch.take().unwrap());
+        assert!(queue.removable_ids(&frozen).is_empty());
+    }
     #[test]
     fn quick_preparation_keeps_trigger_order_and_manual_records_separate() {
         let root = tempfile::tempdir().unwrap();

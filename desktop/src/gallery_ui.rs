@@ -1,6 +1,161 @@
 use super::*;
 
 impl ImgDesktop {
+    fn library_checkbox(&self, item: &Item, cx: &mut Context<Self>) -> AnyElement {
+        let id = item.id.clone();
+        gpui_kit::component::checkbox::Checkbox::new(SharedString::from(format!("select-{}", id)))
+            .accessibility_label(format!("选择 {}", item.name))
+            .checked(self.selection.contains(&id))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.selection.toggle(id.clone());
+                cx.notify();
+            }))
+            .into_any_element()
+    }
+    fn copy_selection(&mut self, cx: &mut Context<Self>) {
+        let ids = self.selection.snapshot(&self.queue.items);
+        let (text, copied, skipped) =
+            crate::selection::copy_text(&self.queue.items, &ids, self.preferences.copy_format);
+        if copied > 0 {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        }
+        self.message(
+            format!(
+                "已复制 {copied} 项为 {}{}",
+                self.preferences.copy_format.label(),
+                if skipped > 0 {
+                    format!("，跳过 {skipped} 项缺失链接的记录")
+                } else {
+                    String::new()
+                }
+            ),
+            copied == 0,
+            cx,
+        );
+    }
+    pub(super) fn library_selection_controls(
+        &self,
+        rows: std::sync::Arc<Vec<String>>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let hidden = self
+            .selection
+            .hidden(|id| self.record_index.borrow().visible(id));
+        let empty = self.selection.len() == 0;
+        let format = self.preferences.copy_format;
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(10.))
+            .p(px(12.))
+            .mb(px(14.))
+            .border_1()
+            .border_color(rgb(BORDER))
+            .rounded(px(12.))
+            .bg(rgb(CARD))
+            .flex_shrink_0()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.))
+                    .child(
+                        label(format!("已选 {} 项", self.selection.len()), 12., TEXT)
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .whitespace_nowrap(),
+                    )
+                    .when(hidden > 0, |row| {
+                        row.child(
+                            label(format!("{hidden} 项不在当前结果中"), 11., MUTED)
+                                .whitespace_nowrap(),
+                        )
+                    })
+                    .child(div().flex_1())
+                    .child(
+                        Button::new("select-results")
+                            .ghost()
+                            .small()
+                            .label("全选当前结果")
+                            .disabled(rows.is_empty())
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.selection.extend(&rows);
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("deselect-all")
+                            .ghost()
+                            .small()
+                            .label("取消全部")
+                            .disabled(empty)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.selection.clear();
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .child(div().h(px(1.)).w_full().bg(rgb(BORDER)))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(label("链接格式", 11., MUTED))
+                    .child(
+                        Button::new("copy-selection-format")
+                            .outline()
+                            .small()
+                            .min_w(px(136.))
+                            .label(format.label())
+                            .tooltip("选择格式并复制所选图片")
+                            .disabled(empty)
+                            .dropdown_menu({
+                                let entity = cx.entity();
+                                move |mut menu, _, _| {
+                                    for value in CopyFormat::ALL {
+                                        let entity = entity.clone();
+                                        menu = menu.item(
+                                            PopupMenuItem::new(value.label())
+                                                .checked(value == format)
+                                                .on_click(move |_, _, cx| {
+                                                    entity.update(cx, |this, cx| {
+                                                        this.preferences.copy_format = value;
+                                                        this.save_preferences(cx);
+                                                        this.copy_selection(cx);
+                                                    });
+                                                }),
+                                        );
+                                    }
+                                    menu
+                                }
+                            }),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        Button::new("copy-selection")
+                            .primary()
+                            .small()
+                            .label("复制所选")
+                            .disabled(empty)
+                            .on_click(cx.listener(|this, _, _, cx| this.copy_selection(cx))),
+                    )
+                    .child(
+                        Button::new("clean-selection")
+                            .outline()
+                            .small()
+                            .label("清理所选")
+                            .disabled(empty)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                let ids = this.selection.snapshot(&this.queue.items);
+                                let rows = this.filtered(cx);
+                                let visible: std::collections::HashSet<_> = rows.iter().collect();
+                                let hidden = ids.iter().filter(|id| !visible.contains(id)).count();
+                                this.remove_records_with_hidden(ids, hidden, window, cx);
+                            })),
+                    ),
+            )
+            .into_any_element()
+    }
     pub(super) fn display_progress(&self, item: &Item) -> Option<u8> {
         // The supplied mock labels its approximately 82% track as 87%.
         // Preserve that static composition only for the reference fixture.
@@ -295,7 +450,11 @@ impl ImgDesktop {
             .child(
                 div()
                     .flex()
-                    .justify_end()
+                    .items_center()
+                    .when(self.selection.active, |row| {
+                        row.child(self.library_checkbox(&item, cx))
+                    })
+                    .child(div().flex_1())
                     .child(self.copy_actions(&item, "grid", cx)),
             )
             .into_any_element()
@@ -311,6 +470,9 @@ impl ImgDesktop {
             .flex()
             .items_center()
             .gap(px(14.))
+            .when(self.selection.active, |row| {
+                row.child(self.library_checkbox(&item, cx))
+            })
             .child(
                 Button::new(SharedString::from(format!("list-preview-{}", item.id)))
                     .accessibility_label(format!("预览 {}", item.name))

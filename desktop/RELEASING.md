@@ -51,7 +51,7 @@ make desktop-release
 
 `.github/workflows/desktop-release.yml` 只响应 `desktop-v*` 标签，发布时设置 `latest=false`，与原有 CLI 的 `v*` 发布互不干扰。`desktop-v0.3.0` 必须匹配根目录 `Cargo.toml` 的 workspace.package.version。macOS 15 的 arm64 与 Intel runner 分别构建，两种产物都成功后才一起创建 release；runner 标识来自 [GitHub 官方说明](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)。
 
-在 GitHub `desktop-release` environment 配置这些 secrets：
+默认发布无 Apple 公证的社区版，不需要证书。若要启用 Developer ID 签名，在 GitHub `desktop-release` environment 设置变量 `DESKTOP_SIGNING=true`，并配置以下 secrets：
 
 | Secret | 内容 |
 | --- | --- |
@@ -72,7 +72,7 @@ make desktop-release
 - 对应架构的确定名称 DMG 及 SHA-256 文件，下载地址必须属于该仓库该标签。
 - 下载大小与 SHA-256 匹配。正式构建另校验签名发布团队。
 
-更新不会自动替换或执行下载的应用；用户打开安装包并按提示替换旧版。下载失败或校验失败时，临时文件自动丢弃。上传未结束时禁止从应用打开更新安装包。
+下载完成后，用户可点击「退出并安装更新」。应用验证 DMG 内的标识、版本、架构与签名，在目标文件系统暂存新应用，保存队列并结束子进程后才退出。独立安装助手等待旧进程结束、备份旧应用并替换，重新打开新版；启动命令失败时回退旧应用。系统阻止未公证新版时仍需用户允许打开。目录不可写时保留手动安装入口，下载或校验失败不会进入替换。
 
 首次正式发行前不存在可安装的新版本；公开 GitHub API 限流时回退到公开的 releases Atom feed；如果仅能获得版本页面而无法核实安装资产，更新按钮会打开该版本页面。两个来源都不可用时显示可重试状态。本地验收覆盖版本筛选、错误处理和校验失败拒绝；没有宣称完成真实签名更新的下载、安装、公证验证。
 
@@ -99,3 +99,9 @@ IMG_VERSION=0.3.0 IMG_LOCAL_PACKAGE_DIR="$PWD/dist/desktop/arm64" sh install.sh 
 两种安装都先校验 SHA-256；GUI 另外验证应用签名。不修改 shell 配置，命令目录不在 PATH 时会明确提示。安装器操作的是应用文件与命令入口，保留现有配置与图片队列。
 
 HTTP / S3 / GitHub 的迁移测试使用本地服务器和虚构凭据。S3 签名采用 [AWS Rust SigV4](https://docs.rs/aws-sigv4/latest/aws_sigv4/http_request/index.html)，默认凭据读取沿用 [AWS Rust 配置链](https://docs.rs/aws-config/latest/aws_config/)。本轮未进行真实云图床上传、Apple 公证或远端发布。
+
+## 持续发布与固定下载入口
+
+发布由 CI 完成：修改 workspace 版本、推送对应 `desktop-vX.Y.Z` 标签，工作流构建和验收两种 Mac 架构，全部通过后一起发布 DMG / ZIP / SHA-256。社区包默认 ad-hoc 签名，附带 INSTALL.html；不需要在开发电脑生成并上传二进制。
+
+官网 `/img/install/#gui` 是固定入口。页面访问时查询 GitHub Releases，按语义版本选择稳定 desktop-v 发行，校验资产所属仓库、标签及校验文件，并更新架构下载链接。它不使用被 CLI 占用的 GitHub latest，不需要每次发布修改或重建网站。网络失败时回退 Releases 页面。

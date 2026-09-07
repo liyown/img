@@ -1,5 +1,8 @@
 use crate::model::{Item, Status};
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 #[derive(Default)]
 pub struct RecordIndex {
@@ -10,6 +13,7 @@ pub struct RecordIndex {
     scope: u8,
     filter: u8,
     result: Arc<Vec<String>>,
+    visible: HashSet<String>,
 }
 impl RecordIndex {
     pub fn rows(
@@ -64,11 +68,15 @@ impl RecordIndex {
                     .map(|(id, _, _)| id.clone())
                     .collect(),
             );
+            self.visible = self.result.iter().cloned().collect();
             self.query = query;
             self.scope = scope;
             self.filter = filter;
         }
         self.result.clone()
+    }
+    pub fn visible(&self, id: &str) -> bool {
+        self.visible.contains(id)
     }
     pub fn position(&self, id: &str) -> Option<usize> {
         self.positions.get(id).copied()

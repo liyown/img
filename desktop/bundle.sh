@@ -44,6 +44,7 @@ for icon_size in 16 32 128 256 512; do
     sips -z "$icon_double" "$icon_double" desktop/assets/img-mark.png --out "$iconset_dir/Img.iconset/icon_${icon_size}x${icon_size}@2x.png" >/dev/null
 done
 iconutil -c icns "$iconset_dir/Img.iconset" -o "$app_dir/Contents/Resources/Img.icns"
+cp desktop/INSTALL.html "$app_dir/Contents/Resources/INSTALL.html"
 identity=${IMG_SIGNING_IDENTITY:--}
 if [ "$identity" = '-' ]; then
     codesign --force --sign - "$app_dir/Contents/MacOS/img"

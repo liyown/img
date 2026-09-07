@@ -1,5 +1,7 @@
 # img
 
+[Website · Features, comparison, and docs](https://liyown.github.io/img/en/)
+
 [![CI](https://github.com/liyown/img/actions/workflows/ci.yml/badge.svg)](https://github.com/liyown/img/actions/workflows/ci.yml)
 &nbsp;[中文](README.md)
 
@@ -18,37 +20,18 @@ $ img screenshot --region --format markdown
 
 ## Installation
 
-This workspace is the **0.3.0 Rust migration**, not yet published remotely. Choose the standalone CLI or the macOS GUI, which includes the same complete CLI.
+Download the desktop app from the [stable installation page](https://liyown.github.io/img/en/install/#gui), which resolves the latest desktop release automatically, or from [GitHub Releases](https://github.com/liyown/img/releases). Open the DMG and drag Img.app into Applications. No Rust or Go toolchain is required.
 
-| Product | Platforms | Contents |
-| --- | --- | --- |
-| CLI | macOS, Linux, Windows | Standalone `img`, no GUI or language runtime required |
-| GUI | macOS 13+, Apple silicon / Intel | Native GPUI app plus the same Rust CLI |
+Community builds are ad-hoc signed and not Apple-notarized. If macOS blocks the first launch, verify the source and use System Settings → Privacy & Security → Open Anyway. Do not disable system protections. See the [installation guide](desktop/INSTALL.html).
 
-Build/install from this checkout:
+The GUI bundles the matching CLI. Settings → About and updates can add the terminal command, check updates, and install a verified update with restart while preserving your data.
 
 ```sh
-make install          # CLI only, installs into Cargo's bin directory
-make cli-package      # Standalone CLI archive
-make desktop-package  # GUI DMG / ZIP with CLI included
+sh install.sh --gui   # Latest desktop release with bundled CLI
+sh install.sh --cli   # Latest standalone CLI release
 ```
 
-Building requires Rust 1.98.1 and platform build tools, with no Go dependency. Installed binaries do not require Rust.
-
-After release, the checked-in installer supports:
-
-```sh
-sh install.sh --cli   # CLI only (default)
-sh install.sh --gui   # macOS GUI plus a terminal command
-```
-
-The default CLI path is `~/.local/bin/img`. The GUI goes to `~/Applications/Img.app`, and its terminal command links to the bundled `Contents/MacOS/img`. Override these using `IMG_INSTALL_DIR` and `IMG_APP_DIR`. Add the CLI directory to PATH if needed. Windows uses `install.ps1 -Product cli`.
-
-The drag-and-drop DMG also includes the CLI; use Settings → About & Updates → Add terminal command to add it to your command directory.
-
-Run `img version` to verify the version and `implementation: Rust`. See [release instructions](desktop/RELEASING.md) for local packages, offline installation and publishing.
-
----
+Public packages are built, tested, and published by GitHub Actions. Developers can use `make desktop-package`, `make cli-package`, or `make install` for local builds.
 
 ## Setup
 

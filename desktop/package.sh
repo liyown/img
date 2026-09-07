@@ -45,6 +45,8 @@ ditto -c -k --keepParent "$app_dir" "$output_dir/$name.zip"
 mkdir -p "$staging/volume"
 ditto "$app_dir" "$staging/volume/Img.app"
 ln -s /Applications "$staging/volume/Applications"
+cp desktop/INSTALL.html "$staging/volume/安装说明.html"
+cp desktop/INSTALL.html "$output_dir/INSTALL.html"
 hdiutil create -volname "img $version" -srcfolder "$staging/volume" -ov -format UDZO "$output_dir/$name.dmg"
 if [ "$unsigned" = false ]; then
     codesign --force --timestamp --sign "$IMG_SIGNING_IDENTITY" "$output_dir/$name.dmg"
