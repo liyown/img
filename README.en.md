@@ -26,6 +26,8 @@ img is built in Rust. The GPUI desktop app bundles the matching CLI, with shared
 
 ## Installation
 
+The main branch adds shared upload history, PicGo / PicList import, duplicate reuse, link checks, processing previews and watermarks, backup and restore, folder watching, remote management, WebDAV, dark mode and English / Chinese UI. See the [workflow guide](docs/workflows.en.md) and [acceptance status](desktop/features-qa.md). Stable installer features follow their release notes.
+
 Download the latest stable release from the [installation page](https://liyown.github.io/img/en/install/#gui). Desktop packages include the CLI, which is also available separately. No source build is required.
 
 | System | Desktop, including CLI | Standalone CLI |

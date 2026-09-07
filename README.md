@@ -26,6 +26,8 @@ img 使用 Rust 构建，桌面端采用 GPUI，内置同版本 CLI。桌面上�
 
 ## 安装
 
+主分支已加入统一上传记录、PicGo / PicList 导入、重复图片复用、链接诊断、处理预览与水印、备份恢复、目录监听、远端管理、WebDAV、深色主题与中英文界面。见[功能使用说明](docs/workflows.md)和[验收状态](desktop/features-qa.md)；稳定安装包以 Release notes 为准。
+
 从[安装页](https://liyown.github.io/img/install/#gui)下载最新稳定版。桌面安装包包含 CLI，也可单独下载命令行版本，无需从源码编译。
 
 | 系统 | 桌面版（包含 CLI） | 独立 CLI |

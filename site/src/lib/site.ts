@@ -32,6 +32,7 @@ export const pages = [
   ['docs/cli', 'CLI 参考', 'CLI reference'],
   ['docs/integrations', '编辑器与 Agent', 'Editors & agents'],
   ['docs/troubleshooting', '故障排查', 'Troubleshooting'],
+  ['docs/workflows', '迁移与资料管理', 'Migration & data management'],
   ['privacy', '隐私说明', 'Privacy'],
 ] as const;
 export const pageName = (locale: Locale, path: string) => {
