@@ -66,6 +66,23 @@ for (const file of htmlFiles) {
     assert.ok(doc.querySelector(selector)?.content, `${selector}: ${pathname}`);
   const og = doc.querySelector('meta[property="og:image"]')?.content;
   assert.equal(
+    doc.querySelector('meta[property="og:url"]')?.content,
+    origin + pathname,
+  );
+  assert.equal(
+    doc.querySelector('meta[property="og:type"]')?.content,
+    'website',
+  );
+  assert.equal(
+    doc.querySelector('meta[property="og:image:type"]')?.content,
+    'image/png',
+  );
+  assert.equal(
+    doc.querySelector('meta[name="twitter:card"]')?.content,
+    'summary_large_image',
+  );
+  assert.equal(doc.querySelector('meta[name="twitter:image"]')?.content, og);
+  assert.equal(
     og,
     origin + base + `og/${pathname.startsWith('/img/en/') ? 'en' : 'zh'}.png`,
   );

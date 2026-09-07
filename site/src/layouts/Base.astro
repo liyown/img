@@ -41,7 +41,7 @@ const schema = [
           '@type': 'SoftwareApplication',
           name: 'img',
           applicationCategory: 'DeveloperApplication',
-          operatingSystem: 'macOS (GUI and CLI), Linux and Windows (CLI)',
+          operatingSystem: 'macOS, Windows, Linux (GUI and CLI)',
           url: absolute(locale),
           screenshot: site.origin + asset('screenshots/gallery.webp'),
           description: t(
@@ -123,9 +123,12 @@ const schema = [
       content={locale === 'zh' ? 'en_US' : 'zh_CN'}
     />
     <meta property="og:image" content={og} /><meta
-      property="og:image:width"
-      content="1200"
-    /><meta property="og:image:height" content="630" />
+      property="og:image:type"
+      content="image/png"
+    /><meta property="og:image:width" content="1200" /><meta
+      property="og:image:height"
+      content="630"
+    />
     <meta
       property="og:image:alt"
       content={t(

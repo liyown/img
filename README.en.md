@@ -1,414 +1,119 @@
-# img
+<div align="center">
+  <img src="site/public/favicon.svg" width="72" alt="img">
+  <h1>img</h1>
+  <p><strong>Capture an image. Paste a link. Keep writing.</strong></p>
+  <p>Upload to your own storage and get links ready for your next post.<br>A native Rust desktop app + standalone CLI for macOS, Windows, and Linux.</p>
+  <p><a href="https://liyown.github.io/img/en/install/#gui"><strong>Download desktop</strong></a> · <a href="https://liyown.github.io/img/en/install/#cli">Download CLI</a> · <a href="https://liyown.github.io/img/en/">Website</a> · <a href="https://liyown.github.io/img/en/docs/">Docs</a> · <a href="README.md">中文</a></p>
 
-[Website · Features, comparison, and docs](https://liyown.github.io/img/en/)
+[![Desktop release](https://github.com/liyown/img/actions/workflows/desktop-release.yml/badge.svg)](https://github.com/liyown/img/actions/workflows/desktop-release.yml)
+[![CLI release](https://github.com/liyown/img/actions/workflows/release.yml/badge.svg)](https://github.com/liyown/img/actions/workflows/release.yml)
+[![Rust](https://img.shields.io/badge/built_with-Rust-dea584)](Cargo.toml)
 
-[![CI](https://github.com/liyown/img/actions/workflows/ci.yml/badge.svg)](https://github.com/liyown/img/actions/workflows/ci.yml)
-&nbsp;[中文](README.md)
+</div>
 
-`img` is a Rust image uploader with a standalone CLI and a native macOS GUI that includes the same CLI. It uploads local files, screenshots, or remote URLs to your configured image host and returns a URL, Markdown link, or JSON.
+[![img native gallery: find images, preview, and copy links; macOS demo](site/public/screenshots/gallery.webp)](https://liyown.github.io/img/en/install/#gui)
 
-**Supported hosts:** Cloudflare R2, generic S3, Alibaba Cloud OSS, GitHub repository, custom HTTP endpoint
+## Fewer steps between an image and your next sentence
 
-**Supported formats:** PNG, JPEG, GIF, WebP, SVG, AVIF
+Whether you write blog posts, take notes, or maintain documentation, configure your storage once and turn screenshots into links you can paste.
 
-```console
-$ img screenshot --region --format markdown
-![screenshot.png](https://img.example.com/2026/07/screenshot.png)
-```
+- **A shortcut from screenshot to link.** Upload your clipboard or capture a screenshot with a global shortcut. The resulting link is copied in your chosen format.
+- **Your images, your storage, your domain.** Connect Cloudflare R2, S3, Alibaba Cloud OSS, GitHub, or a custom HTTP host with your own public image URL.
+- **One tool for your desktop and scripts.** A native Rust / GPUI interface bundles the matching CLI. The standalone CLI works without the desktop app.
+- **Find the images you already uploaded.** Search a local gallery, switch between grid and list, and copy links in batches across search results. Clearing local records preserves original files and remote images.
+- **Handle a whole article.** Batch upload, optimize, resize, strip JPEG EXIF, or use `img rewrite` to upload Markdown images and replace their references.
+- **Works with your editor and agents.** Typora custom commands, a PicGo-compatible local service, structured JSON output, and a companion Agent Skill.
 
----
+> img is an upload client: bring your own storage service and publicly accessible image URL. The gallery manages local records; remote file management and the PicGo plugin ecosystem are outside the current scope.
 
-## Installation
+## Download and start
 
-Download the desktop app from the [stable installation page](https://liyown.github.io/img/en/install/#gui), which resolves the latest desktop release automatically, or from [GitHub Releases](https://github.com/liyown/img/releases). Open the DMG and drag Img.app into Applications. No Rust or Go toolchain is required.
+**[Get the latest stable release →](https://liyown.github.io/img/en/install/#gui)** No Rust, Go, or build tools required.
 
-Community builds are ad-hoc signed and not Apple-notarized. If macOS blocks the first launch, verify the source and use System Settings → Privacy & Security → Open Anyway. Do not disable system protections. See the [installation guide](desktop/INSTALL.html).
+| System | Desktop, including CLI | Standalone CLI |
+| --- | --- | --- |
+| macOS 13+ | Apple silicon / Intel · DMG, ZIP | ARM64 / x64 |
+| Windows 10/11 | x64 · EXE installer, portable ZIP | x64 |
+| Ubuntu 24.04 / Debian 13+ | x64 · DEB | Linux ARM64 / x64 |
 
-The GUI bundles the matching CLI. Settings → About and updates can add the terminal command, check updates, and install a verified update with restart while preserving your data.
+GitHub Actions builds, tests, and publishes native packages with SHA-256 checksums. [All releases](https://github.com/liyown/img/releases) · [Verification record](desktop/install-qa.md)
 
-```sh
-sh install.sh --gui   # Latest desktop release with bundled CLI
-sh install.sh --cli   # Latest standalone CLI release
-```
+<details>
+<summary>Community builds and platform notes</summary>
 
-Public packages are built, tested, and published by GitHub Actions. Developers can use `make desktop-package`, `make cli-package`, or `make install` for local builds.
+- macOS builds are not Apple-notarized. After verifying the source, use System Settings → Privacy & Security → Open Anyway if blocked. [Installation guide](https://liyown.github.io/img/en/install/#gui)
+- Windows community packages are not code-signed. Linux GUI requires a graphical desktop, Vulkan drivers, and an unlocked Secret Service.
+- Linux global shortcuts require X11; use window controls on Wayland. Screenshots require a system capture tool. Windows currently captures the full screen. Menu-bar background uploads are available on macOS.
+- Settings → About and updates checks for and downloads verified updates, preserving configuration and the library. Rerun the installer to update the standalone CLI.
 
-## Setup
+</details>
 
-Create a provider and set it as the default before first use.
+## Upload your first image
 
-### Interactive setup
+### From the desktop
 
-```sh
-img init
-```
+1. Install img, add your image host in Settings → Storage, and set it as default.
+2. Copy an image and press the upload shortcut.
+3. Return to your article and paste the link. Choose Markdown, URL, or another format in Settings.
 
-Follow the prompts, then verify:
+| Action | macOS | Windows / Linux X11 |
+| --- | --- | --- |
+| Upload clipboard and copy link | `⌘⌥U` | `Ctrl+Alt+U` |
+| Capture, upload, and copy link | `⌘⌥S` | `Ctrl+Alt+S` |
 
-```sh
-img config validate
-img provider list
-```
+You can also select files, paste images, or add remote URLs in the window, review the queue, and click Upload.
 
-### Cloudflare R2
+### From the terminal
 
-```sh
-export IMG_R2_ACCESS_KEY='your-access-key'
-export IMG_R2_SECRET_KEY='your-secret-key'
-```
-
-```sh
-img init \
-  --type s3 --name r2 \
-  --endpoint https://ACCOUNT_ID.r2.cloudflarestorage.com \
-  --region auto --bucket images \
-  --access-key '${IMG_R2_ACCESS_KEY}' \
-  --secret-key '${IMG_R2_SECRET_KEY}' \
-  --public-url https://img.example.com \
-  --path-style
-```
-
-### Alibaba Cloud OSS
+Download the [standalone CLI](https://liyown.github.io/img/en/install/#cli), or add the terminal command from the desktop app's About and updates section:
 
 ```sh
-export IMG_ALIYUN_ACCESS_KEY_ID='your-access-key-id'
-export IMG_ALIYUN_ACCESS_KEY_SECRET='your-access-key-secret'
+img init                                  # Connect your image host
+img photo.png --format markdown --copy     # Upload and copy a Markdown link
+img upload a.png b.jpg --format json       # Batch upload for scripts
+img rewrite article.md --stdout            # Upload article images and print rewritten Markdown
 ```
 
-```sh
-img init \
-  --type s3 --name aliyun \
-  --endpoint https://oss-cn-shenzhen.aliyuncs.com \
-  --region oss-cn-shenzhen --bucket your-bucket \
-  --access-key '${IMG_ALIYUN_ACCESS_KEY_ID}' \
-  --secret-key '${IMG_ALIYUN_ACCESS_KEY_SECRET}' \
-  --public-url https://img.example.com
+Example output; the URL depends on your storage configuration:
+
+```markdown
+![photo.png](https://img.example.com/photo.png)
 ```
 
-### Custom HTTP endpoint
-
-```sh
-img init --type http --name custom \
-  --url https://example.com/api/upload \
-  --url-json-path data.url
-```
-
-To add fixed headers or form fields, edit the config file:
-
-```toml
-[providers.custom.headers]
-Authorization = "Bearer ${IMG_HTTP_TOKEN}"
-
-[providers.custom.fields]
-folder = "images"
-```
-
-### GitHub repository
-
-```sh
-img init --type github --name github \
-  --owner your-name --repo images \
-  --token '${IMG_GITHUB_TOKEN}'
-```
-
-Or add manually to the config file:
-
-```toml
-[providers.github]
-type = "github"
-owner = "your-name"
-repo = "images"
-branch = "main"
-token = "${IMG_GITHUB_TOKEN}"
-```
-
-```sh
-export IMG_GITHUB_TOKEN='your-token'
-img config validate
-```
-
----
-
-## Commands
-
-### img upload — upload images
-
-```sh
-img screenshot.png                          # upload, print URL
-img screenshot.png --format markdown        # Markdown output
-img upload a.png b.jpg c.webp              # upload multiple files
-img https://example.com/photo.jpg          # rehost a remote URL
-img http://192.168.1.10/img.png --allow-insecure
-```
-
-Common flags:
-
-```sh
---format url|markdown|html|json    # output format
---provider <name>                  # override default provider
---path posts/assets                # remote path prefix
---name cover.png                   # remote filename
---overwrite                        # overwrite existing file
---copy / --no-copy                 # copy result to clipboard
---quiet                            # suppress stdout (use with --copy)
---verbose                          # verbose logging
-```
-
-Processing flags (see [Processing options](#processing-options)):
-
-```sh
---optimize       # compress before upload
---strip-exif     # remove EXIF metadata
---resize 1200    # downscale to max width 1200 px
-```
-
-### img screenshot — screenshot and upload in one step
-
-```sh
-img screenshot                   # full screen, result auto-copied
-img screenshot --region          # interactive area selection
-img screenshot --window          # active window
-img screenshot --format markdown
-img screenshot --optimize
-img screenshot --no-copy
-```
-
-- **macOS:** uses the built-in `screencapture` command
-- **Linux:** tries `flameshot`, `scrot`, `gnome-screenshot`, `import` in order
-- **Windows:** PowerShell full-screen capture
-
-### img serve — editor image upload proxy
-
-Starts a PicGo-compatible local HTTP server so any editor can upload through `img`:
-
-```sh
-img serve                        # 127.0.0.1:36677 (PicGo default port)
-img serve --port 9000
-img serve --optimize --strip-exif --resize 1200
-```
-
-**Typora** — Preferences → Image → Upload Image → Custom Command:
-
-```
-img "${filepath}"
-```
-
-**Obsidian** (Image Auto Upload plugin):
-
-```
-Upload server URL: http://127.0.0.1:36677/upload
-```
-
-### img rewrite — batch-rehost images in a Markdown article
-
-Uploads every image referenced in a Markdown article and rewrites the links:
-
-```sh
-img rewrite article.md                     # rewrite file in-place
-img rewrite *.md                           # rewrite multiple articles
-img rewrite article.md --stdout            # print result to stdout
-cat article.md | img rewrite               # stdin → stdout
-img rewrite article.md --optimize --strip-exif
-```
-
-- Both local paths and remote URLs are uploaded and replaced
-- Supports `![alt](path "title")` and `<img src="path">`
-- Alt text, titles, and attributes are preserved; only URLs are replaced
-- Unresolvable references (`data:` URIs, etc.) are kept as-is
-
-### img info — inspect image metadata
-
-```sh
-img info photo.jpg screenshot.png          # table output
-img info *.jpg --format json               # JSON output
-```
-
-Sample output:
-
-```
-photo.jpg                               JPEG    3000×2000    2.4 MB  ⚠ EXIF
-screenshot.png                          PNG     1440×900     156 KB
-icon.svg                                SVG     –            4 KB
-
-⚠  Files marked with EXIF may contain GPS location and device information.
-   Remove before uploading: img upload <file> --strip-exif
-```
-
----
-
-## Processing options
-
-These flags work with `upload`, `screenshot`, `rewrite`, and `serve`:
-
-### --optimize
-
-Compress before upload. The smaller of the original and the compressed version is used:
-
-| Format | Action |
-|--------|--------|
-| JPEG | Re-encode at quality 85 |
-| Opaque PNG | Pick the smaller of JPEG q85 and lossless WebP |
-| Transparent PNG | Try lossless WebP (preserves alpha) |
-| SVG / GIF / WebP / AVIF | Upload unchanged |
-
-```sh
-img photo.jpg --optimize --verbose   # show per-file savings
-```
-
-### --strip-exif
-
-Remove EXIF metadata (GPS coordinates, device model, timestamps) from JPEG files before upload. Metadata-only removal avoids re-encoding when orientation is already normal. Rotated photos are oriented correctly before metadata is removed:
-
-```sh
-img photo.jpg --strip-exif
-img photo.jpg --strip-exif --optimize
-```
-
-### --resize \<width\>
-
-Downscale the image to fit the given max width in pixels. Never upscales:
-
-```sh
-img photo.jpg --resize 1200
-img photo.jpg --resize 1200 --optimize
-```
-
-### Persistent defaults
-
-Set these once to avoid repeating flags:
-
-```sh
-img config set upload.strip_exif true
-img config set upload.max_width 1200
-img config set upload.retry_count 3     # auto-retry on transient failures
-```
-
-Once set, all commands (including `img serve`) apply them automatically.
-
----
-
-## Configuration
-
-```sh
-img config list                            # show current config
-img config path                            # print config file path
-img config validate                        # validate config
-img config get upload.strip_exif           # read a key
-img config set output.format markdown      # default to Markdown output
-img config set output.copy true            # always copy result
-img config set output.quiet true           # quiet mode
-img config set upload.retry_count 3        # auto-retry up to 3 times
-img config unset upload.max_width          # restore default
-```
-
-**Priority** (low → high): global config → project `.img.toml` → env vars → CLI flags
-
-Project-level `.img.toml` can only reference providers already defined globally and set output format or path options. Credentials must live in the global config.
-
----
-
-## Provider management
-
-```sh
-img provider list              # list all providers
-img provider show r2           # show config (sensitive fields hidden)
-img provider use github        # switch default provider
-img provider test r2           # test connectivity
-img provider remove old        # delete a provider
-```
-
----
-
-## JSON output
-
-```sh
-img upload a.png b.png --format json --no-copy
-```
-
-```json
-{
-  "success": true,
-  "files": [
-    {
-      "local_path": "a.png",
-      "success": true,
-      "remote_path": "2026/07/a.png",
-      "url": "https://img.example.com/2026/07/a.png",
-      "provider": "r2",
-      "size": 1024,
-      "content_type": "image/png"
-    }
-  ]
-}
-```
-
-On partial failure, successful results are preserved and the process exits with code `3`.
-
----
-
-## Integrations
-
-### Shell completions
-
-```sh
-img completion bash      # eval "$(img completion bash)"
-img completion zsh       # eval "$(img completion zsh)" or write to a file in $fpath
-img completion fish      # img completion fish > ~/.config/fish/completions/img.fish
-```
-
-### VS Code extension
-
-`integrations/vscode/` — in Markdown editors, press `Cmd+Alt+V` (macOS) / `Ctrl+Alt+V` to paste a clipboard image and upload it. Right-click image files in the Explorer to upload.
-
-### Raycast extension
-
-`integrations/raycast/` — three commands for macOS Raycast: upload screenshot, upload clipboard image, upload file.
-
-### GitHub Action
-
-In a documentation repository, this Action automatically rewrites local image paths in Markdown to CDN URLs on every push:
-
-```yaml
-- uses: liyown/img@v0.2
-  with:
-    provider-type: s3
-    s3-endpoint: https://ACCOUNT.r2.cloudflarestorage.com
-    s3-bucket: images
-    s3-access-key: ${{ secrets.R2_ACCESS_KEY }}
-    s3-secret-key: ${{ secrets.R2_SECRET_KEY }}
-    s3-public-url: https://img.example.com
-    optimize: 'true'
-```
-
-Full configuration in [action.yml](action.yml).
-
----
-
-## AI Agent usage
-
-The repository ships a companion Skill: [skills/img-uploader](skills/img-uploader).
+[R2 / OSS / GitHub setup examples](docs/cli.en.md#setup) · [Full command reference](docs/cli.en.md)
+
+## Fit it into your workflow
+
+| Your workflow | With img |
+| --- | --- |
+| Blog posts and notes | Capture, upload, and paste the copied link into Markdown |
+| Typora | Set the custom upload command to `img "${filepath}"` |
+| Obsidian | Run `img serve` and connect the Image Auto Upload plugin to the PicGo-compatible service |
+| Article migration | Use `img rewrite` for local and remote images while preserving alt text and titles |
+| Agent workflows | Read structured CLI JSON and reuse configured storage with the companion Skill |
 
 ```sh
 npx skills add liyown/img --skill img-uploader
 ```
 
-Global non-interactive install for Codex:
+[Integration examples](docs/cli.en.md#integrations) · [Agent Skill](skills/img-uploader) · [GitHub Action](action.yml)
+
+## Bring your storage
+
+**Cloudflare R2 · S3-compatible services · Alibaba Cloud OSS · GitHub repositories · Custom HTTP endpoints**
+
+PNG, JPEG, GIF, WebP, SVG, and AVIF are supported. Select storage per project and set defaults for output formats and image processing. [Storage guide](https://liyown.github.io/img/en/docs/storage/)
+
+## Help make it better
+
+Found a problem? Include your OS, img version, and reproduction steps, without storage credentials. [Report an issue or request a feature](https://github.com/liyown/img/issues)
 
 ```sh
-npx skills add liyown/img --skill img-uploader --agent codex --global --yes
+git clone https://github.com/liyown/img.git
+cd img
+cargo test --locked --workspace
 ```
 
----
+Explore the [shared upload core](crates/img-core), [standalone CLI](crates/img-cli), and [native desktop app](desktop). [Build and release guide](desktop/RELEASING.md)
 
-## Security
-
-- Reference credentials with `${ENV_NAME}` — never write secrets into config files or repositories
-- Add project-level `.img.toml` to `.gitignore`
-- `config list` and `provider show` redact sensitive fields
-- Overwriting requires an explicit `--overwrite` flag
-
-See [config.example.toml](config.example.toml) for a full configuration example.
-
-## Rust workspace
-
-`crates/img-core` provides configuration, credentials, providers and image processing. `crates/img-cli` builds the standalone `img` binary. `desktop` bundles that same CLI with the native Rust GUI. Existing commands, JSON results, exit codes and v1 TOML configuration remain compatible, and desktop data stays in its existing location.
+If img saves you the upload-and-copy routine, give it a star or share it with someone who writes.
