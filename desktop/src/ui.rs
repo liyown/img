@@ -7,6 +7,8 @@ mod gallery_ui;
 mod performance;
 #[path = "queue.rs"]
 mod queue;
+#[path = "quick_upload.rs"]
+mod quick_upload;
 
 use crate::{
     assets::icon,
@@ -47,7 +49,11 @@ gpui_kit::actions!(
         Dismiss,
         Quit,
         CloseWindow,
-        ToggleSidebar
+        ToggleSidebar,
+        OpenWindow,
+        QuickPaste,
+        QuickCapture,
+        ToggleQueue
     ]
 );
 
@@ -67,6 +73,12 @@ enum Filter {
 }
 
 pub struct ImgDesktop {
+    shutting_down: bool,
+    shutdown_saved: bool,
+    visible: bool,
+    quick_capture: bool,
+    notification_batches: HashMap<String, Vec<String>>,
+    shortcut_settings: Entity<crate::shortcut_settings::ShortcutSettings>,
     focus: FocusHandle,
     search: Entity<InputState>,
     url_input: Entity<InputState>,
@@ -290,6 +302,8 @@ impl ImgDesktop {
                 cx.notify();
             },
         );
+        let shortcut_settings =
+            cx.new(|cx| crate::shortcut_settings::ShortcutSettings::new(&root, window, cx));
         let quit_subscription = cx.on_app_quit(|this, cx| {
             let (controls, saved) = this.prepare_shutdown();
             let executor = cx.background_executor().clone();
@@ -352,6 +366,12 @@ impl ImgDesktop {
             }));
         }
         Self {
+            shutting_down: false,
+            shutdown_saved: false,
+            visible: true,
+            quick_capture: false,
+            notification_batches: HashMap::new(),
+            shortcut_settings,
             focus,
             search,
             url_input,
@@ -391,8 +411,16 @@ impl ImgDesktop {
         }
     }
     fn message(&mut self, text: impl Into<String>, error: bool, cx: &mut Context<Self>) {
-        self.notice = Some((text.into(), error));
-        cx.notify();
+        let text = text.into();
+        crate::desktop_runtime::DesktopRuntime::status(
+            cx,
+            &text,
+            self.queue.batch.as_ref().is_some_and(|b| b.paused),
+        );
+        self.notice = Some((text, error));
+        if self.visible {
+            cx.notify();
+        }
     }
     fn persist(&mut self, cx: &mut Context<Self>) -> bool {
         self.records_revision += 1;
@@ -601,14 +629,32 @@ impl ImgDesktop {
         let binary = self.engine.clone();
         let options = self.upload_options.clone();
         self.message("正在下载链接中的图片…", false, cx);
+        let control = Control::default();
+        self.queue
+            .auxiliary
+            .retain(|control| !control.finished.load(Ordering::SeqCst));
+        self.queue.auxiliary.push(control.clone());
         let task = cx.background_executor().spawn(async move {
+            let _completion = control.completion();
             urls.iter()
-                .map(|url| model::prepare_url(url, &root, &target, &binary, &options))
+                .map(|url| {
+                    model::prepare_url_controlled(
+                        url,
+                        &root,
+                        &target,
+                        &binary,
+                        &options,
+                        &control.child(),
+                    )
+                })
                 .collect::<Vec<_>>()
         });
         cx.spawn(async move |this, cx| {
             let results = task.await;
             let _ = this.update(cx, |this, cx| {
+                if this.shutting_down {
+                    return;
+                }
                 this.preparing = false;
                 let mut count = 0;
                 let mut errors = vec![];
@@ -647,17 +693,22 @@ impl ImgDesktop {
         {
             self.preparing = true;
             window.minimize_window();
+            let control = Control::default();
+            self.queue
+                .auxiliary
+                .retain(|control| !control.finished.load(Ordering::SeqCst));
+            self.queue.auxiliary.push(control.clone());
             let task = cx.background_executor().spawn(async move {
+                let _completion = control.completion();
                 let directory = tempfile::tempdir()?;
                 let path = directory.path().join("screenshot.png");
-                let status = std::process::Command::new("/usr/sbin/screencapture")
-                    .args(["-i", "-x"])
-                    .arg(&path)
-                    .status()?;
+                let mut command = std::process::Command::new("/usr/sbin/screencapture");
+                command.args(["-i", "-x"]).arg(&path);
+                let status = engine::run(command, &control)?;
                 if !path.exists() {
                     return Ok::<_, anyhow::Error>(None);
                 }
-                anyhow::ensure!(status.success(), "截屏未完成，请检查系统屏幕录制权限");
+                anyhow::ensure!(status.success, "截屏未完成，请检查系统屏幕录制权限");
                 Ok(Some(std::fs::read(path)?))
             });
             let root = self.root.clone();
@@ -679,7 +730,11 @@ impl ImgDesktop {
                     Err(e) => Some(Err(e)),
                 };
                 let _ = this.update(cx, |this, cx| {
+                    if this.shutting_down {
+                        return;
+                    }
                     this.preparing = false;
+                    crate::native::restore_windows();
                     cx.activate(true);
                     match result {
                         Some(Ok(item)) => {
@@ -1278,7 +1333,7 @@ impl ImgDesktop {
             )
             .into_any_element()
     }
-    fn drop_zone(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn drop_zone(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         div()
             .flex()
             .flex_col()
@@ -1287,7 +1342,11 @@ impl ImgDesktop {
             .child(
                 div()
                     .id("drop-zone")
-                    .h(px(248.))
+                    .h(px(if window.viewport_size().height < px(760.) {
+                        164.
+                    } else {
+                        248.
+                    }))
                     .w_full()
                     .flex_shrink_0()
                     .rounded(px(16.))
@@ -1608,6 +1667,7 @@ impl ImgDesktop {
             .child(card().child(self.recovery_controls(cx)))
             .child(card().child(self.storage_settings.clone()))
             .child(card().child(self.upload_settings.clone()))
+            .child(card().child(self.shortcut_settings.clone()))
             .child(
                 card()
                     .child(label("链接与剪贴板", 16., TEXT).font_weight(FontWeight::SEMIBOLD))
@@ -1790,7 +1850,7 @@ impl ImgDesktop {
                             .child(label("上传图片", 20., TEXT).font_weight(FontWeight::SEMIBOLD))
                             .child(label("支持拖拽 · 剪贴板 · 截图 · 文件选择", 12., MUTED)),
                     )
-                    .child(self.drop_zone(cx));
+                    .child(self.drop_zone(window, cx));
             }
             let heading = match self.page {
                 Page::Library => "图库",
@@ -2020,6 +2080,9 @@ impl ImgDesktop {
 }
 impl Render for ImgDesktop {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !self.visible {
+            return div().into_any_element();
+        }
         // A shared spring keeps titlebar and content geometry in step. Retargeting
         // preserves velocity, so rapid clicks reverse naturally without snapping.
         let width_target = px(if self.preferences.sidebar_collapsed {
@@ -2096,7 +2159,9 @@ impl Render for ImgDesktop {
             .flex()
             .on_action(cx.listener(|this, _: &Quit, window, cx| this.request_close(window, cx)))
             .on_action(
-                cx.listener(|this, _: &CloseWindow, window, cx| this.request_close(window, cx)),
+                cx.listener(|this, _: &CloseWindow, window, cx| {
+                    this.hide_to_background(window, cx)
+                }),
             )
             .on_action(cx.listener(Self::pick_files))
             .on_action(cx.listener(Self::paste_image))
@@ -2131,5 +2196,6 @@ impl Render for ImgDesktop {
                     })
                     .child(main),
             )
+            .into_any_element()
     }
 }

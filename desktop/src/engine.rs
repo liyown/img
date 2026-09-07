@@ -45,7 +45,24 @@ pub struct Control {
     pub finished: Arc<AtomicBool>,
     progress: Arc<Mutex<TransferProgress>>,
 }
+pub struct Completion(Arc<AtomicBool>);
+impl Drop for Completion {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
 impl Control {
+    pub fn completion(&self) -> Completion {
+        Completion(self.finished.clone())
+    }
+    pub fn child(&self) -> Self {
+        Self {
+            stop: self.stop.clone(),
+            finished: Default::default(),
+            progress: self.progress.clone(),
+        }
+    }
+
     pub fn stop(&self, reason: u8) {
         self.stop.store(reason, Ordering::SeqCst);
     }
@@ -131,6 +148,26 @@ pub fn run(mut command: Command, control: &Control) -> Result<ProcessOutput> {
     })
 }
 
+/// Complete the durable queue write and reap children before asking the framework to quit.
+pub async fn wait_for_shutdown<F, Fut>(
+    saved: crate::queue_store::Pending<()>,
+    controls: &[Control],
+    mut pause: F,
+) -> Result<()>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    let result = crate::queue_store::acknowledged(saved).await;
+    while controls
+        .iter()
+        .any(|control| !control.finished.load(Ordering::SeqCst))
+    {
+        pause().await;
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,5 +184,24 @@ mod tests {
         control.stop(PAUSE);
         assert_eq!(task.join().unwrap().stopped, PAUSE);
         assert!(control.finished.load(Ordering::SeqCst));
+    }
+    #[test]
+    fn shutdown_waits_for_save_acknowledgement_and_child_reaping() {
+        let (sender, saved) = futures_channel::oneshot::channel();
+        let control = Control::default();
+        let worker = control.clone();
+        let thread = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(230));
+            sender.send(Ok(())).unwrap();
+            std::thread::sleep(Duration::from_millis(40));
+            worker.finished.store(true, Ordering::SeqCst);
+        });
+        let start = std::time::Instant::now();
+        futures_lite::future::block_on(wait_for_shutdown(saved, &[control], || async {
+            std::thread::sleep(Duration::from_millis(5));
+        }))
+        .unwrap();
+        assert!(start.elapsed() >= Duration::from_millis(260));
+        thread.join().unwrap();
     }
 }

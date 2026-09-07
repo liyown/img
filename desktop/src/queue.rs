@@ -1,12 +1,14 @@
 use super::*;
 
 pub(super) struct UploadBatch {
+    pub(super) id: String,
     pub(super) pending: VecDeque<String>,
     pub(super) completed: Vec<Item>,
     pub(super) failed: usize,
     pub(super) target: String,
     pub(super) preferences: Preferences,
     pub(super) options: UploadOptions,
+    pub(super) configuration: Option<std::sync::Arc<model::UploadConfiguration>>,
     pub(super) paused: bool,
     pub(super) cancelled: bool,
     pub(super) order: Vec<String>,
@@ -21,17 +23,43 @@ pub(super) struct UploadController {
     pub(super) items: Vec<Item>,
     pub(super) batch: Option<UploadBatch>,
     pub(super) active: HashMap<String, ActiveUpload>,
+    pub(super) auxiliary: Vec<Control>,
+    pub(super) submitted: VecDeque<UploadBatch>,
+    pub(super) quick: VecDeque<super::quick_upload::QuickRequest>,
     pub(super) quit_when_done: bool,
     pub(super) persistence_ok: bool,
     pub(super) persistence_generation: u64,
     pub(super) queue_store: crate::queue_store::QueueStore,
 }
 impl UploadController {
+    pub(super) fn manual_ids(&self, statuses: &[Status]) -> Vec<String> {
+        self.items
+            .iter()
+            .filter(|item| {
+                !item.simulated
+                    && statuses.contains(&item.status)
+                    && !self
+                        .submitted
+                        .iter()
+                        .any(|batch| batch.order.contains(&item.id))
+            })
+            .map(|item| item.id.clone())
+            .collect()
+    }
+    pub(super) fn pop_prepared(&mut self) -> Option<super::quick_upload::QuickRequest> {
+        self.quick
+            .front()
+            .is_some_and(|request| request.prepared.is_some())
+            .then(|| self.quick.pop_front().unwrap())
+    }
     pub(super) fn new(root: PathBuf, items: Vec<Item>, persistence_ok: bool) -> Self {
         Self {
             items,
             batch: None,
             active: HashMap::new(),
+            auxiliary: vec![],
+            submitted: VecDeque::new(),
+            quick: VecDeque::new(),
             quit_when_done: false,
             persistence_ok,
             persistence_generation: 0,
@@ -49,16 +77,13 @@ impl ImgDesktop {
         self.begin_upload(vec![id.to_owned()], cx);
     }
     pub(super) fn start_all_uploads(&mut self, cx: &mut Context<Self>) {
-        let ids = self
-            .queue
-            .items
-            .iter()
-            .filter(|i| !i.simulated && i.status == Status::Ready)
-            .map(|i| i.id.clone())
-            .collect::<Vec<_>>();
+        let ids = self.queue.manual_ids(&[Status::Ready]);
         self.begin_upload(ids, cx);
     }
     pub(super) fn begin_upload(&mut self, ids: Vec<String>, cx: &mut Context<Self>) {
+        if self.shutting_down {
+            return;
+        }
         if self.queue.batch.is_some() {
             self.message("请先完成、暂停或取消当前批次", false, cx);
             return;
@@ -72,6 +97,7 @@ impl ImgDesktop {
             return;
         }
         self.queue.batch = Some(UploadBatch {
+            id: uuid::Uuid::new_v4().to_string(),
             pending: ids.clone().into(),
             order: ids,
             completed: vec![],
@@ -79,6 +105,7 @@ impl ImgDesktop {
             target: self.provider.clone(),
             preferences: self.preferences,
             options: self.upload_options.clone(),
+            configuration: None,
             paused: false,
             cancelled: false,
         });
@@ -141,11 +168,17 @@ impl ImgDesktop {
             batch.failed > 0,
             cx,
         );
+        self.notify_batch(batch.id, batch.order, count, batch.failed, cx);
         if self.queue.quit_when_done {
-            cx.quit();
+            self.begin_shutdown(cx);
+        } else {
+            self.start_submitted(cx);
         }
     }
     pub(super) fn upload_next(&mut self, cx: &mut Context<Self>) {
+        if self.shutting_down {
+            return;
+        }
         loop {
             let Some(batch) = &mut self.queue.batch else {
                 return;
@@ -170,6 +203,7 @@ impl ImgDesktop {
                 continue;
             };
             let options = batch.options.clone();
+            let configuration = batch.configuration.clone();
             self.queue.items[index].target = batch.target.clone();
             self.queue.items[index].status = Status::Running;
             self.queue.items[index].progress = None;
@@ -209,7 +243,9 @@ impl ImgDesktop {
                                 .find(|i| i.id == progress_id && i.status == Status::Running)
                             {
                                 item.progress = meter.progress().percent();
-                                cx.notify();
+                                if this.visible {
+                                    cx.notify();
+                                }
                             }
                         })
                         .is_err()
@@ -221,13 +257,28 @@ impl ImgDesktop {
             .detach();
             let saved = self.queue.queue_store.barrier();
             let task = cx.background_executor().spawn(async move {
-                crate::queue_store::acknowledged(saved).await?;
-                model::upload(&item, &root, &engine, &options, &control)
+                let result = match crate::queue_store::acknowledged(saved).await {
+                    Ok(()) => model::upload(
+                        &item,
+                        &root,
+                        &engine,
+                        &options,
+                        &control,
+                        configuration.as_deref(),
+                    ),
+                    Err(error) => Err(error),
+                };
+                // Setup and persistence can fail before engine::run creates its finish guard.
+                control.finished.store(true, Ordering::SeqCst);
+                result
             });
             cx.spawn(async move |this, cx| {
                 let result = task.await;
                 let _ = this.update(cx, |this, cx| {
                     let active = this.queue.active.remove(&id);
+                    if this.shutting_down {
+                        return;
+                    }
                     if let Some(item) = this.queue.items.iter_mut().find(|i| i.id == id) {
                         match result {
                             Ok(model::UploadOutcome::Done(result)) => {
@@ -313,13 +364,7 @@ impl ImgDesktop {
             batch.paused = false;
             self.upload_next(cx);
         } else {
-            let ids = self
-                .queue
-                .items
-                .iter()
-                .filter(|i| !i.simulated && matches!(i.status, Status::Ready | Status::Paused))
-                .map(|i| i.id.clone())
-                .collect();
+            let ids = self.queue.manual_ids(&[Status::Ready, Status::Paused]);
             self.begin_upload(ids, cx);
         }
         cx.notify();
@@ -384,7 +429,8 @@ impl ImgDesktop {
         let ids: Vec<_> = ids
             .into_iter()
             .filter(|id| {
-                !self.queue.active.contains_key(id)
+                !self.queue.submitted.iter().any(|b| b.order.contains(id))
+                    && !self.queue.active.contains_key(id)
                     && !self
                         .queue
                         .batch
@@ -411,7 +457,8 @@ impl ImgDesktop {
                 let ids: Vec<_> = ids
                     .into_iter()
                     .filter(|id| {
-                        !this.queue.active.contains_key(id)
+                        !this.queue.submitted.iter().any(|b| b.order.contains(id))
+                            && !this.queue.active.contains_key(id)
                             && !this
                                 .queue
                                 .batch
@@ -459,12 +506,27 @@ impl ImgDesktop {
         .detach();
     }
     pub(super) fn prepare_shutdown(&mut self) -> (Vec<Control>, crate::queue_store::Pending<()>) {
-        let controls: Vec<_> = self
+        if self.shutdown_saved {
+            return (vec![], self.queue.queue_store.barrier());
+        }
+        let mut controls: Vec<_> = self
             .queue
             .active
             .values()
             .map(|a| a.control.clone())
             .collect();
+        controls.extend(
+            self.queue
+                .auxiliary
+                .iter()
+                .filter(|control| !control.finished.load(Ordering::SeqCst))
+                .cloned(),
+        );
+        for request in &self.queue.quick {
+            let mut control = request.control.clone();
+            control.finished = request.finished.clone();
+            controls.push(control);
+        }
         for control in &controls {
             control.stop(engine::PAUSE);
         }
@@ -483,11 +545,26 @@ impl ImgDesktop {
         (controls, saved)
     }
     pub fn request_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.shutting_down {
+            return;
+        }
         if window.has_active_prompt() {
             return;
         }
+        if !self.queue.persistence_ok {
+            let prompt = window.prompt(PromptLevel::Warning, "本地队列尚未保存",
+                Some("退出会保留原队列和图片副本；本次未能保存的记录需要重新导入。也可以继续修复队列。"),
+                &["继续修复", "退出并保留原文件"], cx);
+            cx.spawn(async move |this, cx| {
+                if prompt.await.ok() == Some(1) {
+                    let _ = this.update(cx, |this, cx| this.shutdown_with_mode(true, cx));
+                }
+            })
+            .detach();
+            return;
+        }
         if self.queue.active.is_empty() {
-            cx.quit();
+            self.begin_shutdown(cx);
             return;
         }
         let prompt = window.prompt(
@@ -503,13 +580,45 @@ impl ImgDesktop {
                 Some(1) => {
                     this.queue.quit_when_done = true;
                     if this.queue.active.is_empty() {
-                        cx.quit();
+                        this.begin_shutdown(cx);
                     } else {
                         this.message("本批上传完成后自动退出", false, cx);
                     }
                 }
-                Some(2) => cx.quit(),
+                Some(2) => this.begin_shutdown(cx),
                 _ => {}
+            });
+        })
+        .detach();
+    }
+    pub(super) fn begin_shutdown(&mut self, cx: &mut Context<Self>) {
+        self.shutdown_with_mode(false, cx);
+    }
+    fn shutdown_with_mode(&mut self, allow_unsaved: bool, cx: &mut Context<Self>) {
+        if self.shutting_down {
+            return;
+        }
+        self.shutting_down = true;
+        let (controls, saved) = self.prepare_shutdown();
+        self.message("正在保存队列并结束后台进程…", false, cx);
+        cx.spawn(async move |this, cx| {
+            let result = engine::wait_for_shutdown(saved, &controls, || {
+                cx.background_executor().timer(Duration::from_millis(25))
+            })
+            .await;
+            let _ = this.update(cx, |this, cx| match result {
+                Ok(()) => {
+                    this.shutdown_saved = true;
+                    cx.quit();
+                }
+                Err(_) if allow_unsaved => {
+                    this.shutdown_saved = true;
+                    cx.quit();
+                }
+                Err(error) => {
+                    this.shutting_down = false;
+                    this.persistence_failed(error, cx);
+                }
             });
         })
         .detach();
@@ -571,5 +680,60 @@ impl ImgDesktop {
             }
         })
         .detach();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{UploadBatch, UploadController};
+    use crate::{
+        engine::Control,
+        model::{Item, Status},
+        preferences::Preferences,
+        upload_options::UploadOptions,
+    };
+    #[test]
+    fn quick_preparation_keeps_trigger_order_and_manual_records_separate() {
+        let root = tempfile::tempdir().unwrap();
+        let mut manual = Item::reference_items().remove(0);
+        manual.id = "manual".into();
+        manual.status = Status::Ready;
+        manual.simulated = false;
+        let mut quick = manual.clone();
+        quick.id = "quick".into();
+        let mut queue = UploadController::new(root.path().to_owned(), vec![manual, quick], true);
+        queue.submitted.push_back(UploadBatch {
+            id: "batch".into(),
+            pending: vec!["quick".into()].into(),
+            order: vec!["quick".into()],
+            completed: vec![],
+            failed: 0,
+            target: "captured".into(),
+            preferences: Preferences::default(),
+            options: UploadOptions::default(),
+            configuration: None,
+            paused: false,
+            cancelled: false,
+        });
+        assert_eq!(queue.manual_ids(&[Status::Ready]), vec!["manual"]);
+        for (id, ready) in [("first", false), ("second", true)] {
+            queue
+                .quick
+                .push_back(super::super::quick_upload::QuickRequest {
+                    id: id.into(),
+                    target: "captured".into(),
+                    preferences: Preferences::default(),
+                    options: UploadOptions::default(),
+                    configuration: None,
+                    prepared: ready.then(|| (vec![], vec![])),
+                    control: Control::default(),
+                    finished: Default::default(),
+                });
+        }
+        assert!(queue.pop_prepared().is_none());
+        queue.quick.front_mut().unwrap().prepared = Some((vec![], vec![]));
+        assert_eq!(queue.pop_prepared().unwrap().id, "first");
+        assert_eq!(queue.pop_prepared().unwrap().id, "second");
+        assert!(queue.pop_prepared().is_none());
     }
 }

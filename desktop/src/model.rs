@@ -94,6 +94,7 @@ impl Item {
             _ => size_label(self.size),
         }
     }
+    #[cfg(any(test, feature = "perf"))]
     pub fn matches(&self, query: &str) -> bool {
         query.is_empty()
             || format!(
@@ -314,12 +315,13 @@ pub fn prepare_bytes_with_limit(
     })
 }
 
-pub fn prepare_url(
+pub fn prepare_url_controlled(
     url: &str,
     root: &Path,
     target: &str,
     binary: &Path,
     options: &crate::upload_options::UploadOptions,
+    control: &crate::engine::Control,
 ) -> Result<Item> {
     let directory = tempfile::tempdir_in(root)?;
     let dest = directory.path().join("download");
@@ -334,7 +336,7 @@ pub fn prepare_url(
         command.arg("--allow-insecure");
     }
     command.arg(url);
-    let result = crate::engine::run(command, &crate::engine::Control::default())?;
+    let result = crate::engine::run(command, control)?;
     ensure!(
         result.success,
         "链接图片下载失败，请检查地址、大小限制与 HTTP 设置"
@@ -382,6 +384,25 @@ pub fn remove_cache(root: &Path, removed: &[Item]) {
     }
 }
 
+// This snapshot lives only in memory and is never included in queue JSON or diagnostics.
+#[derive(Clone)]
+pub struct UploadConfiguration {
+    config: String,
+    environment: std::collections::BTreeMap<String, String>,
+}
+impl UploadConfiguration {
+    pub fn capture(target: &str) -> Result<Self> {
+        let (config, environment) = crate::storage::engine_config(
+            &crate::storage::config_path()?,
+            target,
+            &crate::storage::SystemCredentials,
+        )?;
+        Ok(Self {
+            config,
+            environment,
+        })
+    }
+}
 pub struct UploadResult {
     pub url: String,
     pub size: Option<u64>,
@@ -397,15 +418,18 @@ pub fn upload(
     binary: &Path,
     options: &crate::upload_options::UploadOptions,
     control: &crate::engine::Control,
+    configuration: Option<&UploadConfiguration>,
 ) -> Result<UploadOutcome> {
     let source = item.source.as_ref().context("待上传原图不可用")?;
     ensure!(!item.target.is_empty(), "请先选择存储源");
-    let (config, environment) = crate::storage::engine_config(
-        &crate::storage::config_path()?,
-        &item.target,
-        &crate::storage::SystemCredentials,
-    )?;
-    let config = options.engine_config(&config)?;
+    let captured;
+    let configuration = if let Some(configuration) = configuration {
+        configuration
+    } else {
+        captured = UploadConfiguration::capture(&item.target)?;
+        &captured
+    };
+    let config = options.engine_config(&configuration.config)?;
     let working_directory = tempfile::tempdir_in(root)?;
     let mut config_file = tempfile::NamedTempFile::new_in(working_directory.path())?;
     config_file.write_all(config.as_bytes())?;
@@ -418,7 +442,7 @@ pub fn upload(
         .env_remove("IMG_OUTPUT_FORMAT")
         .env_remove("IMG_OUTPUT_COPY")
         .env_remove("IMG_UPLOAD_CONCURRENCY")
-        .envs(environment)
+        .envs(&configuration.environment)
         .arg("--config")
         .arg(config_file.path())
         .args([

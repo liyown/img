@@ -166,11 +166,84 @@ impl ImgDesktop {
             }
             let _ = this.update_in(cx, |this, window, cx| {
                 if failure.needs_file() {
-                    this.pick_files(&ChooseFiles, window, cx);
+                    this.replace_original(item, cx);
                 } else if failure.needs_settings() {
                     this.navigate(Page::Settings, window, cx);
                 } else {
                     this.start_upload(&item.id, cx);
+                }
+            });
+        })
+        .detach();
+    }
+    fn replace_original(&mut self, item: Item, cx: &mut Context<Self>) {
+        if self.preparing || !self.queue.persistence_ok {
+            return;
+        }
+        let selected = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("选择原文件".into()),
+        });
+        let root = self.root.clone();
+        let max_bytes = self.upload_options.max_bytes();
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = selected.await else {
+                return;
+            };
+            let Some(path) = paths.into_iter().next() else {
+                return;
+            };
+            let target = item.target.clone();
+            let cache_root = root.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    model::prepare_file_with_limit(&path, &cache_root, &target, max_bytes)
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.shutting_down || this.queue.active.contains_key(&item.id) {
+                    return;
+                }
+                match result {
+                    Ok(mut replacement) => {
+                        let Some(index) = this.queue.items.iter().position(|i| i.id == item.id)
+                        else {
+                            return;
+                        };
+                        replacement.added_at = item.added_at;
+                        this.queue.items[index] = replacement;
+                        if !this.persist(cx) {
+                            return;
+                        }
+                        let saved = this.queue.queue_store.barrier();
+                        cx.spawn(async move |this, cx| {
+                            match crate::queue_store::acknowledged(saved).await {
+                                Ok(()) => {
+                                    cx.background_executor()
+                                        .spawn(async move {
+                                            model::remove_cache(&root, &[item]);
+                                        })
+                                        .await;
+                                    let _ = this.update(cx, |this, cx| {
+                                        this.message(
+                                            "原文件已重新导入，请在队列中点击上传",
+                                            false,
+                                            cx,
+                                        )
+                                    });
+                                }
+                                Err(error) => {
+                                    let _ = this
+                                        .update(cx, |this, cx| this.persistence_failed(error, cx));
+                                }
+                            }
+                        })
+                        .detach();
+                    }
+                    Err(_) => this.message("无法读取所选图片，请检查格式、大小和权限", true, cx),
                 }
             });
         })
