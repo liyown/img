@@ -688,13 +688,14 @@ impl Render for StorageSettings {
                             .disabled(self.saving || self.uploading || self.editor.is_some())
                             .on_click(cx.listener(
                                 move |this, _, window, cx| {
-                                    let kind = if candidate.kind == "github" {
-                                        ProviderKind::Github
-                                    } else {
-                                        ProviderKind::Oss
+                                    let kind = match candidate.kind.as_str() {
+                                        "github" => ProviderKind::Github,
+                                        "s3" => ProviderKind::S3,
+                                        _ => ProviderKind::Oss,
                                     };
                                     let mut draft = ProviderDraft::new(kind);
                                     draft.name = candidate.name.clone();
+                                    draft.path_style = candidate.path_style;
                                     draft.values.extend(candidate.values.clone());
                                     this.edit(draft, window, cx);
                                 },

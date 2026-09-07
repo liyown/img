@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone)]
 pub struct Candidate {
+    pub path_style: bool,
     pub name: String,
     pub kind: String,
     pub values: BTreeMap<String, String>,
@@ -19,16 +20,28 @@ pub fn parse(bytes: &[u8], existing: &[String]) -> Result<Plan> {
     ensure!(bytes.len() <= 16 << 20, "configuration exceeds 16 MiB");
     let doc: Value = serde_json::from_slice(bytes)
         .map_err(|_| anyhow::anyhow!("invalid configuration JSON; source preserved"))?;
-    let beds = doc
+    let mut beds = doc
         .get("picBed")
         .and_then(Value::as_object)
-        .context("missing picBed configuration")?;
+        .context("missing picBed configuration")?
+        .clone();
+    if let Some(uploaders) = doc.get("uploader").and_then(Value::as_object) {
+        for (kind, configs) in uploaders {
+            if configs
+                .get("configList")
+                .and_then(Value::as_array)
+                .is_some_and(|a| !a.is_empty())
+            {
+                beds.insert(kind.clone(), configs.clone());
+            }
+        }
+    }
     let mut names: BTreeSet<_> = existing.iter().cloned().collect();
     let mut plan = Plan {
         candidates: vec![],
         skipped: vec![],
     };
-    for (kind, data) in beds {
+    for (kind, data) in &beds {
         if matches!(kind.as_str(), "current" | "uploader" | "list") {
             continue;
         }
@@ -40,7 +53,10 @@ pub fn parse(bytes: &[u8], existing: &[String]) -> Result<Plan> {
             vec![data]
         };
         for row in rows {
-            if !matches!(kind.as_str(), "github" | "aliyun") {
+            if !matches!(
+                kind.as_str(),
+                "github" | "aliyun" | "aws-s3-plist" | "aws-s3"
+            ) {
                 plan.skipped
                     .push(format!("{kind}: unsupported provider; source preserved"));
                 continue;
@@ -94,7 +110,7 @@ pub fn parse(bytes: &[u8], existing: &[String]) -> Result<Plan> {
                     values.insert(key.into(), value);
                 }
                 "github"
-            } else {
+            } else if kind == "aliyun" {
                 let area = get("area");
                 let area = area.trim_start_matches("oss-");
                 let bucket = get("bucket");
@@ -117,8 +133,37 @@ pub fn parse(bytes: &[u8], existing: &[String]) -> Result<Plan> {
                     values.insert(key.into(), value);
                 }
                 "oss"
+            } else {
+                let mut public = get("urlPrefix");
+                if row.get("pathStyleAccess").and_then(Value::as_bool) == Some(true)
+                    && row.get("disableBucketPrefixToURL").and_then(Value::as_bool) != Some(true)
+                    && get("disableBucketPrefixToURL") != "true"
+                    && !public.is_empty()
+                {
+                    public = format!("{}/{}", public.trim_end_matches('/'), get("bucketName"));
+                }
+                for (key, value) in [
+                    ("endpoint", get("endpoint")),
+                    ("region", get("region")),
+                    ("bucket", get("bucketName")),
+                    ("access_key", get("accessKeyID")),
+                    ("secret_key", get("secretAccessKey")),
+                    ("public_url", public),
+                ] {
+                    values.insert(key.into(), value);
+                }
+                "s3"
             };
-            values.insert("path_prefix".into(), get("path").trim_matches('/').into());
+            values.insert(
+                "path_prefix".into(),
+                if target == "s3" {
+                    get("uploadPath")
+                } else {
+                    get("path")
+                }
+                .trim_matches('/')
+                .into(),
+            );
             let mut warnings = vec![];
             if name != base {
                 warnings.push(format!("Name already exists; imported as {name}"));
@@ -133,6 +178,10 @@ pub fn parse(bytes: &[u8], existing: &[String]) -> Result<Plan> {
                 warnings.push("Image processing URL suffix was not imported".into());
             }
             plan.candidates.push(Candidate {
+                path_style: row
+                    .get("pathStyleAccess")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
                 name,
                 kind: target.into(),
                 values,

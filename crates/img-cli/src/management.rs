@@ -52,7 +52,9 @@ pub fn import_config(path: &Path, source: &Path, apply: bool) -> Result<()> {
                     candidate.kind
                 },
             );
-            let provider: ProviderConfig = serde_json::from_value(serde_json::to_value(values)?)?;
+            let mut value = serde_json::to_value(values)?;
+            value["path_style"] = candidate.path_style.into();
+            let provider: ProviderConfig = serde_json::from_value(value)?;
             config.providers.insert(candidate.name, provider);
         }
         ensure!(
