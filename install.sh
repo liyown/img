@@ -15,7 +15,7 @@ fail() { echo "img installer: $*" >&2; exit 1; }
 case "$product" in cli|gui) ;; *) fail 'choose cli or gui';; esac
 case "$(uname -s)" in Darwin) os=darwin;; Linux) os=linux;; *) fail 'use install.ps1 on Windows';; esac
 case "$(uname -m)" in x86_64|amd64) arch=amd64; gui_arch=x86_64;; arm64|aarch64) arch=arm64; gui_arch=arm64;; *) fail 'unsupported architecture';; esac
-if [ "$product" = gui ] && [ "$os" != darwin ]; then fail 'the GUI currently supports macOS; use --cli on this platform'; fi
+if [ "$product" = gui ] && [ "$os" = linux ] && [ "$arch" != amd64 ]; then fail 'Linux GUI packages currently require x86_64; ARM64 can use --cli'; fi
 if [ -z "${IMG_LOCAL_PACKAGE_DIR:-}" ]; then command -v curl >/dev/null 2>&1 || fail 'curl is required'; fi
 install_dir=${IMG_INSTALL_DIR:-"$HOME/.local/bin"}
 mkdir -p "$install_dir"
@@ -50,7 +50,8 @@ else
     version=$(sed -nE 's@.*releases/tag/desktop-v([0-9]+\.[0-9]+\.[0-9]+)".*@\1@p' "$tmp/releases.atom" | head -1)
   fi
   printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || fail 'no stable GUI release found; set IMG_VERSION to a published desktop version'
-  asset="img-desktop_${version}_macos_${gui_arch}.zip"
+  if [ "$os" = darwin ]; then asset="img-desktop_${version}_macos_${gui_arch}.zip";
+  else asset="img-desktop_${version}_linux_x86_64.deb"; fi
   checksum="$asset.sha256"
   base="https://github.com/$repo/releases/download/desktop-v$version"
 fi
@@ -62,6 +63,13 @@ if command -v sha256sum >/dev/null 2>&1; then actual=$(sha256sum "$tmp/$asset" |
 elif command -v shasum >/dev/null 2>&1; then actual=$(shasum -a 256 "$tmp/$asset" | awk '{print $1}');
 else fail 'sha256sum or shasum is required'; fi
 [ "$actual" = "$expected" ] || fail 'checksum verification failed'
+if [ "$product" = gui ] && [ "$os" = linux ]; then
+  command -v apt-get >/dev/null 2>&1 || fail 'GUI installation requires Ubuntu 24.04 / Debian 13 or newer with apt-get'
+  if [ "$(id -u)" = 0 ]; then apt-get install --yes "$tmp/$asset";
+  else sudo apt-get install --yes "$tmp/$asset"; fi
+  echo 'Installed GUI and bundled CLI. Start img from the application menu.'
+  exit 0
+fi
 cli_stage=$(mktemp -d "$install_dir/.img-install.XXXXXX")
 if [ "$product" = cli ]; then
   tar -xzf "$tmp/$asset" -C "$tmp" img

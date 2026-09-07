@@ -173,7 +173,7 @@ impl ImgDesktop {
         });
         let root = self.root.clone();
         let binary = self.engine.clone();
-        if screenshot {
+        if screenshot && cfg!(target_os = "macos") {
             window.minimize_window();
         }
         let task = cx.background_executor().spawn(async move {

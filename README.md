@@ -25,7 +25,7 @@ $ img screenshot --region --format markdown
 | 版本 | 平台 | 包含内容 |
 | --- | --- | --- |
 | CLI | macOS、Linux、Windows | 独立 `img` 命令，无需图形界面或语言运行时 |
-| GUI | macOS 13+，Apple silicon / Intel | 原生图形界面 + 同版本完整 CLI |
+| GUI | macOS 13+（Apple silicon / Intel）、Windows x64、Ubuntu 24.04 / Debian 13+ x64 | 原生图形界面 + 同版本完整 CLI |
 
 桌面版请使用[官网下载入口](https://liyown.github.io/img/install/#gui)，它自动指向最新稳定桌面发行版；也可查看 [GitHub Releases](https://github.com/liyown/img/releases)。下载 DMG 后将 Img.app 拖到 Applications，无需 Rust 或 Go。
 
@@ -42,7 +42,7 @@ sh install.sh --cli   # 独立 CLI 的 latest 发行版
 
 CLI 默认安装到 `~/.local/bin/img`；GUI 默认安装到 `~/Applications/Img.app`，终端命令链接到包内 `Contents/MacOS/img`，更新应用后沿用新版。目录可通过 `IMG_INSTALL_DIR`、`IMG_APP_DIR` 指定。若该命令目录不在 PATH，安装器会提示添加。
 
-Windows 使用 `install.ps1 -Product cli`。直接拖动 DMG 安装 GUI 时 CLI 也已在应用内，可在「设置 → 关于与更新 → 添加终端命令」启用终端入口。
+Windows 使用 `install.ps1 -Product cli` 或 `install.ps1 -Product gui`。Linux GUI 使用 DEB 或 `sh install.sh --gui`，由系统包管理器安装。直接拖动 DMG 安装 GUI 时 CLI 也已在应用内，可在「设置 → 关于与更新 → 添加终端命令」启用终端入口。
 
 验证安装：
 

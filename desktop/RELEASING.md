@@ -1,107 +1,52 @@
-# macOS 桌面版发行
+# 三端桌面版与 CLI 发行
 
-## 本地安装包
+公开安装包由 GitHub Actions 构建、验收和发布，不依赖开发电脑上传二进制。版本读取根目录 Cargo.toml 的 workspace.package.version，GUI 与内置 CLI 保持一致。
 
-```sh
-make desktop-package
-```
+## 发布步骤
 
-生成当前架构的 release 构建、拖入 Applications 的 DMG、ZIP、各自 SHA-256 和 `build-info.json`：
+更新版本和发行说明、提交并通过 CI 后，推送 desktop-vX.Y.Z 发布 GUI，推送 vX.Y.Z 发布独立 CLI。标签须与 workspace 版本一致。全部原生 runner 通过测试、打包和验收后统一创建 Release。
 
-```
-dist/desktop/arm64/img-desktop_0.3.0_macos_arm64.dmg
-dist/desktop/arm64/img-desktop_0.3.0_macos_arm64.zip
-```
+| 产品 | 平台 | 产物 |
+| --- | --- | --- |
+| GUI | macOS arm64 / Intel | DMG、ZIP、SHA-256 |
+| GUI | Windows x64 | EXE、便携 ZIP、SHA-256 |
+| GUI | Ubuntu 24.04 x64 | DEB、SHA-256 |
+| CLI | macOS arm64 / Intel、Linux arm64 / x64、Windows x64 | TAR.GZ / ZIP、checksums.txt |
 
-本地包使用 ad-hoc 签名，`build-info.json` 明确标记 `channel: development`、`notarized: false`。不能把它描述为通过 Apple 公证的正式发行包。构建版本统一读取 根目录 `Cargo.toml` 的 workspace.package.version，应用、安装包和随附引擎保持一致。最低系统版本为 macOS 13；正式 CI 同时构建 Apple silicon 与 Intel 包，本地此次只验收 Apple silicon。
+桌面发行使用 latest=false，CLI 使用 GitHub latest。官网固定[安装入口](https://liyown.github.io/img/install/#gui)访问时分别查询稳定桌面版和 Rust CLI，按语义版本选择并核对资产所属标签与校验文件。发布新版无需修改或重新部署网站，网络失败时回退 Releases 页面。
 
-## 正式签名与公证
+## CI 验收
 
-需要 Apple Developer 的 **Developer ID Application** 证书及对应私钥，以及可用的 notarytool 凭据。先按 [Apple 公证流程](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution) 在发布机器配置证书和钥匙串 profile；不要把密码或证书写入仓库。
+ci.yml 验证五种 CLI 目标的测试、Clippy、打包、首次与覆盖安装、本地上传和篡改拒绝，另检查 workflow lint 与脚本语法。
 
-设置发布机器环境变量后运行：
+desktop-ci.yml 验证四种 GUI 目标的工作区测试、Clippy、安装包与隔离数据目录原生窗口启动。Windows 执行 EXE 首次与覆盖安装；Linux 在 Xvfb 和软件 Vulkan 下启动。desktop-release.yml 重复测试、打包、安装验证与窗口启动，全部通过才发布。
 
-```sh
-export IMG_SIGNING_IDENTITY='Developer ID Application: Your Name (TEAMID)'
-export IMG_SIGNING_TEAM='YOURTEAMID'
-export IMG_NOTARY_PROFILE='img-notary'
-make desktop-release
-```
+实际结果见[安装验收记录](install-qa.md)。原生 runner 启动检查不等同于 Windows / Linux 实机完整交互验收。
 
-`desktop/package.sh` 在构建前检查凭据参数；不会默默回退为未公证包。流程包含：
+## 社区包与可选 Apple 公证
 
-1. `--locked` release 构建与随附 Rust CLI 构建（与独立 CLI 使用相同 crate）。
-2. 从内到外签名，引擎和应用启用 Hardened Runtime 与安全时间戳。
-3. 提交应用 ZIP，要求 notarytool 返回 `Accepted`，再 staple 与 Gatekeeper 检查。
-4. 生成 ZIP 和 DMG；签名、公证并 staple DMG。
-5. 对最终产物生成 SHA-256、保存公证回执和构建信息。
+默认发布社区版，无需 Apple Developer 账号。macOS 使用 ad-hoc 签名并附带 INSTALL.html，未经过 Apple 公证。首次启动及更新后可能需要在「系统设置 → 隐私与安全性」允许打开，见 [Apple 说明](https://support.apple.com/102445)。无需关闭系统保护。Windows 社区包也未进行代码签名。
 
-脚本不会发布远端 release。安装时将 DMG 中的 `Img.app` 拖入 `Applications`，首次安装后打开；更新时先退出旧版，再替换应用。队列、偏好和存储配置在用户数据目录中，替换应用不会清空它们。打包方式参考 [Apple 分发文档](https://developer.apple.com/documentation/xcode/packaging-mac-software-for-distribution)。
+启用 Developer ID 签名时，在 GitHub desktop-release environment 设置 DESKTOP_SIGNING=true，并配置 MACOS_CERTIFICATE_P12_BASE64、MACOS_CERTIFICATE_PASSWORD、MACOS_SIGNING_IDENTITY、MACOS_TEAM_ID、APPLE_ID、APPLE_APP_PASSWORD secrets。凭据只导入临时钥匙串，结束清理。正式签名或公证失败会阻止发布，不回退社区包。
 
-## GitHub Actions
+## 安装与更新
 
-普通分支和 PR 即可运行以下检查，也可手动 `workflow_dispatch`，无需创建发布标签：
+macOS：打开 DMG 拖入 Applications，或 sh install.sh --gui 安装到 ~/Applications/Img.app 并链接 CLI。IMG_APP_DIR 和 IMG_INSTALL_DIR 可自定义目录。
 
-- `.github/workflows/ci.yml`：独立 CLI 的 macOS / Linux arm64、x86_64 和 Windows x86_64 构建、测试、Clippy、打包、首次安装、覆盖安装、本地 HTTP 上传和篡改拒绝；另运行 actionlint 和脚本语法检查。
-- `.github/workflows/desktop-ci.yml`：Apple silicon / Intel 的工作区测试、Clippy、GUI 打包、同版本随附 CLI 安装检查、数据保留、篡改拒绝、签名与 Info.plist 验证。
+Windows：运行 EXE 或 install.ps1 -Product gui，默认安装到当前用户应用目录。
 
-这些检查只上传 CI 构建产物，不创建 release。Windows 安装测试使用 `install.ps1 -NoPathUpdate`，避免修改 runner 的用户 PATH；正常安装仍保留原来的 PATH 设置行为。
+Linux：sh install.sh --gui 或 sudo apt install ./img-desktop_*.deb。支持 Ubuntu 24.04 / Debian 13+ x64，需要图形桌面、Vulkan 驱动和已解锁的 Secret Service。系统包包含桌面入口和 CLI。
 
-本轮只在 Apple silicon 实际运行本地安装验收，尚未推送或触发远端 CI。Linux、Windows、Intel 的运行结果不能由工作流配置代替，状态详见 [0.3.0 验收记录](../stability-qa.md)。
+独立 CLI：macOS / Linux 使用 sh install.sh --cli，Windows 使用 install.ps1 -Product cli。CLI 可脱离 GUI 使用，Linux 同时提供 ARM64。
 
-`.github/workflows/desktop-release.yml` 只响应 `desktop-v*` 标签，发布时设置 `latest=false`，与原有 CLI 的 `v*` 发布互不干扰。`desktop-v0.3.0` 必须匹配根目录 `Cargo.toml` 的 workspace.package.version。macOS 15 的 arm64 与 Intel runner 分别构建，两种产物都成功后才一起创建 release；runner 标识来自 [GitHub 官方说明](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)。
+「关于与更新」检查稳定 desktop-v 新版本，下载对应平台安装包并校验大小与 SHA-256。保存队列并结束上传子进程后才退出安装。macOS 验证标识、版本、架构和签名，在同一文件系统暂存，由助手等待旧进程、备份替换并重新打开；启动命令失败时回退。Windows 打开安装向导；Linux 请求系统授权后由 apt 安装。配置和图库保留，也可手动安装。
 
-默认发布无 Apple 公证的社区版，不需要证书。若要启用 Developer ID 签名，在 GitHub `desktop-release` environment 设置变量 `DESKTOP_SIGNING=true`，并配置以下 secrets：
+自动检查默认关闭，启用后每天最多检查一次。API 失败可回退 Atom feed；无法核实资产时只打开版本页面。首次桌面发行没有更高版本可用于真实跨版本更新，安装事务和版本筛选由测试分别验证。
 
-| Secret | 内容 |
-| --- | --- |
-| `MACOS_CERTIFICATE_P12_BASE64` | Developer ID Application 证书和私钥的 P12，Base64 编码 |
-| `MACOS_CERTIFICATE_PASSWORD` | P12 密码 |
-| `MACOS_SIGNING_IDENTITY` | 完整 Developer ID Application 身份名称 |
-| `MACOS_TEAM_ID` | 10 位 Team ID |
-| `APPLE_ID` | 用于公证的 Apple ID |
-| `APPLE_APP_PASSWORD` | 对应 app-specific password |
+平台差异：Linux 全局快捷键需要 X11，Wayland 使用窗口入口；截图需要系统截图工具。Windows 当前截图为全屏。菜单栏后台入口仅在 macOS 提供。
 
-工作流将证书导入临时钥匙串，公证凭据只存临时钥匙串，结束后清理。发布步骤在签名、公证成功之前不会执行。此轮没有创建标签、推送代码、修改仓库 secrets 或发布远端版本。
+## 本地开发
 
-## 应用更新
+make install 源码安装 CLI，make cli-package 生成本机 CLI 包，make desktop-package 生成 macOS 包，python scripts/package-desktop.py 在 Windows / Linux 原生打包。本地包用于验收，公开产物由 CI 生成。
 
-“关于与更新”提供检查版本、版本说明、下载安装包与打开安装包。自动检查默认关闭，启用后启动时及运行期间每天最多检查一次。应用查询 `liyown/img` 的公开 GitHub releases，仅接受：
-
-- 比当前版本新的稳定 `desktop-v` 标签；忽略 CLI、草稿、预发布和其他架构。
-- 对应架构的确定名称 DMG 及 SHA-256 文件，下载地址必须属于该仓库该标签。
-- 下载大小与 SHA-256 匹配。正式构建另校验签名发布团队。
-
-下载完成后，用户可点击「退出并安装更新」。应用验证 DMG 内的标识、版本、架构与签名，在目标文件系统暂存新应用，保存队列并结束子进程后才退出。独立安装助手等待旧进程结束、备份旧应用并替换，重新打开新版；启动命令失败时回退旧应用。系统阻止未公证新版时仍需用户允许打开。目录不可写时保留手动安装入口，下载或校验失败不会进入替换。
-
-首次正式发行前不存在可安装的新版本；公开 GitHub API 限流时回退到公开的 releases Atom feed；如果仅能获得版本页面而无法核实安装资产，更新按钮会打开该版本页面。两个来源都不可用时显示可重试状态。本地验收覆盖版本筛选、错误处理和校验失败拒绝；没有宣称完成真实签名更新的下载、安装、公证验证。
-
-## 独立 CLI 与 GUI 安装选择
-
-版本统一在根目录 `Cargo.toml` 设置，目前为 0.3.0。`img-core` 是共用库，`img-cli` 构建名为 `img` 的可执行文件，GUI 包内直接附带它，不再有另一份引擎实现。所有 Go 源码、模块清单和 GoReleaser 已移除。
-
-```sh
-make install      # 源码安装 CLI 到 ~/.cargo/bin
-make cli-package  # 本机架构的 CLI 压缩包和校验文件
-```
-
-CLI 的 `v*` 发布工作流构建 macOS arm64 / x86_64、Linux arm64 / x86_64、Windows x86_64；全部构建成功后发布同一 release，保留安装器已有的 `img_darwin_arm64.tar.gz` 等名称。GUI 使用 `desktop-v*` 独立发布，不覆盖 CLI 的 latest，缺少 Apple 签名凭据不会阻止单独发布 CLI。
-
-仓库安装器提供 `sh install.sh --cli` 和 `sh install.sh --gui`。GUI 默认安装到 `~/Applications/Img.app`，同时在 `~/.local/bin/img` 建立链接；可用 `IMG_APP_DIR` 与 `IMG_INSTALL_DIR` 自定义。CLI 二进制没有 GUI 依赖，可单独拷贝使用。通过 DMG 拖入 Applications 的 GUI 也内置 CLI，可在设置中添加终端入口。更新 GUI 后，链接会指向包内新版 CLI。
-
-离线安装本次本地包（不会下载旧的远端版本）：
-
-```sh
-IMG_LOCAL_PACKAGE_DIR="$PWD/dist/cli/aarch64-apple-darwin" sh install.sh --cli
-IMG_VERSION=0.3.0 IMG_LOCAL_PACKAGE_DIR="$PWD/dist/desktop/arm64" sh install.sh --gui
-```
-
-两种安装都先校验 SHA-256；GUI 另外验证应用签名。不修改 shell 配置，命令目录不在 PATH 时会明确提示。安装器操作的是应用文件与命令入口，保留现有配置与图片队列。
-
-HTTP / S3 / GitHub 的迁移测试使用本地服务器和虚构凭据。S3 签名采用 [AWS Rust SigV4](https://docs.rs/aws-sigv4/latest/aws_sigv4/http_request/index.html)，默认凭据读取沿用 [AWS Rust 配置链](https://docs.rs/aws-config/latest/aws_config/)。本轮未进行真实云图床上传、Apple 公证或远端发布。
-
-## 持续发布与固定下载入口
-
-发布由 CI 完成：修改 workspace 版本、推送对应 `desktop-vX.Y.Z` 标签，工作流构建和验收两种 Mac 架构，全部通过后一起发布 DMG / ZIP / SHA-256。社区包默认 ad-hoc 签名，附带 INSTALL.html；不需要在开发电脑生成并上传二进制。
-
-官网 `/img/install/#gui` 是固定入口。页面访问时查询 GitHub Releases，按语义版本选择稳定 desktop-v 发行，校验资产所属仓库、标签及校验文件，并更新架构下载链接。它不使用被 CLI 占用的 GitHub latest，不需要每次发布修改或重建网站。网络失败时回退 Releases 页面。
+离线验收可通过 IMG_LOCAL_PACKAGE_DIR 指向产物目录，并设置 IMG_VERSION。安装器仍校验 SHA-256，macOS 还校验应用签名。测试使用临时目录和虚构凭据。

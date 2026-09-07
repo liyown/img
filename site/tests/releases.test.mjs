@@ -45,3 +45,24 @@ test('rejects missing checksums and foreign download URLs; never invents an Inte
   assert.equal(latestDesktop([release('0.3.0')]).downloads.x86_64, undefined);
   assert.equal(latestDesktop([]), null);
 });
+
+test('CLI latest is independent and excludes retired Go versions', async () => {
+  const { latestCLI } = await import('../src/lib/releases.mjs');
+  const cli = (version) => ({
+    tag_name: `v${version}`,
+    draft: false,
+    prerelease: false,
+    assets: [
+      'checksums.txt',
+      'img_windows_amd64.zip',
+      'img_linux_arm64.tar.gz',
+    ].map((name) => ({
+      name,
+      size: 100,
+      browser_download_url: `https://github.com/liyown/img/releases/download/v${version}/${name}`,
+    })),
+  });
+  assert.equal(latestCLI([cli('0.2.0')]), null);
+  assert.equal(latestCLI([release('8.0.0'), cli('0.3.0')]).version, '0.3.0');
+  assert.equal(latestCLI([cli('0.3.0'), cli('0.4.0')]).version, '0.4.0');
+});

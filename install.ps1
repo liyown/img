@@ -3,7 +3,7 @@ param(
     [string]$Product = "cli",
     [switch]$NoPathUpdate
 )
-if ($Product -eq "gui") { throw "The GUI currently supports macOS. Use -Product cli on Windows." }
+
 
 $ErrorActionPreference = "Stop"
 
@@ -13,6 +13,37 @@ $architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitect
 
 if ($architecture -ne "x64") {
     throw "img currently supports Windows x64. Detected: $architecture"
+}
+
+if ($Product -eq "gui") {
+    if ($version -eq "latest") {
+        $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases?per_page=100"
+        $release = $releases | Where-Object { -not $_.draft -and -not $_.prerelease -and $_.tag_name -match '^desktop-v\d+\.\d+\.\d+$' } | Sort-Object { [version]($_.tag_name -replace '^desktop-v','') } -Descending | Select-Object -First 1
+        if (-not $release) { throw "No desktop release is available." }
+        $version = $release.tag_name -replace '^desktop-v',''
+    }
+    $version = $version -replace '^(desktop-v|v)',''
+    if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Invalid desktop version" }
+    $asset = "img-desktop_${version}_windows_x86_64.exe"
+    $baseUrl = "https://github.com/$repo/releases/download/desktop-v$version"
+    $tempDir = Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory $tempDir | Out-Null
+    try {
+        $package = Join-Path $tempDir $asset
+        $checksum = "$package.sha256"
+        if ($env:IMG_LOCAL_PACKAGE_DIR) {
+            Copy-Item (Join-Path $env:IMG_LOCAL_PACKAGE_DIR $asset) $package
+            Copy-Item (Join-Path $env:IMG_LOCAL_PACKAGE_DIR "$asset.sha256") $checksum
+        } else {
+            Invoke-WebRequest "$baseUrl/$asset" -OutFile $package
+            Invoke-WebRequest "$baseUrl/$asset.sha256" -OutFile $checksum
+        }
+        $fields = (Get-Content $checksum -Raw).Trim() -split '\s+'
+        if ($fields.Count -ne 2 -or $fields[1] -ne $asset -or (Get-FileHash $package -Algorithm SHA256).Hash -ne $fields[0]) { throw "Desktop checksum verification failed" }
+        $process = Start-Process -FilePath $package -ArgumentList '/CLOSEAPPLICATIONS','/NORESTART' -Wait -PassThru
+        if ($process.ExitCode -ne 0) { throw "Desktop installer failed: $($process.ExitCode)" }
+    } finally { Remove-Item $tempDir -Recurse -Force }
+    return
 }
 
 $asset = "img_windows_amd64.zip"

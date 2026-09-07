@@ -131,7 +131,7 @@ jobs:
         run: |
           set -eu
           for arch in arm64 x86_64 windows-x86_64 linux-x86_64; do
-            (cd "packages/desktop-$arch" && sha256sum -c *.sha256)
+            (cd "packages/desktop-$arch" && sha256sum -c ./*.sha256)
           done
           mapfile -t assets < <(find packages -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' -o -name '*.deb' -o -name '*.sha256' \))
           gh release create "$RELEASE_TAG" "${assets[@]}" --verify-tag --notes-file desktop/RELEASE-NOTES.md --generate-notes --latest=false --title "img desktop ${RELEASE_TAG#desktop-v}"
