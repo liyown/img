@@ -135,16 +135,36 @@ fn run(cli: Cli, control: &Control) -> Result<i32> {
         Command::Config { command } => management::config(&path, command)?,
         Command::Provider { command } => management::provider(&path, command)?,
         Command::Upload(v) => {
-            ensure!(
-                v.name.is_empty() || v.files.len() == 1,
-                "--name requires exactly one file"
-            );
-            ensure!(
-                !v.progress || v.files.len() == 1,
-                "--progress requires exactly one file"
-            );
-            let cfg = load(&path)?;
-            let p = provider(&cfg, &v.processing.provider)?;
+            let setup = (|| {
+                ensure!(
+                    v.name.is_empty() || v.files.len() == 1,
+                    "--name requires exactly one file"
+                );
+                ensure!(
+                    !v.progress || v.files.len() == 1,
+                    "--progress requires exactly one file"
+                );
+                let cfg = load(&path)?;
+                let p = provider(&cfg, &v.processing.provider)?;
+                Ok::<_, anyhow::Error>((cfg, p))
+            })();
+            let (cfg, p) = match setup {
+                Ok(value) => value,
+                Err(error) if v.format.as_deref() == Some("json") => {
+                    let failure = img_core::failure::Failure::from_error(
+                        &error,
+                        img_core::failure::ErrorCode::InvalidConfig,
+                    );
+                    let results: Vec<_> = v
+                        .files
+                        .iter()
+                        .map(|source| upload::FileResult::failure(source, failure.clone()))
+                        .collect();
+                    println!("{}", output::render("json", &results, false)?);
+                    return Ok(2);
+                }
+                Err(error) => return Err(error),
+            };
             let mut opts = v.processing.options();
             opts.name = v.name;
             let control = if v.progress {

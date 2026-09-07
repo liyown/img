@@ -135,10 +135,10 @@ fn select_feed(bytes: &[u8], current: &str) -> Result<Option<Update>> {
                     if let Some(version) = value
                         .strip_prefix(&prefix)
                         .and_then(|v| Version::parse(v).ok())
+                        && version > current
+                        && version.pre.is_empty()
                     {
-                        if version > current && version.pre.is_empty() {
-                            versions.push(version);
-                        }
+                        versions.push(version);
                     }
                 }
             }

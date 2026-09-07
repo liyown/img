@@ -4068,6 +4068,8 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "directories",
+ "futures-channel",
+ "futures-lite",
  "gpui-kit",
  "image",
  "quick-xml",

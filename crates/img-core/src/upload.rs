@@ -33,6 +33,24 @@ pub struct FileResult {
     pub content_type: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub error: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<crate::failure::ErrorCode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_status: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retryable: Option<bool>,
+}
+impl FileResult {
+    pub fn failure(source: &str, failure: crate::failure::Failure) -> Self {
+        Self {
+            local_path: source.into(),
+            error: failure.message().into(),
+            error_code: Some(failure.code),
+            http_status: failure.http_status,
+            retryable: Some(failure.retryable),
+            ..Default::default()
+        }
+    }
 }
 fn zero(n: &u64) -> bool {
     *n == 0
@@ -66,10 +84,14 @@ pub fn run(
                     if i >= files.len() {
                         break;
                     }
-                    let r = one(p, c, &files[i], o, control).unwrap_or_else(|e| FileResult {
-                        local_path: files[i].clone(),
-                        error: format!("{e:#}"),
-                        ..Default::default()
+                    let r = one(p, c, &files[i], o, control).unwrap_or_else(|e| {
+                        FileResult::failure(
+                            &files[i],
+                            crate::failure::Failure::from_error(
+                                &e,
+                                crate::failure::ErrorCode::Unknown,
+                            ),
+                        )
                     });
                     result.lock().unwrap()[i] = r;
                 }
@@ -179,6 +201,7 @@ fn one(
         original_size: processed.original_size,
         content_type: processed.content_type,
         error: String::new(),
+        ..Default::default()
     })
 }
 pub fn exit_code(results: &[FileResult]) -> i32 {

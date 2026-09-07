@@ -1,5 +1,6 @@
 pub mod config;
 pub mod control;
+pub mod failure;
 pub mod media;
 pub mod network;
 pub mod output;

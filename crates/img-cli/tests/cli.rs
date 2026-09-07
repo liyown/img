@@ -78,6 +78,61 @@ fn parsed(out: &Output) -> serde_json::Value {
     serde_json::from_slice(&out.stdout).unwrap()
 }
 #[test]
+fn json_setup_errors_keep_exit_code_and_hide_config_contents() {
+    let f = Fixture::new("https://unused.test");
+    std::fs::write(
+        &f.config,
+        "version=1\nprivate-token = 'secret-not-to-export\n",
+    )
+    .unwrap();
+    let out = f.run(&["upload", "image.png", "--format", "json"]);
+    assert_eq!(out.status.code(), Some(2));
+    let doc = parsed(&out);
+    assert_eq!(doc["files"][0]["error_code"], "invalid_config");
+    assert_eq!(doc["files"][0]["retryable"], false);
+    assert!(
+        !String::from_utf8(out.stdout)
+            .unwrap()
+            .contains("secret-not-to-export")
+    );
+    assert!(
+        !String::from_utf8(out.stderr)
+            .unwrap()
+            .contains("secret-not-to-export")
+    );
+}
+#[test]
+fn json_provider_failures_keep_http_status_without_response_secrets() {
+    for (status, code, retry) in [
+        (401, "authentication", false),
+        (403, "permission", false),
+        (429, "rate_limited", true),
+        (503, "server", true),
+        (408, "timeout", true),
+    ] {
+        let (url, _, handle) = server(vec![(status, b"private-body?token=secret".to_vec())]);
+        let f = Fixture::new(&url);
+        let out = f.run(&[
+            "upload",
+            f.image.to_str().unwrap(),
+            "--format",
+            "json",
+            "--no-copy",
+        ]);
+        handle.join().unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        let doc = parsed(&out);
+        assert_eq!(doc["files"][0]["error_code"], code);
+        assert_eq!(doc["files"][0]["http_status"], status);
+        assert_eq!(doc["files"][0]["retryable"], retry);
+        assert!(
+            !String::from_utf8(out.stdout)
+                .unwrap()
+                .contains("private-body")
+        );
+    }
+}
+#[test]
 fn rust_version_and_config_do_not_require_storage_credentials() {
     let f = Fixture::new("https://unused.test/upload");
     assert!(

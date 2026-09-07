@@ -31,6 +31,7 @@ use std::{
 pub struct UploadError {
     pub message: String,
     pub retryable: bool,
+    pub failure: crate::failure::Failure,
 }
 impl std::fmt::Display for UploadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -145,6 +146,7 @@ impl Provider {
                 retryable: status.is_server_error()
                     || status == StatusCode::TOO_MANY_REQUESTS
                     || status == StatusCode::REQUEST_TIMEOUT,
+                failure: crate::failure::Failure::http(status.as_u16()),
             }
             .into());
         }
@@ -160,6 +162,10 @@ impl Provider {
         UploadError {
             message: self.cfg.sanitize(&format!("{e:#}")),
             retryable,
+            failure: crate::failure::Failure::from_error(
+                &e,
+                crate::failure::ErrorCode::InvalidResponse,
+            ),
         }
         .into()
     }

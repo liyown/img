@@ -36,6 +36,12 @@ pub struct Item {
     pub progress: Option<u8>,
     pub url: Option<String>,
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_status: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retryable: Option<bool>,
     pub simulated: bool,
     pub added_at: u64,
     #[serde(default)]
@@ -60,6 +66,9 @@ impl Item {
             progress: Some(progress),
             url: (progress == 100).then(|| format!("https://example.com/{name}")),
             error: None,
+            error_code: None,
+            http_status: None,
+            retryable: None,
             simulated: true,
             added_at: now(),
             uploaded_size: None,
@@ -122,6 +131,7 @@ pub fn load(root: &Path) -> Result<Vec<Item>> {
     Ok(items)
 }
 
+#[cfg(test)]
 pub fn save(root: &Path, items: &[Item]) -> Result<()> {
     std::fs::create_dir_all(root)?;
     let real: Vec<_> = items.iter().filter(|i| !i.simulated).collect();
@@ -292,6 +302,9 @@ pub fn prepare_bytes_with_limit(
         progress: None,
         url: None,
         error: None,
+        error_code: None,
+        http_status: None,
+        retryable: None,
         simulated: false,
         added_at: now(),
         uploaded_size: None,
@@ -333,6 +346,7 @@ pub fn prepare_url(
     )
 }
 
+#[cfg(test)]
 pub fn remove_records(root: &Path, items: &mut Vec<Item>, ids: &[String]) -> Result<usize> {
     let removed: Vec<_> = items
         .iter()
@@ -346,7 +360,12 @@ pub fn remove_records(root: &Path, items: &mut Vec<Item>, ids: &[String]) -> Res
         .collect();
     save(root, &remaining)?;
     *items = remaining;
-    for item in &removed {
+    remove_cache(root, &removed);
+    Ok(removed.len())
+}
+
+pub fn remove_cache(root: &Path, removed: &[Item]) {
+    for item in removed {
         // Only delete this app's UUID cache directory, never source paths from the record.
         if uuid::Uuid::parse_str(&item.id).is_ok() && !item.simulated {
             let path = root.join("images").join(&item.id);
@@ -358,7 +377,6 @@ pub fn remove_records(root: &Path, items: &mut Vec<Item>, ids: &[String]) -> Res
             }
         }
     }
-    Ok(removed.len())
 }
 
 pub struct UploadResult {
@@ -434,10 +452,9 @@ fn parse_upload_response(process_succeeded: bool, bytes: &[u8]) -> Result<String
         .get("files")
         .and_then(|v| v.get(0))
         .context("上传未返回文件结果")?;
-    ensure!(
-        process_succeeded && file.get("success").and_then(|v| v.as_bool()) == Some(true),
-        "上传失败，请检查目标存储权限和配置后重试"
-    );
+    if !(process_succeeded && file.get("success").and_then(|v| v.as_bool()) == Some(true)) {
+        return Err(crate::diagnostics::Failure::from_json(file).into());
+    }
     let url = file
         .get("url")
         .and_then(|v| v.as_str())

@@ -1,7 +1,9 @@
 mod assets;
+mod diagnostics;
 mod engine;
 mod model;
 mod preferences;
+mod queue_store;
 mod settings;
 mod storage;
 mod theme;

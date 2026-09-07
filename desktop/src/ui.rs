@@ -1,3 +1,6 @@
+#[path = "diagnostic_ui.rs"]
+mod diagnostic_ui;
+
 use crate::{
     assets::icon,
     engine::{self, Control},
@@ -105,6 +108,8 @@ pub struct ImgDesktop {
     reference: bool,
     preparing: bool,
     persistence_ok: bool,
+    persistence_generation: u64,
+    queue_store: crate::queue_store::QueueStore,
     simulating: bool,
     notice: Option<(String, bool)>,
     copied: Option<String>,
@@ -292,15 +297,13 @@ impl ImgDesktop {
                 cx.notify();
             },
         );
-        let quit_subscription = cx.on_app_quit(|this, _| {
-            let controls = this.prepare_shutdown();
+        let quit_subscription = cx.on_app_quit(|this, cx| {
+            let (controls, saved) = this.prepare_shutdown();
+            let executor = cx.background_executor().clone();
             async move {
-                for _ in 0..60 {
-                    if controls.iter().all(|c| c.finished.load(Ordering::SeqCst)) {
-                        break;
-                    }
-                    // Children check interruption every 25 ms and are reaped before exit.
-                    std::thread::sleep(Duration::from_millis(25));
+                let _ = crate::queue_store::acknowledged(saved).await;
+                while controls.iter().any(|c| !c.finished.load(Ordering::SeqCst)) {
+                    executor.timer(Duration::from_millis(25)).await;
                 }
             }
         });
@@ -319,7 +322,7 @@ impl ImgDesktop {
         })
         .detach();
         let release_subscription = cx.on_release(|this, _| {
-            this.prepare_shutdown();
+            let _ = this.prepare_shutdown();
         });
         let storage_focus_subscription = cx.subscribe_in(
             &storage_settings,
@@ -361,6 +364,7 @@ impl ImgDesktop {
             url_input,
             show_url_input: false,
             _subscriptions: subscriptions,
+            queue_store: crate::queue_store::QueueStore::new(root.clone()),
             root,
             engine,
             items,
@@ -387,6 +391,7 @@ impl ImgDesktop {
             reference,
             preparing: false,
             persistence_ok,
+            persistence_generation: 0,
             simulating: false,
             notice,
             copied: None,
@@ -401,10 +406,18 @@ impl ImgDesktop {
             self.message("本地队列需要修复，当前无法保存或开始上传。", true, cx);
             return false;
         }
-        if let Err(e) = model::save(&self.root, &self.items) {
-            self.message(format!("队列未保存：{e}"), true, cx);
-            return false;
-        }
+        let saved = self.queue_store.save(self.items.clone());
+        let generation = self.persistence_generation;
+        cx.spawn(async move |this, cx| {
+            if let Err(e) = crate::queue_store::acknowledged(saved).await {
+                let _ = this.update(cx, |this, cx| {
+                    if generation == this.persistence_generation {
+                        this.persistence_failed(e, cx);
+                    }
+                });
+            }
+        })
+        .detach();
         true
     }
     fn navigate(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
@@ -821,6 +834,9 @@ impl ImgDesktop {
             self.items[index].status = Status::Running;
             self.items[index].progress = None;
             self.items[index].error = None;
+            self.items[index].error_code = None;
+            self.items[index].http_status = None;
+            self.items[index].retryable = None;
             if !self.persist(cx) {
                 self.items[index].status = Status::Paused;
                 self.pause_all(cx);
@@ -862,9 +878,11 @@ impl ImgDesktop {
                 }
             })
             .detach();
-            let task = cx
-                .background_executor()
-                .spawn(async move { model::upload(&item, &root, &engine, &options, &control) });
+            let saved = self.queue_store.barrier();
+            let task = cx.background_executor().spawn(async move {
+                crate::queue_store::acknowledged(saved).await?;
+                model::upload(&item, &root, &engine, &options, &control)
+            });
             cx.spawn(async move |this, cx| {
                 let result = task.await;
                 let _ = this.update(cx, |this, cx| {
@@ -888,12 +906,11 @@ impl ImgDesktop {
                                     "已暂停，继续时重新上传此文件；中断前服务端可能已收到图片。"
                                         .into(),
                                 );
-                                if active.is_some_and(|a| a.requeue) {
-                                    if let Some(batch) = &mut this.batch {
-                                        if !batch.cancelled {
-                                            batch.pending.push_front(id.clone());
-                                        }
-                                    }
+                                if active.is_some_and(|a| a.requeue)
+                                    && let Some(batch) = &mut this.batch
+                                    && !batch.cancelled
+                                {
+                                    batch.pending.push_front(id.clone());
                                 }
                             }
                             Ok(model::UploadOutcome::Cancelled) => {
@@ -905,7 +922,11 @@ impl ImgDesktop {
                             Err(error) => {
                                 item.status = Status::Failed;
                                 item.progress = None;
-                                item.error = Some(error.to_string());
+                                let failure = crate::diagnostics::Failure::from_error(&error);
+                                item.error = Some(failure.summary().into());
+                                item.error_code = Some(failure.error_code);
+                                item.http_status = failure.http_status;
+                                item.retryable = failure.retryable;
                                 if let Some(batch) = &mut this.batch {
                                     batch.failed += 1;
                                 }
@@ -913,7 +934,19 @@ impl ImgDesktop {
                         }
                     }
                     if this.persist(cx) {
-                        this.upload_next(cx);
+                        let saved = this.queue_store.barrier();
+                        cx.spawn(async move |this, cx| {
+                            match crate::queue_store::acknowledged(saved).await {
+                                Ok(()) => {
+                                    let _ = this.update(cx, |this, cx| this.upload_next(cx));
+                                }
+                                Err(e) => {
+                                    let _ =
+                                        this.update(cx, |this, cx| this.persistence_failed(e, cx));
+                                }
+                            }
+                        })
+                        .detach();
                     } else {
                         this.pause_all(cx);
                     }
@@ -1034,15 +1067,40 @@ impl ImgDesktop {
                     this.message("本地队列无法读取，不能清理记录", true, cx);
                     return;
                 }
-                match model::remove_records(&this.root, &mut this.items, &ids) {
-                    Ok(n) => this.message(format!("已清理 {n} 条记录和图片缓存"), false, cx),
-                    Err(e) => this.message(e.to_string(), true, cx),
-                }
+                let removed: Vec<_> = this
+                    .items
+                    .iter()
+                    .filter(|i| ids.contains(&i.id))
+                    .cloned()
+                    .collect();
+                this.items.retain(|i| !ids.contains(&i.id));
+                let saved = this.queue_store.save(this.items.clone());
+                let root = this.root.clone();
+                cx.spawn(async move |this, cx| {
+                    match crate::queue_store::acknowledged(saved).await {
+                        Ok(()) => {
+                            let count = removed.len();
+                            cx.background_executor()
+                                .spawn(async move {
+                                    model::remove_cache(&root, &removed);
+                                })
+                                .await;
+                            let _ = this.update(cx, |this, cx| {
+                                this.message(format!("已清理 {count} 条记录和图片缓存"), false, cx)
+                            });
+                        }
+                        Err(e) => {
+                            let _ = this.update(cx, |this, cx| this.persistence_failed(e, cx));
+                        }
+                    }
+                })
+                .detach();
+                cx.notify();
             });
         })
         .detach();
     }
-    fn prepare_shutdown(&mut self) -> Vec<Control> {
+    fn prepare_shutdown(&mut self) -> (Vec<Control>, crate::queue_store::Pending<()>) {
         let controls: Vec<_> = self.active.values().map(|a| a.control.clone()).collect();
         for control in &controls {
             control.stop(engine::PAUSE);
@@ -1054,10 +1112,12 @@ impl ImgDesktop {
                 item.error = Some("退出时已中断上传，继续时将重新上传。".into());
             }
         }
-        if self.persistence_ok {
-            let _ = model::save(&self.root, &self.items);
-        }
-        controls
+        let saved = if self.persistence_ok {
+            self.queue_store.save(self.items.clone())
+        } else {
+            self.queue_store.barrier()
+        };
+        (controls, saved)
     }
     pub fn request_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if window.has_active_prompt() {
@@ -1869,6 +1929,7 @@ impl ImgDesktop {
         let pause_id = id.clone();
         let cancel_id = id.clone();
         let remove_id = id.clone();
+        let failure_item = item.clone();
         let title = div()
             .flex()
             .items_center()
@@ -1895,6 +1956,17 @@ impl ImgDesktop {
             .child(div().flex_1())
             .when(item.status == Status::Done, |this| {
                 this.child(self.copy_actions(&item, "queue", cx))
+            })
+            .when(item.status == Status::Failed, |this| {
+                this.child(
+                    Button::new(SharedString::from(format!("error-{}", failure_item.id)))
+                        .ghost()
+                        .xsmall()
+                        .label("详情 / 处理")
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.failure_details(failure_item.clone(), window, cx)
+                        })),
+                )
             })
             .when(item.status == Status::Running && !item.simulated, |this| {
                 this.child(
@@ -2433,6 +2505,7 @@ impl ImgDesktop {
             .flex_col()
             .gap(px(20.))
             .child(label("设置", 20., TEXT).font_weight(FontWeight::SEMIBOLD))
+            .child(card().child(self.recovery_controls(cx)))
             .child(card().child(self.storage_settings.clone()))
             .child(card().child(self.upload_settings.clone()))
             .child(

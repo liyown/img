@@ -460,14 +460,13 @@ pub fn save_provider(
                 .cloned()
                 .unwrap_or_default();
             let mut entries = Table::new();
-            if group == "headers" {
-                if let Some(auth) = old
+            if group == "headers"
+                && let Some(auth) = old
                     .iter()
                     .find(|(k, _)| k.eq_ignore_ascii_case("authorization"))
                     .map(|(_, v)| v.clone())
-                {
-                    entries.insert("Authorization".into(), auth);
-                }
+            {
+                entries.insert("Authorization".into(), auth);
             }
             let mut seen = BTreeSet::new();
             for row in rows {
@@ -571,10 +570,10 @@ pub fn save_provider(
             credentials.delete(key);
         }
     }
-    if result.is_ok() {
-        if let Some(before) = &before {
-            cleanup_unused_credentials(before, &document, credentials);
-        }
+    if result.is_ok()
+        && let Some(before) = &before
+    {
+        cleanup_unused_credentials(before, &document, credentials);
     }
     result
 }
@@ -650,14 +649,13 @@ fn credential_keys(value: &Value, keys: &mut BTreeSet<String>) {
     match value {
         Value::String(value) => {
             for part in value.split("${").skip(1) {
-                if let Some((key, _)) = part.split_once('}') {
-                    if key.starts_with(SECRET_PREFIX)
-                        && key
-                            .chars()
-                            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-                    {
-                        keys.insert(key.to_owned());
-                    }
+                if let Some((key, _)) = part.split_once('}')
+                    && key.starts_with(SECRET_PREFIX)
+                    && key
+                        .chars()
+                        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+                {
+                    keys.insert(key.to_owned());
                 }
             }
         }

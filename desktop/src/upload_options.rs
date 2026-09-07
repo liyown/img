@@ -161,9 +161,11 @@ mod tests {
     #[test]
     fn settings_validate_and_override_engine_defaults() {
         let root = tempfile::tempdir().unwrap();
-        let mut options = UploadOptions::default();
-        options.strip_exif = true;
-        options.max_width = 1200;
+        let mut options = UploadOptions {
+            strip_exif: true,
+            max_width: 1200,
+            ..Default::default()
+        };
         options.save(root.path()).unwrap();
         assert_eq!(UploadOptions::load(root.path()).unwrap(), options);
         let config: toml::Table = toml::from_str(
