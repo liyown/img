@@ -29,7 +29,7 @@ public sealed class ImgCapture : Form {
       using(var pen=new Pen(Color.Orange,2)) e.Graphics.DrawRectangle(pen,selection);
     }
   }
-  public static void Capture(string path,string mode) {
+  public static void TakeScreenshot(string path,string mode) {
     SetProcessDPIAware();
     Rectangle bounds=SystemInformation.VirtualScreen;
     if(mode=="window") {
@@ -51,5 +51,5 @@ public sealed class ImgCapture : Form {
 }
 '@
 if ($env:IMG_CAPTURE_VALIDATE -ne '1') {
-  [ImgCapture]::Capture($env:IMG_CAPTURE_PATH,$env:IMG_CAPTURE_MODE)
+  [ImgCapture]::TakeScreenshot($env:IMG_CAPTURE_PATH,$env:IMG_CAPTURE_MODE)
 }
