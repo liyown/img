@@ -1,8 +1,8 @@
 <div align="center">
   <img src="site/public/favicon.svg" width="72" alt="img">
   <h1>img</h1>
-  <p><strong>Upload a screenshot and paste the link.</strong></p>
-  <p>Use desktop shortcuts yourself. Give your AI agent a native CLI and Skill.<br>Both use the same storage configuration on macOS, Windows, and Linux.</p>
+  <p><strong>A native image uploader</strong></p>
+  <p>Upload images to your own storage and generate links for your documents.<br>Native desktop app, standalone CLI, and Agent Skill for macOS, Windows, and Linux.</p>
   <p><a href="https://liyown.github.io/img/en/install/#gui"><strong>Download desktop</strong></a> · <a href="https://liyown.github.io/img/en/install/#cli">Download CLI</a> · <a href="https://liyown.github.io/img/en/">Website</a> · <a href="https://liyown.github.io/img/en/docs/">Docs</a> · <a href="README.md">中文</a></p>
 
 [![Desktop release](https://github.com/liyown/img/actions/workflows/desktop-release.yml/badge.svg)](https://github.com/liyown/img/actions/workflows/desktop-release.yml)
@@ -13,35 +13,20 @@
 
 [![img native gallery: find images, preview, and copy links; macOS demo](site/public/screenshots/gallery.webp)](https://liyown.github.io/img/en/install/#gui)
 
-## Why switch to img
+## Features
 
-Capture an image, press the upload shortcut, and paste the copied link into your article. When an AI agent writes the article, it can call img to upload local screenshots or charts and insert the returned URLs. Both workflows use the same storage configuration.
+img is built in Rust. The GPUI desktop app bundles the matching CLI, with shared storage configuration and image processing across desktop uploads, editor integrations, and automation. The standalone CLI runs without the desktop app or a language runtime.
 
-The Rust / GPUI desktop app includes the matching native CLI. For terminal and automation work, download the command alone: it runs without the desktop app or Node.js. Uploads, image processing, and storage configuration share an implementation across both entry points.
+- Quick uploads: import files, clipboard images, screenshots, or remote URLs. Upload directly with a shortcut and copy the result as a URL, Markdown, or another format.
+- Your own storage: connect R2, S3, OSS, GitHub, or HTTP hosts. Keep your public domain and select storage per project.
+- Local gallery: search and preview desktop upload records, switch between grid and list, and copy links in batches across search results.
+- Image processing: optimize, resize, or remove JPEG EXIF before batch uploads while preserving original files.
+- Article migration: use `img rewrite` to upload local and remote Markdown images, replacing references while preserving alt text and titles.
+- Automation: read per-file JSON results and exit codes from the native CLI, or use the companion Skill with an AI agent.
 
-Keep your existing R2, S3, OSS, GitHub, or HTTP host and public domain. Links in old articles remain unchanged. You can try the CLI with a few images before moving your everyday uploads to img.
+## Installation
 
-Find previous desktop uploads in the local gallery, preview them, switch between grid and list, and copy links in batches across search results. Use `img rewrite` to upload a whole article's images and replace their references. Batch uploads also support optimization, resizing, and JPEG EXIF removal.
-
-## Give your AI agent an upload tool
-
-When an agent creates a chart or uses a local screenshot, it can upload the file through the native CLI and put the returned link into the article. The repository includes an installable [img-uploader Skill](skills/img-uploader) for assistants that support Agent Skills and can run local commands.
-
-```sh
-npx skills add liyown/img --skill img-uploader
-```
-
-Install the CLI and configure your default storage, then give the agent a task such as:
-
-> Upload ./assets/chart.png to my default image host and insert the returned Markdown image link into article.md.
-
-The Skill checks files and configuration, then uploads with `--format json --no-copy`. The CLI returns per-file results and exit codes, preserving successful URLs when other uploads fail. Your agent uses the configured storage without needing credentials in the conversation or controlling an upload window.
-
-[Read the Skill workflow](skills/img-uploader/SKILL.md) · [CLI JSON output and exit codes](docs/cli.en.md#json-output)
-
-## Download and start
-
-[Download the latest stable release](https://liyown.github.io/img/en/install/#gui). You do not need Rust, Go, or build tools.
+Download the latest stable release from the [installation page](https://liyown.github.io/img/en/install/#gui). Desktop packages include the CLI, which is also available separately. No source build is required.
 
 | System | Desktop, including CLI | Standalone CLI |
 | --- | --- | --- |
@@ -61,13 +46,13 @@ GitHub Actions builds, tests, and publishes native packages with SHA-256 checksu
 
 </details>
 
-## Upload your first image
+## Quick start
 
-### From the desktop
+### Desktop app
 
 1. Install img, add your image host in Settings → Storage, and set it as default.
 2. Copy an image and press the upload shortcut.
-3. Return to your article and paste the link. Choose Markdown, URL, or another format in Settings.
+3. Paste the link after the upload completes. Select Markdown, URL, or another output format in Settings.
 
 | Action | macOS | Windows / Linux X11 |
 | --- | --- | --- |
@@ -76,7 +61,7 @@ GitHub Actions builds, tests, and publishes native packages with SHA-256 checksu
 
 You can also select files, paste images, or add remote URLs in the window, review the queue, and click Upload.
 
-### From the terminal
+### Command line
 
 Download the [standalone CLI](https://liyown.github.io/img/en/install/#cli), or add the terminal command from the desktop app's About and updates section:
 
@@ -95,9 +80,25 @@ Example output; the URL depends on your storage configuration:
 
 [R2 / OSS / GitHub setup examples](docs/cli.en.md#setup) · [Full command reference](docs/cli.en.md)
 
-## Keep your editor
+## Automation and AI agents
 
-| Your workflow | With img |
+The standalone CLI works with scripts, editors, and AI agents. JSON output includes each file's upload result; exit codes indicate failure. Successful URLs remain available when a batch partially fails.
+
+```sh
+img upload ./assets/chart.png --format json --no-copy
+```
+
+The [img-uploader Skill](skills/img-uploader) defines file checks, configuration validation, uploads, and result parsing. Assistants that support Agent Skills and local command execution can use it to upload screenshots or charts and reference them in documents.
+
+```sh
+npx skills add liyown/img --skill img-uploader
+```
+
+Install the CLI and configure a default storage provider first. Credentials come from local configuration rather than prompts. [Skill reference](skills/img-uploader/SKILL.md) · [JSON output and exit codes](docs/cli.en.md#json-output)
+
+## Editors and workflows
+
+| Workflow | Integration |
 | --- | --- |
 | Blog posts and notes | Capture, upload, and paste the copied link into Markdown |
 | Typora | Set the custom upload command to `img "${filepath}"` |
@@ -107,19 +108,19 @@ Example output; the URL depends on your storage configuration:
 
 [Integration examples](docs/cli.en.md#integrations) · [Agent Skill](skills/img-uploader) · [GitHub Action](action.yml)
 
-### Moving from another uploader
+### Existing storage configuration
 
-Add your existing storage provider to img, upload one image, and check the returned URL before changing your editor's upload command. Provider settings need to be added again. img does not automatically import another app's configuration or gallery, or change links in existing articles.
+Add your existing provider settings to img, verify an upload and its public URL, then update your editor's upload command. Changing the client does not affect links in existing articles.
 
-If you rely on remote file management or PicGo plugins, keep your current tool for those tasks. The img gallery manages local records; clearing them preserves original files and remote images. You can start by using img only for agent and script uploads.
+Automatic imports of other clients' configuration and history are not supported. The gallery manages local records; clearing them preserves original files and remote images. Remote file management and PicGo plugin compatibility are outside the current scope.
 
-## Bring your storage
+## Storage and formats
 
 **Cloudflare R2 · S3-compatible services · Alibaba Cloud OSS · GitHub repositories · Custom HTTP endpoints**
 
 PNG, JPEG, GIF, WebP, SVG, and AVIF are supported. Select storage per project and set defaults for output formats and image processing. [Storage guide](https://liyown.github.io/img/en/docs/storage/)
 
-## Help make it better
+## Development and feedback
 
 Found a problem? Include your OS, img version, and reproduction steps, without storage credentials. [Report an issue or request a feature](https://github.com/liyown/img/issues)
 
@@ -130,5 +131,3 @@ cargo test --locked --workspace
 ```
 
 Explore the [shared upload core](crates/img-core), [standalone CLI](crates/img-cli), and [native desktop app](desktop). [Build and release guide](desktop/RELEASING.md)
-
-Tell us which editor or agent you connected to img, and which step still gets in your way.

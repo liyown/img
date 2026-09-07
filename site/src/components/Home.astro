@@ -72,8 +72,8 @@ const features = t(
     ],
     [
       'terminal',
-      '让 Agent 直接上传',
-      '原生 CLI 与可安装的 Skill，返回 JSON 结果。Agent 和桌面共用存储配置。',
+      'AI Agent 集成',
+      '提供原生 CLI 与 Agent Skill，支持 JSON 输出、逐文件结果和退出码。复用本地存储配置。',
     ],
   ],
   [
@@ -104,8 +104,8 @@ const features = t(
     ],
     [
       'terminal',
-      'Let your agent upload',
-      'A native CLI and installable Skill with JSON results. Your agent and desktop share the same storage configuration.',
+      'AI agent integration',
+      'Native CLI and Agent Skill with JSON output, per-file results, and exit codes. Reuse local storage configuration.',
     ],
   ],
 );
@@ -168,14 +168,14 @@ const faq = t(
     {
       t(
         locale,
-        '截图上传后，链接直接粘贴。',
-        'Upload a screenshot and paste the link.',
+        '上传到自有存储，自动生成图片链接。',
+        'Upload to your own storage and generate image links.',
       )
     }<br />{
       t(
         locale,
-        '你用桌面，AI 用原生 CLI 和 Skill，共用自己的图床。',
-        'A desktop for you, a native CLI and Skill for your AI. Your storage for both.',
+        '原生桌面应用、独立 CLI 与 Agent Skill。',
+        'Native desktop app, standalone CLI, and Agent Skill.',
       )
     }
   </p>
@@ -183,8 +183,8 @@ const faq = t(
     {
       t(
         locale,
-        'macOS / Windows / Linux · 图片和域名由你掌握',
-        'macOS / Windows / Linux · Keep your images and domain',
+        '支持 macOS、Windows 和 Linux',
+        'Available for macOS, Windows, and Linux',
       )
     }
   </p>
@@ -392,8 +392,8 @@ const faq = t(
       {
         t(
           locale,
-          '想把手动上传和 Agent 工作流接到一起，可以试试 img 的原生桌面、CLI 和 Skill。支持的存储源继续用，旧文章链接不用改；配置需要在 img 中重新添加。对照功能和安装包信息，看看它是否适合你。',
-          'Try img if you want manual uploads and agent workflows to share a native desktop, CLI, and Skill. Keep supported storage providers and existing article links; add the provider settings again in img. Compare features and packages to see whether it fits.',
+          'img 将原生桌面与独立 CLI 集成在同一产品中，共享存储配置和图片处理能力。对比页列出各工具的功能范围、安装包大小及数据来源，便于按工作流选择。',
+          'img combines a native desktop app and standalone CLI with shared storage configuration and image processing. The comparison covers features, package sizes, and sources for evaluating each tool against your workflow.',
         )
       }
     </p><a class="text-link" href={href(locale, 'compare')}

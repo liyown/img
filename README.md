@@ -1,8 +1,8 @@
 <div align="center">
   <img src="site/public/favicon.svg" width="72" alt="img">
   <h1>img</h1>
-  <p><strong>截图上传，链接直接粘贴。</strong></p>
-  <p>自己用桌面快捷键，让 AI 用原生 CLI 和 Skill。<br>共用一套存储配置，图片上传到你自己的图床。支持 macOS、Windows 和 Linux。</p>
+  <p><strong>原生图片上传工具</strong></p>
+  <p>将图片上传到自有存储，生成可直接使用的链接。<br>原生桌面应用、独立 CLI 与 Agent Skill，支持 macOS、Windows 和 Linux。</p>
   <p><a href="https://liyown.github.io/img/install/#gui"><strong>下载桌面版</strong></a> · <a href="https://liyown.github.io/img/install/#cli">下载 CLI</a> · <a href="https://liyown.github.io/img/">官网</a> · <a href="https://liyown.github.io/img/docs/">文档</a> · <a href="README.en.md">English</a></p>
 
 [![Desktop release](https://github.com/liyown/img/actions/workflows/desktop-release.yml/badge.svg)](https://github.com/liyown/img/actions/workflows/desktop-release.yml)
@@ -13,35 +13,20 @@
 
 [![img 原生图库：查找图片、预览并复制链接；macOS 演示界面](site/public/screenshots/gallery.webp)](https://liyown.github.io/img/install/#gui)
 
-## 为什么换到 img
+## 功能
 
-你截好一张图，按下快捷键，上传后的链接就会复制到剪贴板。回到文章里粘贴即可。让 AI 写文章时，它也能调用 img，把本地截图或图表上传后放进 Markdown。手动操作和 Agent 上传共用同一套存储配置。
+img 使用 Rust 构建，桌面端采用 GPUI，内置同版本 CLI。桌面上传、编辑器集成和自动化任务共享存储配置与图片处理能力；独立 CLI 无需启动桌面应用或安装语言运行时。
 
-桌面端用 Rust / GPUI 构建，包内自带同版本原生 CLI。只在终端或自动化里用，可以单独下载命令行程序，不用启动桌面应用，也不用安装 Node.js。上传、图片处理和存储配置共用实现，换个入口不用再搭一套工具。
+- 快捷上传：支持文件、剪贴板、截图和外链导入。快捷键可直接上传，完成后自动复制 URL、Markdown 等格式的链接。
+- 自有存储：连接 R2、S3、OSS、GitHub 或 HTTP 图床，沿用现有存储和公开域名，支持按项目选择存储源。
+- 本地图库：搜索和预览桌面上传记录，支持网格、列表、跨搜索多选及批量复制链接。
+- 图片处理：批量上传前压缩、缩放或移除 JPEG EXIF，保留原文件。
+- 文章转存：使用 `img rewrite` 上传 Markdown 中的本地图片和外链图片，替换引用并保留 alt 与 title。
+- 自动化接口：原生 CLI 提供 JSON 输出、逐文件结果和退出码，配套 Skill 支持 AI Agent 调用。
 
-已有 R2、S3、OSS、GitHub 或 HTTP 图床，可以继续使用原来的存储和公开域名。旧文章里的链接不受影响。你可以先用 CLI 传几张图，再决定是否把日常上传也交给 img。
+## 安装
 
-桌面端上传的图片保存在本地图库记录中，可以搜索、预览、切换网格或列表，跨搜索多选后批量复制链接。整篇文章要转存时，用 `img rewrite` 上传图片并替换引用；批量上传还支持压缩、缩放和移除 JPEG EXIF。
-
-## 给 AI 一个能直接调用的上传工具
-
-Agent 生成了图表，或写文章时引用了本地截图，可以通过原生 CLI 上传，再把返回的链接写进正文。仓库提供可安装的 [img-uploader Skill](skills/img-uploader)，适用于支持 Agent Skills 且能执行本地命令的助手。
-
-```sh
-npx skills add liyown/img --skill img-uploader
-```
-
-安装 CLI、配置好默认存储源后，就可以给 Agent 这样的任务：
-
-> 把 ./assets/chart.png 上传到默认图床，将返回的 Markdown 图片链接写进 article.md。
-
-Skill 会先检查文件和配置，再使用 `--format json --no-copy` 上传。CLI 返回逐文件结果与退出码，部分失败时保留成功链接。Agent 复用你配好的存储源，无需在对话中提供密钥，也不必操作上传窗口。
-
-[查看 Skill 的上传流程](skills/img-uploader/SKILL.md) · [CLI JSON 输出与退出码](docs/cli.md#json-输出)
-
-## 下载即用
-
-[下载最新稳定版](https://liyown.github.io/img/install/#gui)。普通用户无需安装 Rust、Go 或编译工具。
+从[安装页](https://liyown.github.io/img/install/#gui)下载最新稳定版。桌面安装包包含 CLI，也可单独下载命令行版本，无需从源码编译。
 
 | 系统 | 桌面版（包含 CLI） | 独立 CLI |
 | --- | --- | --- |
@@ -61,13 +46,13 @@ Skill 会先检查文件和配置，再使用 `--format json --no-copy` 上传�
 
 </details>
 
-## 试着上传第一张图
+## 快速开始
 
-### 用桌面版
+### 桌面应用
 
 1. 安装并打开 img，在「设置 → 存储源」添加图床，设为默认。
 2. 复制一张图片，按下快捷键直接上传。
-3. 回到文章里粘贴链接。Markdown、URL 等格式可在设置中选择。
+3. 上传成功后粘贴链接。在设置中选择 Markdown、URL 等输出格式。
 
 | 快捷操作 | macOS | Windows / Linux X11 |
 | --- | --- | --- |
@@ -76,7 +61,7 @@ Skill 会先检查文件和配置，再使用 `--format json --no-copy` 上传�
 
 也可从窗口选择文件、粘贴图片或添加外链，确认队列后点击上传。
 
-### 用 CLI
+### 命令行
 
 从[安装页](https://liyown.github.io/img/install/#cli)下载独立 CLI，或在桌面版「关于与更新」中添加终端命令：
 
@@ -95,31 +80,47 @@ img rewrite article.md --stdout            # 转存文章图片，输出改写�
 
 [Cloudflare R2 / OSS / GitHub 配置示例](docs/cli.md#初始化) · [完整命令与配置手册](docs/cli.md)
 
-## 继续用你熟悉的编辑器
+## 自动化与 AI Agent
 
-| 你在做什么 | img 怎么帮忙 |
+CLI 可独立用于脚本、编辑器和 AI Agent。使用 JSON 输出读取每张图片的上传结果，结合退出码处理失败；批量上传部分失败时，成功链接仍会返回。
+
+```sh
+img upload ./assets/chart.png --format json --no-copy
+```
+
+配套的 [img-uploader Skill](skills/img-uploader) 定义了文件检查、配置校验、上传和结果解析流程。支持 Agent Skills 且具备本地命令执行能力的助手，可通过 Skill 将截图或图表上传并引用到文档中。
+
+```sh
+npx skills add liyown/img --skill img-uploader
+```
+
+使用前需安装 CLI 并配置默认存储源。凭据沿用本地配置，无需写入提示词。[Skill 使用说明](skills/img-uploader/SKILL.md) · [JSON 输出与退出码](docs/cli.md#json-输出)
+
+## 编辑器与工作流
+
+| 场景 | 接入方式 |
 | --- | --- |
-| 写博客、记笔记 | 截图上传后自动复制链接，直接粘贴到 Markdown |
-| 在 Typora 写文章 | 自定义上传命令：`img "${filepath}"` |
-| 在 Obsidian 管理笔记 | 运行 `img serve`，通过 Image Auto Upload 插件连接 PicGo 兼容服务 |
-| 迁移文章或更换图床 | `img rewrite` 处理本地图片与外链，保留 alt 和 title |
-| 让 Agent 发布图片 | CLI 返回结构化 JSON，配套 Skill 复用已配置存储源 |
+| Markdown 写作 | 截图上传后自动复制图片链接 |
+| Typora | 自定义上传命令：`img "${filepath}"` |
+| Obsidian | 运行 `img serve`，通过 Image Auto Upload 插件连接 PicGo 兼容服务 |
+| 文章迁移 | `img rewrite` 批量转存图片并替换引用 |
+| AI Agent | 安装 Skill，通过 CLI 获取结构化上传结果 |
 
 [集成示例](docs/cli.md#集成) · [Agent Skill](skills/img-uploader) · [GitHub Action](action.yml)
 
-### 从其他上传工具过来
+### 迁移现有配置
 
-先在 img 里添加原来的存储源，上传一张图并检查返回的 URL，再调整编辑器的上传入口。现有配置需要重新添加，img 不会自动导入其他工具的配置或历史图库，也不会修改已有文章链接。
+使用已有存储服务时，在 img 中添加对应配置，验证上传与公开 URL 后，将编辑器的上传入口指向 img。更换客户端不影响已有文章链接。
 
-需要远端文件管理或依赖 PicGo 插件时，可以继续保留原来的工具。img 的图库管理本地记录；清理记录会保留原文件和远端图片。你也可以先只把 Agent 和脚本里的上传交给 img。
+目前不支持自动导入其他客户端的配置与历史记录。图库仅管理本地记录，清理操作保留原文件和远端图片；不提供远端文件管理或 PicGo 插件兼容层。
 
-## 支持你已有的存储
+## 支持的存储与格式
 
 **Cloudflare R2 · S3 兼容服务 · 阿里云 OSS · GitHub 仓库 · 自定义 HTTP 接口**
 
 支持 PNG、JPEG、GIF、WebP、SVG、AVIF。可以为不同项目选择不同存储源，配置默认输出格式与图片处理选项。[存储配置指南](https://liyown.github.io/img/docs/storage/)
 
-## 参与改进
+## 开发与反馈
 
 遇到问题，欢迎提交系统版本、img 版本和复现步骤；请勿附上存储密钥。[报告问题或提出需求](https://github.com/liyown/img/issues)
 
@@ -130,5 +131,3 @@ cargo test --locked --workspace
 ```
 
 代码分为 [共享上传核心](crates/img-core)、[独立 CLI](crates/img-cli) 和 [原生桌面应用](desktop)。[本地构建与发行流程](desktop/RELEASING.md)
-
-欢迎在 Issue 里告诉我们你用 img 接上了哪个编辑器或 Agent，以及哪一步还不顺手。
