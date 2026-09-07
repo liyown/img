@@ -94,8 +94,7 @@ impl Drop for Native {
 }
 pub fn restore_windows() {}
 fn tray_pixels() -> anyhow::Result<Vec<u8>> {
-    let bytes = crate::assets::bytes("icons/image.svg")
-        .ok_or_else(|| anyhow::anyhow!("missing tray icon"))?;
+    let bytes = crate::assets::bytes("icons/image.svg")?;
     let tree = resvg::usvg::Tree::from_data(&bytes, &resvg::usvg::Options::default())?;
     let mut pixmap = resvg::tiny_skia::Pixmap::new(32, 32).unwrap();
     pixmap.fill(resvg::tiny_skia::Color::from_rgba8(247, 243, 232, 255));

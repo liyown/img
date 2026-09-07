@@ -41,6 +41,6 @@ tray-icon = { version = "=0.24.2", default-features = false }
 keyring = { version = "=3.6.3", features = ["windows-native"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = { version = "=0.3.6", features = ["blocking"] }
-ashpd = { version = "=0.13.13", default-features = false, features = ["tokio", "global_shortcuts"] }
+ashpd = { version = "=0.13.13", default-features = false, features = ["async-io", "global_shortcuts"] }
 tokio = { version = "1", features = ["rt", "time", "macros"] }
 keyring = { version = "=3.6.3", features = ["sync-secret-service", "crypto-rust"] }
