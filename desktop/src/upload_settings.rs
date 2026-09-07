@@ -31,7 +31,7 @@ const FIELDS: [(&str, &str, &str); 6] = [
 fn text(s: impl Into<SharedString>, size: f32, color: u32) -> Div {
     div()
         .text_size(px(size))
-        .text_color(rgb(color))
+        .text_color(crate::theme::color(color))
         .child(s.into())
 }
 impl UploadSettings {
@@ -118,7 +118,7 @@ impl Render for UploadSettings {
                             .aria_label(title)
                             .h(px(36.))
                             .text_size(px(12.))
-                            .bg(rgb(CANVAS)),
+                            .bg(crate::theme::color(CANVAS)),
                     ),
             );
         }
@@ -207,7 +207,7 @@ impl Render for UploadSettings {
                         Switch::new(key)
                             .accessibility_label(title)
                             .checked(checked)
-                            .color(rgb(NAV_ACTIVE))
+                            .color(crate::theme::color(NAV_ACTIVE))
                             .on_click(cx.listener(move |this, checked: &bool, _, cx| {
                                 match key {
                                     "optimize" => this.options.optimize = *checked,

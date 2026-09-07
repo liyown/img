@@ -70,7 +70,7 @@ impl EventEmitter<EditorClosed> for StorageSettings {}
 fn text(value: impl Into<SharedString>, size: f32, color: u32) -> Div {
     div()
         .text_size(px(size))
-        .text_color(rgb(color))
+        .text_color(crate::theme::color(color))
         .child(value.into())
 }
 fn button(id: impl Into<ElementId>, title: &str) -> Button {
@@ -440,7 +440,7 @@ impl StorageSettings {
                             .disabled(self.saving || self.uploading)
                             .h(px(36.))
                             .text_size(px(12.))
-                            .bg(rgb(CANVAS)),
+                            .bg(crate::theme::color(CANVAS)),
                     ),
             );
         }
@@ -449,7 +449,7 @@ impl StorageSettings {
             .flex_col()
             .gap(px(16.))
             .p(px(18.))
-            .bg(rgb(DROP))
+            .bg(crate::theme::color(DROP))
             .rounded(px(12.))
             .child(
                 text(
@@ -480,7 +480,7 @@ impl StorageSettings {
                                     .disabled(self.saving || self.uploading || editing)
                                     .h(px(36.))
                                     .text_size(px(12.))
-                                    .bg(rgb(CANVAS)),
+                                    .bg(crate::theme::color(CANVAS)),
                             ),
                     )
                     .child(
@@ -493,7 +493,10 @@ impl StorageSettings {
                                 button("storage-kind", kind.label())
                                     .disabled(self.saving || self.uploading || editing)
                                     .w_full()
-                                    .child(icon("caret-down", 12.).text_color(rgb(TEXT)))
+                                    .child(
+                                        icon("caret-down", 12.)
+                                            .text_color(crate::theme::color(TEXT)),
+                                    )
                                     .dropdown_menu(move |mut menu, _, _| {
                                         for next in ProviderKind::ALL {
                                             let weak = weak.clone();
@@ -718,7 +721,7 @@ impl Render for StorageSettings {
                 div()
                     .p(px(18.))
                     .rounded(px(10.))
-                    .bg(rgb(DROP))
+                    .bg(crate::theme::color(DROP))
                     .flex()
                     .flex_col()
                     .gap(px(6.))
@@ -744,9 +747,17 @@ impl Render for StorageSettings {
                     .p(px(12.))
                     .rounded(px(10.))
                     .border_1()
-                    .border_color(rgb(if selected { ORANGE_BORDER } else { BORDER }))
-                    .bg(rgb(if selected { ORANGE_SOFT } else { CANVAS }))
-                    .child(icon("folder-open", 22.).text_color(rgb(NAV_ACTIVE)))
+                    .border_color(crate::theme::color(if selected {
+                        ORANGE_BORDER
+                    } else {
+                        BORDER
+                    }))
+                    .bg(crate::theme::color(if selected {
+                        ORANGE_SOFT
+                    } else {
+                        CANVAS
+                    }))
+                    .child(icon("folder-open", 22.).text_color(crate::theme::color(NAV_ACTIVE)))
                     .child(
                         div()
                             .flex_1()
@@ -768,7 +779,7 @@ impl Render for StorageSettings {
                     .child(
                         button(SharedString::from(format!("delete-{name}")), "删除")
                             .ghost()
-                            .text_color(rgb(RED))
+                            .text_color(crate::theme::color(RED))
                             .disabled(self.saving || self.uploading || self.editor.is_some())
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.remove(remove_name.clone(), window, cx)

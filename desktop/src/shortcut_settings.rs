@@ -58,7 +58,7 @@ impl Render for ShortcutSettings {
             .child(
                 div()
                     .text_size(px(12.))
-                    .text_color(rgb(MUTED))
+                    .text_color(crate::theme::color(MUTED))
                     .child("关闭窗口或 ⌘W 后继续上传，⌘Q 退出。快捷操作自动上传并复制成功链接。"),
             )
             .child(
@@ -89,14 +89,14 @@ impl Render for ShortcutSettings {
             .child(
                 div()
                     .text_size(px(12.))
-                    .text_color(rgb(MUTED))
+                    .text_color(crate::theme::color(MUTED))
                     .child("例如 Cmd+Alt+U。需要修饰键；冲突时保留原快捷键，并显示注册失败。"),
             )
             .when_some(self.notice.clone(), |d, (text, error)| {
                 d.child(
                     div()
                         .text_size(px(12.))
-                        .text_color(rgb(if error { RED } else { GREEN }))
+                        .text_color(crate::theme::color(if error { RED } else { GREEN }))
                         .child(text),
                 )
             })

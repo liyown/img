@@ -66,7 +66,12 @@ fn main() -> anyhow::Result<()> {
                 assets::bytes("fonts/InterVariable.ttf").expect("bundled Inter font"),
             ])
             .expect("load Inter");
-        theme::init(cx);
+        theme::set_dark(
+            preferences::Preferences::load(&root)
+                .unwrap_or_default()
+                .dark_mode,
+            cx,
+        );
         cx.bind_keys([
             KeyBinding::new("secondary-b", ToggleSidebar, Some("ImgDesktop")),
             KeyBinding::new("secondary-u", ChooseFiles, Some("ImgDesktop")),

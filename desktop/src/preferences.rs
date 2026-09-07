@@ -86,6 +86,7 @@ fn html_escape(value: &str) -> String {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Preferences {
+    pub dark_mode: bool,
     pub library_view: LibraryView,
     pub copy_format: CopyFormat,
     pub auto_copy: bool,
@@ -96,6 +97,7 @@ pub struct Preferences {
 impl Default for Preferences {
     fn default() -> Self {
         Self {
+            dark_mode: false,
             library_view: LibraryView::Grid,
             copy_format: CopyFormat::Url,
             auto_copy: true,
@@ -161,6 +163,7 @@ mod tests {
             auto_copy: false,
             sidebar_collapsed: true,
             check_updates: true,
+            dark_mode: true,
         };
         preferences.save(temp.path()).unwrap();
         assert_eq!(Preferences::load(temp.path()).unwrap(), preferences);

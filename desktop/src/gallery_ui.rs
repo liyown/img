@@ -50,9 +50,9 @@ impl ImgDesktop {
             .p(px(12.))
             .mb(px(14.))
             .border_1()
-            .border_color(rgb(BORDER))
+            .border_color(crate::theme::color(BORDER))
             .rounded(px(12.))
-            .bg(rgb(CARD))
+            .bg(crate::theme::color(CARD))
             .flex_shrink_0()
             .child(
                 div()
@@ -94,7 +94,7 @@ impl ImgDesktop {
                             })),
                     ),
             )
-            .child(div().h(px(1.)).w_full().bg(rgb(BORDER)))
+            .child(div().h(px(1.)).w_full().bg(crate::theme::color(BORDER)))
             .child(
                 div()
                     .flex()
@@ -280,7 +280,7 @@ impl ImgDesktop {
                             .ghost()
                             .xsmall()
                             .h(px(22.))
-                            .text_color(rgb(ORANGE))
+                            .text_color(crate::theme::color(ORANGE))
                             .text_size(px(11.))
                             .disabled(self.queue.batch.is_some())
                             .label(if item.status == Status::Ready {
@@ -302,8 +302,8 @@ impl ImgDesktop {
             .p(px(12.))
             .rounded(px(16.))
             .border_1()
-            .border_color(rgb(BORDER))
-            .bg(rgb(CARD))
+            .border_color(crate::theme::color(BORDER))
+            .bg(crate::theme::color(CARD))
             .flex()
             .items_center()
             .gap(px(14.))
@@ -356,7 +356,7 @@ impl ImgDesktop {
                     .gap(px(4.))
                     .child(mono(status, 11., color))
                     .when(item.status == Status::Done, |this| {
-                        this.child(icon("check", 12.).text_color(rgb(GREEN)))
+                        this.child(icon("check", 12.).text_color(crate::theme::color(GREEN)))
                     }),
             );
         row.into_any_element()
@@ -369,7 +369,7 @@ impl ImgDesktop {
             .p(px(3.))
             .gap(px(2.))
             .border_1()
-            .border_color(rgb(BORDER))
+            .border_color(crate::theme::color(BORDER))
             .rounded(px(10.));
         for (view, title) in [(LibraryView::Grid, "网格"), (LibraryView::List, "列表")] {
             let selected = self.preferences.library_view == view;
@@ -383,8 +383,8 @@ impl ImgDesktop {
                     .px(px(12.))
                     .rounded(px(7.))
                     .text_size(px(12.))
-                    .bg(rgb(if selected { TEXT } else { CANVAS }))
-                    .text_color(rgb(if selected { CARD } else { MUTED }))
+                    .bg(crate::theme::color(if selected { TEXT } else { CANVAS }))
+                    .text_color(crate::theme::color(if selected { CARD } else { MUTED }))
                     .label(title)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if this.preferences.library_view != view {
@@ -400,11 +400,15 @@ impl ImgDesktop {
                         |this, phase| {
                             this.bg(phase.interpolate_between_clamped(
                                 0.0..=1.0,
-                                rgb(CANVAS),
-                                rgb(TEXT),
+                                crate::theme::color(CANVAS),
+                                crate::theme::color(TEXT),
                             ))
                             .text_color(
-                                phase.interpolate_between_clamped(0.0..=1.0, rgb(MUTED), rgb(CARD)),
+                                phase.interpolate_between_clamped(
+                                    0.0..=1.0,
+                                    crate::theme::color(MUTED),
+                                    crate::theme::color(CARD),
+                                ),
                             )
                         },
                     ),
@@ -418,9 +422,9 @@ impl ImgDesktop {
             .min_w(px(0.))
             .p(px(10.))
             .border_1()
-            .border_color(rgb(BORDER))
+            .border_color(crate::theme::color(BORDER))
             .rounded(px(14.))
-            .bg(rgb(CARD))
+            .bg(crate::theme::color(CARD))
             .flex()
             .flex_col()
             .gap(px(10.))
@@ -466,7 +470,7 @@ impl ImgDesktop {
             .h(px(74.))
             .px(px(12.))
             .border_b_1()
-            .border_color(rgb(BORDER))
+            .border_color(crate::theme::color(BORDER))
             .flex()
             .items_center()
             .gap(px(14.))

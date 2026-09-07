@@ -143,7 +143,7 @@ fn label(text: impl Into<SharedString>, size: f32, color: u32) -> Div {
     div()
         .text_size(px(size))
         .font_weight(FontWeight::NORMAL)
-        .text_color(rgb(color))
+        .text_color(crate::theme::color(color))
         .child(text.into())
 }
 fn mono(text: impl Into<SharedString>, size: f32, color: u32) -> Div {
@@ -154,7 +154,7 @@ fn dot(color: u32) -> Div {
         .size(px(8.))
         .flex_shrink_0()
         .rounded_full()
-        .bg(rgb(color))
+        .bg(crate::theme::color(color))
 }
 fn action(id: impl Into<ElementId>, text: &str) -> Button {
     Button::new(id)
@@ -171,7 +171,7 @@ fn progress(value: Option<u8>, color: u32) -> Div {
         .w_full()
         .h(px(6.))
         .flex_shrink_0()
-        .bg(rgb(TRACK))
+        .bg(crate::theme::color(TRACK))
         .rounded_full()
         .overflow_hidden()
         .when_some(value, |this, value| {
@@ -180,12 +180,12 @@ fn progress(value: Option<u8>, color: u32) -> Div {
                     .h_full()
                     .w(relative(value as f32 / 100.))
                     .rounded_full()
-                    .bg(rgb(color))
+                    .bg(crate::theme::color(color))
                     .when(color == ORANGE || color == ORANGE_BRIGHT, |this| {
                         this.bg(linear_gradient(
                             90.,
-                            linear_color_stop(rgb(ORANGE), 0.),
-                            linear_color_stop(rgb(0xffbb00), 1.),
+                            linear_color_stop(crate::theme::color(ORANGE), 0.),
+                            linear_color_stop(crate::theme::color(0xffbb00), 1.),
                         ))
                     }),
             )
@@ -214,7 +214,7 @@ fn dashed_outline() -> impl IntoElement {
             path.curve_to(point(left + r, top), point(left, top));
             path.close();
             if let Ok(path) = path.build() {
-                window.paint_path(path, rgb(ORANGE_BORDER));
+                window.paint_path(path, crate::theme::color(ORANGE_BORDER));
             }
         },
     )
@@ -238,8 +238,8 @@ fn thumbnail(item: &Item, cache: &Entity<crate::thumbnails::ThumbnailCache>) -> 
             .flex()
             .items_center()
             .justify_center()
-            .bg(rgb(DROP))
-            .child(icon("image", 24.).text_color(rgb(MUTED)))
+            .bg(crate::theme::color(DROP))
+            .child(icon("image", 24.).text_color(crate::theme::color(MUTED)))
             .into_any_element()
     } else {
         img(item.asset.clone())
@@ -898,7 +898,7 @@ impl ImgDesktop {
                     .xsmall()
                     .h(px(26.))
                     .px(px(5.))
-                    .text_color(rgb(ORANGE))
+                    .text_color(crate::theme::color(ORANGE))
                     .text_size(px(11.))
                     .label(if self.copied.as_ref() == Some(&item.id) {
                         "已复制"
@@ -916,8 +916,8 @@ impl ImgDesktop {
                     .h(px(26.))
                     .w(px(22.))
                     .p_0()
-                    .text_color(rgb(ORANGE))
-                    .child(icon("caret-down", 10.).text_color(rgb(ORANGE)))
+                    .text_color(crate::theme::color(ORANGE))
+                    .child(icon("caret-down", 10.).text_color(crate::theme::color(ORANGE)))
                     .tooltip("选择格式并复制")
                     .dropdown_menu(move |mut menu, _, _| {
                         menu = menu
@@ -1032,7 +1032,7 @@ impl ImgDesktop {
                     .w(px(220.))
                     .h(px(36.))
                     .rounded(px(7.))
-                    .bg(rgb(NAV_SELECTED)),
+                    .bg(crate::theme::color(NAV_SELECTED)),
             );
         for (page, title, symbol, count) in [
             (
@@ -1062,14 +1062,14 @@ impl ImgDesktop {
                     .rounded(px(7.))
                     .px(px(12.))
                     .bg(rgba(0x00000000))
-                    .text_color(rgb(color))
+                    .text_color(crate::theme::color(color))
                     .child(
                         div()
                             .flex()
                             .items_center()
                             .gap(px(10.))
                             .w_full()
-                            .child(icon(symbol, 18.).text_color(rgb(color)))
+                            .child(icon(symbol, 18.).text_color(crate::theme::color(color)))
                             .child(label(title, 13., color).font_weight(if active {
                                 FontWeight::SEMIBOLD
                             } else {
@@ -1090,8 +1090,8 @@ impl ImgDesktop {
             .h_full()
             .flex_shrink_0()
             .border_r_1()
-            .border_color(rgb(BORDER))
-            .bg(rgb(SIDEBAR))
+            .border_color(crate::theme::color(BORDER))
+            .bg(crate::theme::color(SIDEBAR))
             .flex()
             .flex_col()
             .child(nav)
@@ -1099,7 +1099,7 @@ impl ImgDesktop {
             .child(
                 div()
                     .border_t_1()
-                    .border_color(rgb(BORDER))
+                    .border_color(crate::theme::color(BORDER))
                     .p(px(10.))
                     .child(
                         Button::new("storage-summary")
@@ -1110,7 +1110,9 @@ impl ImgDesktop {
                             .h(px(54.))
                             .px(px(10.))
                             .rounded(px(7.))
-                            .child(icon("folder-open", 18.).text_color(rgb(NAV_TEXT)))
+                            .child(
+                                icon("folder-open", 18.).text_color(crate::theme::color(NAV_TEXT)),
+                            )
                             .child(
                                 div()
                                     .flex_1()
@@ -1147,7 +1149,7 @@ impl ImgDesktop {
             .flex()
             .items_center()
             .border_1()
-            .border_color(rgb(BORDER))
+            .border_color(crate::theme::color(BORDER))
             .rounded(px(12.));
         for (filter, title) in [
             (Filter::All, "全部"),
@@ -1165,8 +1167,8 @@ impl ImgDesktop {
                     .px(px(10.))
                     .text_size(px(12.))
                     .rounded(px(8.))
-                    .bg(rgb(if active { TEXT } else { CANVAS }))
-                    .text_color(rgb(if active { CARD } else { MUTED }))
+                    .bg(crate::theme::color(if active { TEXT } else { CANVAS }))
+                    .text_color(crate::theme::color(if active { CARD } else { MUTED }))
                     .label(title)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if this.filter != filter {
@@ -1182,11 +1184,15 @@ impl ImgDesktop {
                         |this, phase| {
                             this.bg(phase.interpolate_between_clamped(
                                 0.0..=1.0,
-                                rgb(CANVAS),
-                                rgb(TEXT),
+                                crate::theme::color(CANVAS),
+                                crate::theme::color(TEXT),
                             ))
                             .text_color(
-                                phase.interpolate_between_clamped(0.0..=1.0, rgb(MUTED), rgb(CARD)),
+                                phase.interpolate_between_clamped(
+                                    0.0..=1.0,
+                                    crate::theme::color(MUTED),
+                                    crate::theme::color(CARD),
+                                ),
                             )
                         },
                     ),
@@ -1204,8 +1210,8 @@ impl ImgDesktop {
             .rounded(px(6.))
             .accessibility_label("选择存储源")
             .px(px(12.))
-            .border_color(rgb(BORDER))
-            .bg(rgb(CARD))
+            .border_color(crate::theme::color(BORDER))
+            .bg(crate::theme::color(CARD))
             .child(
                 div()
                     .flex()
@@ -1221,7 +1227,7 @@ impl ImgDesktop {
                         12.,
                         TEXT,
                     ))
-                    .child(icon("caret-down", 10.).text_color(rgb(MUTED))),
+                    .child(icon("caret-down", 10.).text_color(crate::theme::color(MUTED))),
             )
             .dropdown_menu(move |mut menu, _, _| {
                 menu = menu.min_w(px(200.));
@@ -1286,14 +1292,14 @@ impl ImgDesktop {
                 .size(px(28.))
                 .p_0()
                 .rounded(px(5.))
-                .child(icon(symbol, 17.).text_color(rgb(NAV_TEXT)))
+                .child(icon(symbol, 17.).text_color(crate::theme::color(NAV_TEXT)))
         };
         TitleBar::new()
             .h(px(36.))
             .p_0()
-            .bg(rgb(CANVAS))
+            .bg(crate::theme::color(CANVAS))
             .border_b_1()
-            .border_color(rgb(BORDER))
+            .border_color(crate::theme::color(BORDER))
             .child(
                 div()
                     .h_full()
@@ -1304,9 +1310,13 @@ impl ImgDesktop {
                     .flex()
                     .items_center()
                     .gap(px(3.))
-                    .bg(rgb(if collapsed { CANVAS } else { SIDEBAR }))
+                    .bg(crate::theme::color(if collapsed {
+                        CANVAS
+                    } else {
+                        SIDEBAR
+                    }))
                     .when(!collapsed, |this| {
-                        this.border_r_1().border_color(rgb(BORDER))
+                        this.border_r_1().border_color(crate::theme::color(BORDER))
                     })
                     .child(
                         chrome_button("toggle-sidebar", toggle, "panel-left").on_click(
@@ -1347,7 +1357,7 @@ impl ImgDesktop {
                     .flex()
                     .items_center()
                     .gap(px(10.))
-                    .child(icon(symbol, 18.).text_color(rgb(NAV_TEXT)))
+                    .child(icon(symbol, 18.).text_color(crate::theme::color(NAV_TEXT)))
                     .child(
                         label(title, 13., TEXT)
                             .font_weight(FontWeight::SEMIBOLD)
@@ -1361,8 +1371,8 @@ impl ImgDesktop {
                                     .aria_label("搜索图片")
                                     .h(px(30.))
                                     .text_size(px(12.))
-                                    .bg(rgb(CANVAS))
-                                    .border_color(rgb(BORDER))
+                                    .bg(crate::theme::color(CANVAS))
+                                    .border_color(crate::theme::color(BORDER))
                                     .rounded(px(7.))
                                     .cleanable(true),
                             ),
@@ -1382,7 +1392,7 @@ impl ImgDesktop {
         .accessibility_label("选择链接格式")
         .outline()
         .px(px(10.))
-        .child(icon("caret-down", 10.).text_color(rgb(NAV_TEXT)))
+        .child(icon("caret-down", 10.).text_color(crate::theme::color(NAV_TEXT)))
         .dropdown_menu(move |mut menu, _, _| {
             menu = menu.min_w(px(190.)).item(PopupMenuItem::label("链接格式"));
             for format in CopyFormat::ALL {
@@ -1505,14 +1515,16 @@ impl ImgDesktop {
                     .flex_shrink_0()
                     .rounded(px(16.))
                     .relative()
-                    .bg(rgb(DROP))
+                    .bg(crate::theme::color(DROP))
                     .child(dashed_outline())
                     .flex()
                     .flex_col()
                     .items_center()
                     .justify_center()
                     .drag_over::<ExternalPaths>(|style, _, _, _| {
-                        style.bg(rgb(ACTIVE_CARD)).border_color(rgb(ORANGE))
+                        style
+                            .bg(crate::theme::color(ACTIVE_CARD))
+                            .border_color(crate::theme::color(ORANGE))
                     })
                     .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
                         this.import_paths(paths.0.to_vec(), cx)
@@ -1524,8 +1536,11 @@ impl ImgDesktop {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .bg(rgb(ACTIVE_CARD))
-                            .child(icon("upload-simple", 24.).text_color(rgb(NAV_ACTIVE))),
+                            .bg(crate::theme::color(ACTIVE_CARD))
+                            .child(
+                                icon("upload-simple", 24.)
+                                    .text_color(crate::theme::color(NAV_ACTIVE)),
+                            ),
                     )
                     .child(
                         label(
@@ -1910,8 +1925,8 @@ impl ImgDesktop {
                 .p(px(22.))
                 .rounded(px(16.))
                 .border_1()
-                .border_color(rgb(BORDER))
-                .bg(rgb(CARD))
+                .border_color(crate::theme::color(BORDER))
+                .bg(crate::theme::color(CARD))
                 .flex()
                 .flex_col()
                 .gap(px(18.))
@@ -1951,7 +1966,7 @@ impl ImgDesktop {
                                 Switch::new("auto-copy")
                                     .accessibility_label("上传后自动复制")
                                     .checked(self.preferences.auto_copy)
-                                    .color(rgb(NAV_ACTIVE))
+                                    .color(crate::theme::color(NAV_ACTIVE))
                                     .on_click(cx.listener(|this, checked: &bool, _, cx| {
                                         this.preferences.auto_copy = *checked;
                                         this.save_preferences(cx);
@@ -1961,7 +1976,7 @@ impl ImgDesktop {
                     .child(
                         div()
                             .border_t_1()
-                            .border_color(rgb(BORDER))
+                            .border_color(crate::theme::color(BORDER))
                             .pt(px(16.))
                             .flex()
                             .items_center()
@@ -1978,12 +1993,30 @@ impl ImgDesktop {
                             .flex()
                             .items_center()
                             .justify_between()
+                            .child(row("深色主题", "切换应用颜色，偏好会保留。"))
+                            .child(
+                                Switch::new("dark-mode")
+                                    .checked(self.preferences.dark_mode)
+                                    .accessibility_label("深色主题")
+                                    .on_click(cx.listener(|this, checked: &bool, window, cx| {
+                                        this.preferences.dark_mode = *checked;
+                                        crate::theme::set_dark(*checked, cx);
+                                        this.save_preferences(cx);
+                                        window.refresh();
+                                    })),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
                             .child(row("收起侧边栏", "隐藏侧栏以腾出空间，左上角可随时展开。"))
                             .child(
                                 Switch::new("sidebar-preference")
                                     .accessibility_label("收起侧边栏")
                                     .checked(self.preferences.sidebar_collapsed)
-                                    .color(rgb(NAV_ACTIVE))
+                                    .color(crate::theme::color(NAV_ACTIVE))
                                     .on_click(cx.listener(|this, checked: &bool, _, cx| {
                                         this.preferences.sidebar_collapsed = *checked;
                                         this.save_preferences(cx);
@@ -1993,7 +2026,7 @@ impl ImgDesktop {
                     .child(
                         div()
                             .border_t_1()
-                            .border_color(rgb(BORDER))
+                            .border_color(crate::theme::color(BORDER))
                             .pt(px(16.))
                             .flex()
                             .items_center()
@@ -2171,7 +2204,7 @@ impl ImgDesktop {
                         .h(px(112.))
                         .rounded(px(16.))
                         .border_1()
-                        .border_color(rgb(BORDER))
+                        .border_color(crate::theme::color(BORDER))
                         .flex()
                         .flex_col()
                         .items_center()
@@ -2244,7 +2277,7 @@ impl ImgDesktop {
             .flex_shrink_0()
             .px(px(24.))
             .border_t_1()
-            .border_color(rgb(BORDER))
+            .border_color(crate::theme::color(BORDER))
             .flex()
             .items_center()
             .gap(px(12.));
@@ -2321,7 +2354,7 @@ impl ImgDesktop {
                 .w(px(width))
                 .p(px(20.))
                 .rounded(px(18.))
-                .bg(rgb(CANVAS))
+                .bg(crate::theme::color(CANVAS))
                 .close_button(false)
                 .title(
                     div()
@@ -2420,7 +2453,7 @@ impl Render for ImgDesktop {
                     .flex()
                     .items_center()
                     .gap(px(12.))
-                    .bg(rgb(ORANGE_SOFT))
+                    .bg(crate::theme::color(ORANGE_SOFT))
                     .child(label(text.clone(), 12., if *error { RED } else { MUTED }).flex_1())
                     .child(
                         Button::new("dismiss-notice")
@@ -2443,8 +2476,8 @@ impl Render for ImgDesktop {
             .track_focus(&self.focus)
             .relative()
             .size_full()
-            .bg(rgb(CANVAS))
-            .text_color(rgb(TEXT))
+            .bg(crate::theme::color(CANVAS))
+            .text_color(crate::theme::color(TEXT))
             .font_family("Inter Variable")
             .text_size(px(13.))
             .line_height(relative(1.3))
