@@ -3,6 +3,7 @@ mod management;
 mod markdown;
 mod platform;
 mod serve;
+mod watch;
 use anyhow::{Result, ensure};
 use args::{Cli, Command};
 use clap::{CommandFactory, Parser};
@@ -59,6 +60,8 @@ fn normalized_args(mut args: Vec<OsString>) -> Vec<OsString> {
             "upload",
             "check",
             "import-config",
+            "watch",
+            "restore-document",
             "fetch",
             "screenshot",
             "serve",
@@ -117,6 +120,34 @@ fn report(
 fn run(cli: Cli, control: &Control) -> Result<i32> {
     let path = cli.config.unwrap_or(config::global_path()?);
     match cli.command {
+        Command::RestoreDocument { backup, target } => {
+            ensure!(backup != target, "backup and target must differ");
+            let original = std::fs::read(&target)?;
+            let saved =
+                markdown::replace_with_backup(&target, &original, &std::fs::read(&backup)?)?;
+            println!(
+                "Restored document; previous contents saved to {}",
+                saved.display()
+            );
+        }
+        Command::Watch {
+            directory,
+            processing,
+            interval,
+            new_only,
+        } => {
+            let cfg = load(&path)?;
+            let provider = provider(&cfg, &processing.provider)?;
+            return watch::run(
+                &directory,
+                &provider,
+                &cfg.upload,
+                &processing.options(),
+                interval,
+                new_only,
+                control,
+            );
+        }
         Command::ImportConfig { file, apply } => management::import_config(&path, &file, apply)?,
         Command::Check {
             urls,
@@ -158,6 +189,23 @@ fn run(cli: Cli, control: &Control) -> Result<i32> {
         Command::Config { command } => management::config(&path, command)?,
         Command::Provider { command } => management::provider(&path, command)?,
         Command::Upload(v) => {
+            let mut v = v;
+            if v.recursive {
+                let mut files = vec![];
+                for input in &v.files {
+                    if network::is_url(input) {
+                        files.push(input.clone());
+                    } else {
+                        files.extend(
+                            img_records::files::collect(&[input.into()], true, 10_000)?
+                                .into_iter()
+                                .map(|p| p.to_string_lossy().into_owned()),
+                        );
+                    }
+                }
+                ensure!(files.len() <= 10_000, "image batch exceeds 10000 files");
+                v.files = files;
+            }
             let setup = (|| {
                 ensure!(
                     v.name.is_empty() || v.files.len() == 1,
@@ -294,15 +342,37 @@ fn run(cli: Cli, control: &Control) -> Result<i32> {
             );
         }
         Command::Rewrite(v) => {
+            if v.dry_run {
+                let mut reports = vec![];
+                if v.files.is_empty() {
+                    let mut doc = String::new();
+                    std::io::stdin().read_to_string(&mut doc)?;
+                    reports.push(serde_json::json!({"document":"stdin", "references":markdown::preview(&doc,&std::env::current_dir()?)}));
+                } else {
+                    for file in &v.files {
+                        let path = file.canonicalize()?;
+                        reports.push(serde_json::json!({"document":file,"references":markdown::preview(&std::fs::read_to_string(&path)?,path.parent().unwrap())}));
+                    }
+                }
+                println!("{}", serde_json::to_string_pretty(&reports)?);
+                return Ok(0);
+            }
+            if let Some(report) = &v.report {
+                ensure!(
+                    !report.exists(),
+                    "report destination already exists; choose a new file"
+                );
+            }
             let cfg = load(&path)?;
             let p = provider(&cfg, &v.processing.provider)?;
             let opts = v.processing.options_for("rewrite");
             let mut total_ok = 0;
             let mut total_failed = 0;
+            let mut results = vec![];
             if v.files.is_empty() {
                 let mut doc = String::new();
                 std::io::stdin().read_to_string(&mut doc)?;
-                let (out, ok, failed) = markdown::rewrite(
+                let (out, ok, failed, rows) = markdown::rewrite(
                     &doc,
                     &std::env::current_dir()?,
                     &p,
@@ -311,6 +381,7 @@ fn run(cli: Cli, control: &Control) -> Result<i32> {
                     control,
                 )?;
                 print!("{out}");
+                results.extend(rows);
                 total_ok += ok;
                 total_failed += failed;
             } else {
@@ -319,14 +390,18 @@ fn run(cli: Cli, control: &Control) -> Result<i32> {
                     let result = (|| -> Result<()> {
                         let doc = std::fs::read_to_string(file)?;
                         let dir = file.canonicalize()?.parent().unwrap().to_path_buf();
-                        let (out, ok, failed) =
+                        let (out, ok, failed, rows) =
                             markdown::rewrite(&doc, &dir, &p, &cfg.upload, &opts, control)?;
+                        results.extend(rows);
                         if v.stdout {
                             print!("{out}");
                         } else if out != doc {
-                            let permissions = file.metadata()?.permissions();
-                            config::write_atomic(file, out.as_bytes())?;
-                            std::fs::set_permissions(file, permissions)?;
+                            let backup = markdown::replace_with_backup(
+                                file,
+                                doc.as_bytes(),
+                                out.as_bytes(),
+                            )?;
+                            eprintln!("Backup: {}", output::clean(&backup.to_string_lossy()));
                         }
                         total_ok += ok;
                         total_failed += failed;
@@ -345,6 +420,16 @@ fn run(cli: Cli, control: &Control) -> Result<i32> {
                         total_failed += 1;
                     }
                 }
+            }
+            if let Some(report) = &v.report {
+                let parent = report
+                    .parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .unwrap_or(Path::new("."));
+                let mut output = tempfile::NamedTempFile::new_in(parent)?;
+                output.write_all(&serde_json::to_vec_pretty(&results)?)?;
+                output.as_file().sync_all()?;
+                output.persist_noclobber(report).map_err(|e| e.error)?;
             }
             return Ok(if total_failed == 0 {
                 0

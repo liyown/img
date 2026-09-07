@@ -399,8 +399,8 @@ pub fn remove_cache(root: &Path, removed: &[Item]) {
 // This snapshot lives only in memory and is never included in queue JSON or diagnostics.
 #[derive(Clone)]
 pub struct UploadConfiguration {
-    config: String,
-    environment: std::collections::BTreeMap<String, String>,
+    pub(crate) config: String,
+    pub(crate) environment: std::collections::BTreeMap<String, String>,
 }
 impl UploadConfiguration {
     pub fn capture(target: &str) -> Result<Self> {

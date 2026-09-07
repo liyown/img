@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, ensure};
 use img_core::{
     config::Upload,
     control::Control,
@@ -102,7 +102,7 @@ pub fn rewrite(
     c: &Upload,
     o: &Options,
     control: &Control,
-) -> Result<(String, usize, usize)> {
+) -> Result<(String, usize, usize, Vec<upload::FileResult>)> {
     let refs = references(doc);
     let mut original = vec![];
     for r in &refs {
@@ -124,9 +124,9 @@ pub fn rewrite(
     let mut mapping = HashMap::new();
     let mut ok = 0;
     let mut failed = 0;
-    for (src, r) in original.into_iter().zip(results) {
+    for (src, r) in original.into_iter().zip(&results) {
         if r.success {
-            mapping.insert(src, r.url);
+            mapping.insert(src, r.url.clone());
             ok += 1;
         } else {
             eprintln!(
@@ -137,11 +137,63 @@ pub fn rewrite(
             failed += 1;
         }
     }
-    Ok((apply(doc, &refs, &mapping), ok, failed))
+    Ok((apply(doc, &refs, &mapping), ok, failed, results))
+}
+pub fn preview(doc: &str, dir: &Path) -> Vec<serde_json::Value> {
+    references(doc)
+        .into_iter()
+        .map(|r| {
+            let remote = network::is_url(&r.source);
+            let path = dir.join(&r.source);
+            serde_json::json!({"source":r.source,"remote":remote,"exists":remote || path.is_file()})
+        })
+        .collect()
+}
+pub fn replace_with_backup(
+    file: &Path,
+    expected: &[u8],
+    changed: &[u8],
+) -> Result<std::path::PathBuf> {
+    use std::io::Write;
+    ensure!(
+        std::fs::read(file)? == expected,
+        "document changed during upload; refusing to overwrite edits"
+    );
+    let backup = file.with_file_name(format!(
+        "{}.img-backup-{}",
+        file.file_name().unwrap().to_string_lossy(),
+        uuid::Uuid::new_v4()
+    ));
+    let mut saved = tempfile::NamedTempFile::new_in(
+        file.parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new(".")),
+    )?;
+    saved.write_all(expected)?;
+    saved.as_file().sync_all()?;
+    saved.persist_noclobber(&backup).map_err(|e| e.error)?;
+    let permissions = file.metadata()?.permissions();
+    img_core::config::write_atomic(file, changed)?;
+    std::fs::set_permissions(file, permissions)?;
+    Ok(backup)
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn backup_preserves_original_and_rejects_concurrent_edits() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("article.md");
+        std::fs::write(&file, b"original").unwrap();
+        let backup = replace_with_backup(&file, b"original", b"rewritten").unwrap();
+        assert_eq!(std::fs::read(&backup).unwrap(), b"original");
+        assert_eq!(std::fs::read(&file).unwrap(), b"rewritten");
+        assert!(replace_with_backup(&file, b"original", b"lost edit").is_err());
+        let undo =
+            replace_with_backup(&file, b"rewritten", &std::fs::read(backup).unwrap()).unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"original");
+        assert_eq!(std::fs::read(undo).unwrap(), b"rewritten");
+    }
     #[test]
     fn preserves_prose_titles_alt_and_code() {
         let doc = "The file (a.png) stays. ![alt](a.png \"title\") <img src='b.jpg' alt='a.png'> `![](skip.png)`\n```md\n![](code.png)\n```\n![](<path with spaces.png>)";

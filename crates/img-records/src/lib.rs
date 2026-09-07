@@ -1,6 +1,7 @@
 //! Cross-process upload inbox. Each immutable directory is published atomically;
 //! desktop queue ownership stays with the desktop process.
 pub mod credentials;
+pub mod files;
 pub mod migration;
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};

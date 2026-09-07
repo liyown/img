@@ -9,6 +9,8 @@ mod performance;
 mod queue;
 #[path = "quick_upload.rs"]
 mod quick_upload;
+#[path = "workflows.rs"]
+mod workflows;
 
 use crate::{
     assets::icon,
@@ -87,6 +89,8 @@ pub struct ImgDesktop {
     queue: queue::UploadController,
     records_revision: u64,
     inbox_busy: bool,
+    workflow_busy: bool,
+    watch_control: Option<Control>,
     selection: crate::selection::Selection,
     record_index: std::cell::RefCell<crate::record_index::RecordIndex>,
     list_scroll: UniformListScrollHandle,
@@ -396,6 +400,8 @@ impl ImgDesktop {
             queue: queue::UploadController::new(root.clone(), items, persistence_ok),
             records_revision: 1,
             inbox_busy: false,
+            workflow_busy: false,
+            watch_control: None,
             record_index: Default::default(),
             selection: Default::default(),
             list_scroll: UniformListScrollHandle::new(),
@@ -566,9 +572,9 @@ impl ImgDesktop {
         }
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,
-            directories: false,
+            directories: true,
             multiple: true,
-            prompt: Some("选择图片".into()),
+            prompt: Some("选择图片或文件夹".into()),
         });
         cx.spawn(async move |this, cx| match paths.await {
             Ok(Ok(Some(paths))) => {
@@ -600,6 +606,10 @@ impl ImgDesktop {
         let target = self.provider.clone();
         let max_bytes = self.upload_options.max_bytes();
         let task = cx.background_executor().spawn(async move {
+            let paths = match img_records::files::collect(&paths, true, model::MAX_BATCH) {
+                Ok(paths) => paths,
+                Err(error) => return vec![Err(error.to_string())],
+            };
             paths
                 .into_iter()
                 .map(|path| {
@@ -1923,6 +1933,7 @@ impl ImgDesktop {
             .child(card().child(self.storage_settings.clone()))
             .child(card().child(self.upload_settings.clone()))
             .child(card().child(self.shortcut_settings.clone()))
+            .child(card().child(self.workflow_controls(cx)))
             .child(
                 card()
                     .child(label("链接与剪贴板", 16., TEXT).font_weight(FontWeight::SEMIBOLD))

@@ -95,23 +95,29 @@ pub fn run(mut command: Command, control: &Control) -> Result<ProcessOutput> {
             stopped,
         });
     }
+    if !command
+        .get_envs()
+        .any(|(key, _)| key == "IMG_DESKTOP_UPLOAD")
+    {
+        command.env("IMG_DESKTOP_UPLOAD", "1");
+    }
     let mut child = command
-        .env("IMG_DESKTOP_UPLOAD", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .context("上传引擎无法启动，请重新安装应用")?;
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+    let mut stderr = child.stderr.take().unwrap();
     let reader = std::thread::spawn(move || {
         let mut bytes = vec![];
-        let _ = stdout.take(2 * 1024 * 1024).read_to_end(&mut bytes);
+        let _ = (&mut stdout).take(2 * 1024 * 1024).read_to_end(&mut bytes);
+        let _ = std::io::copy(&mut stdout, &mut std::io::sink());
         bytes
     });
     let progress = control.progress.clone();
     let events = std::thread::spawn(move || {
-        for line in BufReader::new(stderr.take(8 * 1024 * 1024))
+        for line in BufReader::new((&mut stderr).take(8 * 1024 * 1024))
             .lines()
             .map_while(Result::ok)
         {
@@ -119,6 +125,7 @@ pub fn run(mut command: Command, control: &Control) -> Result<ProcessOutput> {
                 *progress.lock().unwrap() = event;
             }
         }
+        let _ = std::io::copy(&mut stderr, &mut std::io::sink());
     });
     let mut stopped = 0;
     let status = loop {

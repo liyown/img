@@ -17,6 +17,18 @@ pub struct Cli {
 }
 #[derive(Subcommand)]
 pub enum Command {
+    /// Restore a Markdown document from a backup created by img rewrite
+    RestoreDocument { backup: PathBuf, target: PathBuf },
+    /// Upload new or changed images after they settle in a directory
+    Watch {
+        directory: PathBuf,
+        #[command(flatten)]
+        processing: Processing,
+        #[arg(long, default_value_t = 2, value_parser=clap::value_parser!(u64).range(1..=3600))]
+        interval: u64,
+        #[arg(long, help = "Ignore files already present when watching starts")]
+        new_only: bool,
+    },
     /// Preview or import PicGo/PicList storage configurations
     ImportConfig {
         file: PathBuf,
@@ -110,7 +122,9 @@ impl Processing {
         img_core::upload::Options {
             reuse: self.reuse,
             force: self.force,
-            record_origin: if self.no_history || std::env::var_os("IMG_DESKTOP_UPLOAD").is_some() {
+            record_origin: if self.no_history
+                || std::env::var("IMG_DESKTOP_UPLOAD").as_deref() == Ok("1")
+            {
                 None
             } else {
                 Some(if self.origin.is_empty() {
@@ -131,6 +145,8 @@ impl Processing {
 }
 #[derive(Args)]
 pub struct Upload {
+    #[arg(long, help = "Include images in directories and their subdirectories")]
+    pub recursive: bool,
     #[command(flatten)]
     pub processing: Processing,
     #[arg(required=true,num_args=1..)]
@@ -189,6 +205,13 @@ pub struct Serve {
 }
 #[derive(Args)]
 pub struct Rewrite {
+    #[arg(
+        long,
+        help = "List image references without uploading or changing documents"
+    )]
+    pub dry_run: bool,
+    #[arg(long, help = "Write per-image successes and failures to a JSON report")]
+    pub report: Option<PathBuf>,
     #[command(flatten)]
     pub processing: Processing,
     pub files: Vec<PathBuf>,
