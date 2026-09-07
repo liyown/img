@@ -74,3 +74,36 @@ pub fn apply_pending(root: &Path) -> Result<()> {
     std::fs::remove_file(root.join("restore-request.json")).context("无法清除恢复请求")?;
     Ok(())
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn changed_backup_is_rejected_before_replacing_data() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("data");
+        std::fs::create_dir(&root).unwrap();
+        let source = temp.path().join("backup");
+        std::fs::create_dir(&source).unwrap();
+        let config = temp.path().join("config.toml");
+        std::fs::write(&config, b"version=1").unwrap();
+        std::fs::write(source.join("manifest.json"), b"changed").unwrap();
+        let request = Request {
+            source,
+            config: config.clone(),
+            credentials: false,
+            manifest: b"confirmed".to_vec(),
+        };
+        std::fs::write(
+            root.join("restore-request.json"),
+            serde_json::to_vec(&request).unwrap(),
+        )
+        .unwrap();
+        apply_pending(&root).unwrap();
+        assert_eq!(std::fs::read(config).unwrap(), b"version=1");
+        assert!(!pending(&root));
+        let (_, failed): (String, bool) =
+            serde_json::from_slice(&std::fs::read(root.join("restore-result.json")).unwrap())
+                .unwrap();
+        assert!(failed);
+    }
+}

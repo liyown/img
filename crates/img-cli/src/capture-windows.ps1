@@ -50,4 +50,6 @@ public sealed class ImgCapture : Form {
   }
 }
 '@
-[ImgCapture]::Capture($env:IMG_CAPTURE_PATH,$env:IMG_CAPTURE_MODE)
+if ($env:IMG_CAPTURE_VALIDATE -ne '1') {
+  [ImgCapture]::Capture($env:IMG_CAPTURE_PATH,$env:IMG_CAPTURE_MODE)
+}

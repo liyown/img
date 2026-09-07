@@ -187,7 +187,9 @@ fn create_tray(
     use ksni::blocking::TrayMethods;
     let rgba = tray_pixels()?;
     let pixels = rgba
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|p| [p[3], p[0], p[1], p[2]])
         .collect();
     Ok(LinuxTray { sender, pixels }.spawn()?)

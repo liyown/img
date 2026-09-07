@@ -16,6 +16,7 @@ struct RemotePage {
 }
 #[derive(Default)]
 pub(super) struct RemoteState {
+    snapshot: Option<std::sync::Arc<model::UploadConfiguration>>,
     items: Vec<RemoteItem>,
     prefix: String,
     next: Option<String>,
@@ -43,6 +44,7 @@ impl ImgDesktop {
                         action("remote-root", "打开根目录")
                             .disabled(self.remote.busy || self.provider.is_empty())
                             .on_click(cx.listener(|this, _, _, cx| {
+                                this.remote = Default::default();
                                 this.load_remote(String::new(), None, cx)
                             })),
                     )
@@ -186,19 +188,27 @@ impl ImgDesktop {
             return;
         }
         self.remote.busy = true;
-        let target = self.provider.clone();
+        let snapshot = self.remote.snapshot.clone();
+        let target = if snapshot.is_some() {
+            self.remote.provider.clone()
+        } else {
+            self.provider.clone()
+        };
         let binary = self.engine.clone();
         let root = self.root.clone();
         let next_prefix = prefix.clone();
         let append =
             cursor.is_some() && self.remote.provider == target && self.remote.prefix == prefix;
         let task = cx.background_executor().spawn(async move {
-            let snapshot = model::UploadConfiguration::capture(&target)?;
+            let snapshot = match snapshot {
+                Some(snapshot) => snapshot,
+                None => std::sync::Arc::new(model::UploadConfiguration::capture(&target)?),
+            };
             let mut file = tempfile::NamedTempFile::new_in(&root)?;
             file.write_all(snapshot.config.as_bytes())?;
             let mut command = std::process::Command::new(binary);
             command
-                .envs(snapshot.environment)
+                .envs(&snapshot.environment)
                 .env("IMG_DATA_DIR", &root)
                 .arg("--config")
                 .arg(file.path())
@@ -217,14 +227,15 @@ impl ImgDesktop {
                 "无法读取远端文件，请检查存储源是否支持浏览以及目录读取权限"
             );
             let page: RemotePage = serde_json::from_slice(&output.stdout)?;
-            Ok::<_, anyhow::Error>((target, page))
+            Ok::<_, anyhow::Error>((target, page, snapshot))
         });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
                 this.remote.busy = false;
                 match result {
-                    Ok((provider, page)) => {
+                    Ok((provider, page, snapshot)) => {
+                        this.remote.snapshot = Some(snapshot);
                         if !append {
                             this.remote.items.clear();
                         }
@@ -251,12 +262,8 @@ impl ImgDesktop {
             return;
         }
         let provider = self.remote.provider.clone();
-        let snapshot = match model::UploadConfiguration::capture(&provider) {
-            Ok(snapshot) => snapshot,
-            Err(e) => {
-                self.message(e.to_string(), true, cx);
-                return;
-            }
+        let Some(snapshot) = self.remote.snapshot.clone() else {
+            return;
         };
         self.remote.busy = true;
         let prompt = crate::i18n::prompt(
@@ -288,7 +295,7 @@ impl ImgDesktop {
                     file.write_all(snapshot.config.as_bytes())?;
                     let mut command = std::process::Command::new(binary);
                     command
-                        .envs(snapshot.environment)
+                        .envs(&snapshot.environment)
                         .env("IMG_DATA_DIR", root)
                         .arg("--config")
                         .arg(file.path())

@@ -36,6 +36,12 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo test --locked --workspace
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: Compile Windows region capture helper
+        if: runner.os == 'Windows'
+        shell: powershell
+        env:
+          IMG_CAPTURE_VALIDATE: '1'
+        run: ./crates/img-cli/src/capture-windows.ps1
       - name: Build local release packages without a release tag
         if: runner.os == 'macOS'
         run: ./desktop/package.sh --unsigned

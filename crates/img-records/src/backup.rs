@@ -43,6 +43,13 @@ fn allowed(name: &str) -> bool {
     ) || name.starts_with("images/")
         || name.starts_with("upload-inbox/")
 }
+fn restored_cache_path(source: &str, previous_root: &Path, new_root: &Path) -> Option<PathBuf> {
+    // Normalize separators from the exporting OS before using this OS's Path parser.
+    let source = source.replace('\\', "/");
+    let previous = previous_root.to_string_lossy().replace('\\', "/");
+    let relative = source.strip_prefix(&format!("{}/", previous.trim_end_matches('/')))?;
+    (safe_name(relative) && relative.starts_with("images/")).then(|| new_root.join(relative))
+}
 fn write(path: &Path, bytes: &[u8]) -> Result<()> {
     std::fs::create_dir_all(path.parent().context("missing parent")?)?;
     let mut file = tempfile::NamedTempFile::new_in(path.parent().unwrap())?;
@@ -62,8 +69,17 @@ fn credentials(value: &mut toml::Value, include: bool, keys: &mut Vec<String>, s
                     keys.push(key.into());
                 }
             }
-            if !include && sensitive && !s.contains("\x24{") {
-                *s = String::new();
+            if !include && sensitive {
+                let mut residual = s.clone();
+                while let Some(start) = residual.find("\x24{") {
+                    let Some(end) = residual[start..].find('}') else {
+                        break;
+                    };
+                    residual.replace_range(start..=start + end, "");
+                }
+                if !matches!(residual.trim(), "" | "Bearer" | "Basic") {
+                    *s = String::new();
+                }
             }
         }
         toml::Value::Table(values) => {
@@ -173,6 +189,9 @@ pub fn export(
                 .to_string_lossy()
                 .replace('\\', "/");
             if name.starts_with("upload-inbox/.") {
+                continue;
+            }
+            if !options.cache && name.starts_with("upload-inbox/") && name.ends_with("/image") {
                 continue;
             }
             add(&name, std::fs::read(&path)?)?;
@@ -317,19 +336,9 @@ pub fn restore(
                     for key in ["source", "thumbnail"] {
                         row[key] = row[key]
                             .as_str()
-                            .and_then(|s| Path::new(s).strip_prefix(&manifest.root).ok())
-                            .filter(|p| {
-                                manifest.options.cache
-                                    && p.starts_with("images")
-                                    && !p
-                                        .components()
-                                        .any(|c| matches!(c, std::path::Component::ParentDir))
-                            })
-                            .map(|p| {
-                                serde_json::Value::String(
-                                    root.join(p).to_string_lossy().into_owned(),
-                                )
-                            })
+                            .filter(|_| manifest.options.cache)
+                            .and_then(|s| restored_cache_path(s, &manifest.root, root))
+                            .map(|p| serde_json::Value::String(p.to_string_lossy().into_owned()))
                             .unwrap_or(serde_json::Value::Null);
                     }
                     if row["status"] == "Running" {
@@ -389,6 +398,73 @@ pub fn restore(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cache_paths_restore_across_operating_systems_without_path_escape() {
+        let root = Path::new("/new");
+        assert_eq!(
+            restored_cache_path(r"C:\old\images\id\a.png", Path::new(r"C:\old"), root),
+            Some(root.join("images/id/a.png"))
+        );
+        assert!(
+            restored_cache_path(r"C:\old\images\..\secret", Path::new(r"C:\old"), root).is_none()
+        );
+        assert!(restored_cache_path("/original/photo.png", Path::new("/old"), root).is_none());
+    }
+    #[test]
+    fn record_only_backup_excludes_images_and_mixed_secrets() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("data");
+        write(&root.join("upload-inbox/id/record.json"), b"{}").unwrap();
+        write(&root.join("upload-inbox/id/image"), b"private image").unwrap();
+        let config = temp.path().join("config.toml");
+        std::fs::write(&config,"version=1\n[providers.x]\ntoken='private-prefix-\x24{KEY}'\n[providers.x.headers]\nAuthorization='Bearer \x24{KEY}'").unwrap();
+        let destination = temp.path().join("backup");
+        let manifest = export(
+            &root,
+            &config,
+            &destination,
+            Options {
+                config: true,
+                records: true,
+                cache: false,
+                credentials: false,
+            },
+        )
+        .unwrap();
+        assert!(manifest.files.contains_key("upload-inbox/id/record.json"));
+        assert!(!manifest.files.contains_key("upload-inbox/id/image"));
+        let text = std::fs::read_to_string(destination.join("config.toml")).unwrap();
+        assert!(!text.contains("private-prefix"));
+        assert!(text.contains("Bearer"));
+    }
+    #[test]
+    fn apply_failure_rolls_back_already_replaced_config() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_root = temp.path().join("source");
+        write(&source_root.join("queue.json"), b"invalid queue").unwrap();
+        let config = temp.path().join("config.toml");
+        std::fs::write(&config, "version=1\n").unwrap();
+        let backup = temp.path().join("backup");
+        export(
+            &source_root,
+            &config,
+            &backup,
+            Options {
+                config: true,
+                records: true,
+                cache: false,
+                credentials: false,
+            },
+        )
+        .unwrap();
+        let target = temp.path().join("target");
+        write(&target.join("queue.json"), b"[]").unwrap();
+        let before = b"version=1\n[providers.old]\ntoken='preserve-exactly'";
+        std::fs::write(&config, before).unwrap();
+        assert!(restore(&backup, &target, &config, false).is_err());
+        assert_eq!(std::fs::read(config).unwrap(), before);
+        assert_eq!(std::fs::read(target.join("queue.json")).unwrap(), b"[]");
+    }
     #[test]
     fn roundtrip_rebases_paths_and_tampering_never_changes_target() {
         let temp = tempfile::tempdir().unwrap();
