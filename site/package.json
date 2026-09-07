@@ -4,15 +4,31 @@
   "version": "0.3.0",
   "type": "module",
   "packageManager": "pnpm@11.10.0",
-  "engines": { "node": ">=24 <27" },
+  "engines": {
+    "node": ">=24 <27"
+  },
   "scripts": {
     "dev": "astro dev --host 127.0.0.1",
     "check": "astro check",
-    "build": "astro build",
+    "build": "astro build && node scripts/finalize-build.mjs",
     "preview": "astro preview --host 127.0.0.1",
     "test": "node --test tests/*.test.mjs",
-    "verify": "node scripts/verify-build.mjs"
+    "verify": "node scripts/verify-build.mjs",
+    "assets": "node scripts/generate-assets.mjs",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
-  "dependencies": { "astro": "7.3.1", "gsap": "3.15.0" },
-  "devDependencies": { "@astrojs/check": "0.9.9", "typescript": "6.0.3", "sharp": "0.34.5" }
+  "dependencies": {
+    "astro": "7.3.1",
+    "gsap": "3.15.0"
+  },
+  "devDependencies": {
+    "@astrojs/check": "0.9.9",
+    "jsdom": "30.0.1",
+    "lighthouse": "13.4.1",
+    "prettier": "3.9.6",
+    "prettier-plugin-astro": "0.14.1",
+    "sharp": "0.34.5",
+    "typescript": "6.0.3"
+  }
 }

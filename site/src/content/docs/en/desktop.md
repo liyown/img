@@ -1,11 +1,12 @@
 ---
-title: "Desktop guide"
-description: "Use the library, queue, copy formats, settings, and background quick actions."
+title: 'Desktop guide'
+description: 'Use the library, queue, copy formats, settings, and background quick actions.'
 locale: en
 topic: desktop
 order: 2
 ---
-## Import first. Upload when ready.
+
+## Import and upload
 
 The main window accepts selected files, drops, clipboard images, screenshots, and multiple image URLs. Imports enter the ready queue. Click Upload to start. Each batch captures its provider, processing options, and copy preferences at launch.
 
@@ -19,13 +20,13 @@ Copy as URL, Markdown image, Markdown link, HTML, or BBCode. Automatic copying i
 
 ## Settings sections
 
-| Section | Controls |
-| --- | --- |
-| Storage | Create, edit, test, default provider, credentials |
+| Section               | Controls                                                                              |
+| --------------------- | ------------------------------------------------------------------------------------- |
+| Storage               | Create, edit, test, default provider, credentials                                     |
 | Upload and processing | Concurrency, retries, compression, maximum width, JPEG EXIF removal, paths, conflicts |
-| Links and clipboard | Copy format and automatic copying |
-| App preferences | Shortcuts and interface preferences |
-| About and updates | Version, diagnostics, CLI entry point, manual update checks |
+| Links and clipboard   | Copy format and automatic copying                                                     |
+| App preferences       | Shortcuts and interface preferences                                                   |
+| About and updates     | Version, diagnostics, CLI entry point, manual update checks                           |
 
 Dark mode, remote library management, tags, folder imports, and automatic app replacement are not available in this preview. The current app UI is Chinese.
 
@@ -33,19 +34,19 @@ Dark mode, remote library management, tags, folder imports, and automatic app re
 
 Closing the window or pressing ⌘W hides it while uploads continue. ⌘Q exits; during uploads you can wait for completion or pause and exit. The menu bar offers Open, Upload clipboard, Capture and upload, Pause/resume, and Quit.
 
-| Shortcut | Action |
-| --- | --- |
-| ⌘U | Select images and enqueue |
-| ⌘V | Import clipboard content |
-| ⌘⇧S | Capture and enqueue |
-| ⌘F | Search |
-| ⌘B | Collapse or expand the sidebar |
-| ⌘⌥U | Global: upload clipboard immediately |
-| ⌘⌥S | Global: capture and upload immediately |
+| Shortcut | Action                                 |
+| -------- | -------------------------------------- |
+| ⌘U       | Select images and enqueue              |
+| ⌘V       | Import clipboard content               |
+| ⌘⇧S      | Capture and enqueue                    |
+| ⌘F       | Search                                 |
+| ⌘B       | Collapse or expand the sidebar         |
+| ⌘⌥U      | Global: upload clipboard immediately   |
+| ⌘⌥S      | Global: capture and upload immediately |
 
 Global shortcuts can be changed or disabled. Quick batches run in order without including unsubmitted manual imports. Without a default provider, content is retained and storage settings open. Cancelling capture creates no task. Each batch produces one result notification.
 
-These capabilities are implemented. Physical global shortcut delivery, third-party conflicts, system capture cancellation, status-item clicks, and notification permission/click interactions still need manual acceptance in this 0.3.0 preview. See the [acceptance record](https://github.com/liyown/img/blob/main/stability-qa.md).
+Global shortcut delivery, third-party conflicts, system capture cancellation, status-item clicks, and notification permissions and clicks still need manual testing in this 0.3.0 preview. See the [acceptance record](https://github.com/liyown/img/blob/main/stability-qa.md).
 
 ## Local data and recovery
 

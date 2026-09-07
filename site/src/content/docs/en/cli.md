@@ -1,10 +1,11 @@
 ---
-title: "CLI reference"
-description: "Complete Rust CLI commands, flags, JSON, progress, and exit codes."
+title: 'CLI reference'
+description: 'Complete Rust CLI commands, flags, JSON, progress, and exit codes.'
 locale: en
 topic: cli
 order: 5
 ---
+
 ## Commands and shorthand
 
 `img <image or URL>` is shorthand for `img upload <image or URL>`. `--config <file>` is global. The complete command help below comes from the current 0.3.0 release binary.
@@ -26,14 +27,16 @@ The final stdout result has top-level `success` and `files`. Success entries con
 ```json
 {
   "success": false,
-  "files": [{
-    "local_path": "photo.png",
-    "success": false,
-    "error": "Service rate limit reached; try again later",
-    "error_code": "rate_limited",
-    "http_status": 429,
-    "retryable": true
-  }]
+  "files": [
+    {
+      "local_path": "photo.png",
+      "success": false,
+      "error": "Service rate limit reached; try again later",
+      "error_code": "rate_limited",
+      "http_status": 429,
+      "retryable": true
+    }
+  ]
 }
 ```
 
@@ -41,13 +44,13 @@ This illustrative result shows key fields. Explicit `upload --format json` also 
 
 `--progress` writes one JSON event per stderr line with `stage`, `sent`, `total`, and optional `attempt`. Transferred bytes include multipart/JSON overhead. They are neither original image bytes nor server-confirmed success; use the final result.
 
-| Exit code | Meaning |
-| --- | --- |
-| 0 | Success |
-| 1 | All uploads failed |
-| 2 | Argument, configuration, initialization, or other command error |
-| 3 | Partial upload success |
-| 130 | Interrupted |
+| Exit code | Meaning                                                         |
+| --------- | --------------------------------------------------------------- |
+| 0         | Success                                                         |
+| 1         | All uploads failed                                              |
+| 2         | Argument, configuration, initialization, or other command error |
+| 3         | Partial upload success                                          |
+| 130       | Interrupted                                                     |
 
 ## Platform differences
 
@@ -57,7 +60,7 @@ macOS invokes `screencapture`. Linux tries flameshot, scrot, gnome-screenshot, t
 
 ## Complete command help
 
-### img 
+### img
 
 ```text
 Upload images from files, screenshots or links. Rust CLI included with img GUI.
@@ -93,22 +96,22 @@ Upload local files or remote image URLs
 Usage: img upload [OPTIONS] <FILES>...
 
 Arguments:
-  <FILES>...  
+  <FILES>...
 
 Options:
       --config <CONFIG>      Use this global configuration file
       --provider <PROVIDER>  Storage provider name [default: ""]
       --path <PATH>          Remote path prefix [default: ""]
-      --overwrite            
+      --overwrite
       --optimize             Compress images before uploading
       --strip-exif           Remove JPEG EXIF metadata, preserving orientation
       --resize <RESIZE>      [default: 0]
       --allow-insecure       Allow trusted plain HTTP image sources
       --format <FORMAT>      [possible values: url, markdown, html, json]
-      --copy                 
-      --no-copy              
-      --quiet                
-      --verbose              
+      --copy
+      --no-copy
+      --quiet
+      --verbose
       --name <NAME>          [default: ""]
       --progress             Write JSON progress events to stderr (one file only)
   -h, --help                 Print help
@@ -122,13 +125,13 @@ Download an image URL without uploading it
 Usage: img fetch [OPTIONS] --output <OUTPUT> <URL>
 
 Arguments:
-  <URL>  
+  <URL>
 
 Options:
       --config <CONFIG>      Use this global configuration file
-      --output <OUTPUT>      
+      --output <OUTPUT>
       --max-size <MAX_SIZE>  [default: 8388608]
-      --allow-insecure       
+      --allow-insecure
   -h, --help                 Print help
 ```
 
@@ -143,16 +146,16 @@ Options:
       --config <CONFIG>      Use this global configuration file
       --provider <PROVIDER>  Storage provider name [default: ""]
       --path <PATH>          Remote path prefix [default: ""]
-      --overwrite            
+      --overwrite
       --optimize             Compress images before uploading
       --strip-exif           Remove JPEG EXIF metadata, preserving orientation
       --resize <RESIZE>      [default: 0]
       --allow-insecure       Allow trusted plain HTTP image sources
-      --region               
-      --window               
+      --region
+      --window
       --format <FORMAT>      [possible values: url, markdown, html, json]
-      --no-copy              
-      --verbose              
+      --no-copy
+      --verbose
   -h, --help                 Print help
 ```
 
@@ -167,7 +170,7 @@ Options:
       --config <CONFIG>      Use this global configuration file
       --provider <PROVIDER>  Storage provider name [default: ""]
       --path <PATH>          Remote path prefix [default: ""]
-      --overwrite            
+      --overwrite
       --optimize             Compress images before uploading
       --strip-exif           Remove JPEG EXIF metadata, preserving orientation
       --resize <RESIZE>      [default: 0]
@@ -185,18 +188,18 @@ Upload image references and rewrite Markdown documents
 Usage: img rewrite [OPTIONS] [FILES]...
 
 Arguments:
-  [FILES]...  
+  [FILES]...
 
 Options:
       --config <CONFIG>      Use this global configuration file
       --provider <PROVIDER>  Storage provider name [default: ""]
       --path <PATH>          Remote path prefix [default: ""]
-      --overwrite            
+      --overwrite
       --optimize             Compress images before uploading
       --strip-exif           Remove JPEG EXIF metadata, preserving orientation
       --resize <RESIZE>      [default: 0]
       --allow-insecure       Allow trusted plain HTTP image sources
-      --stdout               
+      --stdout
   -h, --help                 Print help
 ```
 
@@ -208,7 +211,7 @@ Inspect image dimensions, type and EXIF presence
 Usage: img info [OPTIONS] <FILES>...
 
 Arguments:
-  <FILES>...  
+  <FILES>...
 
 Options:
       --config <CONFIG>  Use this global configuration file
@@ -238,8 +241,8 @@ Options:
       --secret-key <SECRET_KEY>          [default: ""]
       --session-token <SESSION_TOKEN>    [default: ""]
       --public-url <PUBLIC_URL>          [default: ""]
-      --path-style                       
-      --allow-insecure                   
+      --path-style
+      --allow-insecure
       --owner <OWNER>                    [default: ""]
       --repo <REPO>                      [default: ""]
       --branch <BRANCH>                  [default: main]
@@ -256,11 +259,11 @@ List, show, select, remove or test storage providers
 Usage: img provider [OPTIONS] <COMMAND>
 
 Commands:
-  list    
-  show    
-  use     
-  remove  
-  test    
+  list
+  show
+  use
+  remove
+  test
   help    Print this message or the help of the given subcommand(s)
 
 Options:
@@ -284,7 +287,7 @@ Options:
 Usage: img provider show [OPTIONS] <NAME>
 
 Arguments:
-  <NAME>  
+  <NAME>
 
 Options:
       --config <CONFIG>  Use this global configuration file
@@ -297,7 +300,7 @@ Options:
 Usage: img provider use [OPTIONS] <NAME>
 
 Arguments:
-  <NAME>  
+  <NAME>
 
 Options:
       --config <CONFIG>  Use this global configuration file
@@ -310,7 +313,7 @@ Options:
 Usage: img provider remove [OPTIONS] <NAME>
 
 Arguments:
-  <NAME>  
+  <NAME>
 
 Options:
       --config <CONFIG>  Use this global configuration file
@@ -323,7 +326,7 @@ Options:
 Usage: img provider test [OPTIONS] <NAME>
 
 Arguments:
-  <NAME>  
+  <NAME>
 
 Options:
       --config <CONFIG>  Use this global configuration file
@@ -338,12 +341,12 @@ Inspect or change configuration
 Usage: img config [OPTIONS] <COMMAND>
 
 Commands:
-  path      
-  list      
-  validate  
-  get       
-  set       
-  unset     
+  path
+  list
+  validate
+  get
+  set
+  unset
   help      Print this message or the help of the given subcommand(s)
 
 Options:
@@ -387,7 +390,7 @@ Options:
 Usage: img config get [OPTIONS] <KEY>
 
 Arguments:
-  <KEY>  
+  <KEY>
 
 Options:
       --config <CONFIG>  Use this global configuration file
@@ -400,8 +403,8 @@ Options:
 Usage: img config set [OPTIONS] <KEY> <VALUE>
 
 Arguments:
-  <KEY>    
-  <VALUE>  
+  <KEY>
+  <VALUE>
 
 Options:
       --config <CONFIG>  Use this global configuration file
@@ -414,7 +417,7 @@ Options:
 Usage: img config unset [OPTIONS] <KEY>
 
 Arguments:
-  <KEY>  
+  <KEY>
 
 Options:
       --config <CONFIG>  Use this global configuration file
@@ -457,6 +460,6 @@ Usage: img install-cli [OPTIONS]
 
 Options:
       --config <CONFIG>  Use this global configuration file
-      --dir <DIR>        
+      --dir <DIR>
   -h, --help             Print help
 ```

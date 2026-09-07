@@ -1,10 +1,11 @@
 ---
-title: "Editors and agents"
-description: "Make image uploads part of writing, scripts, and automation."
+title: 'Editors and agents'
+description: 'Make image uploads part of writing, scripts, and automation.'
 locale: en
 topic: integrations
 order: 3
 ---
+
 ## Typora
 
 Choose a custom image-upload command:
@@ -36,7 +37,7 @@ File arguments are rewritten in place by default. Use `--stdout` to inspect resu
 
 ## VS Code and Raycast
 
-Two source extensions are included in the repository; this is not a claim of marketplace availability:
+Install these two extensions from their source directories in the repository:
 
 - [VS Code integration](https://github.com/liyown/img/tree/main/integrations/vscode): paste image uploads in Markdown and upload from the file explorer.
 - [Raycast integration](https://github.com/liyown/img/tree/main/integrations/raycast): screenshot, clipboard, and file upload commands.

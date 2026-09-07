@@ -1,24 +1,25 @@
 ---
-title: "Troubleshooting"
-description: "Understand upload errors, recover queues, and export minimal diagnostics."
+title: 'Troubleshooting'
+description: 'Understand upload errors, recover queues, and export minimal diagnostics.'
 locale: en
 topic: troubleshooting
 order: 4
 ---
+
 ## Start with the error category
 
-| Error code | Next step |
-| --- | --- |
-| `invalid_config` | Check the default provider, required fields, and configuration format |
-| `authentication` / `permission` | Check credentials and bucket or repository write access |
-| `network` / `timeout` | Check the network and endpoint, then retry |
-| `rate_limited` / `server` | Retry later; reduce concurrency if needed |
-| `conflict` | Rename the file or deliberately enable overwrite |
-| `too_large` | Check local and server limits; compress or resize |
-| `invalid_image` | Check for damage and supported image formats |
-| `file_not_found` / `io` | Reselect the original file and check read/write permissions |
-| `invalid_response` | Check the HTTP response field and public image URL |
-| `cancelled` / `unknown` | Review details and current task state |
+| Error code                      | Next step                                                             |
+| ------------------------------- | --------------------------------------------------------------------- |
+| `invalid_config`                | Check the default provider, required fields, and configuration format |
+| `authentication` / `permission` | Check credentials and bucket or repository write access               |
+| `network` / `timeout`           | Check the network and endpoint, then retry                            |
+| `rate_limited` / `server`       | Retry later; reduce concurrency if needed                             |
+| `conflict`                      | Rename the file or deliberately enable overwrite                      |
+| `too_large`                     | Check local and server limits; compress or resize                     |
+| `invalid_image`                 | Check for damage and supported image formats                          |
+| `file_not_found` / `io`         | Reselect the original file and check read/write permissions           |
+| `invalid_response`              | Check the HTTP response field and public image URL                    |
+| `cancelled` / `unknown`         | Review details and current task state                                 |
 
 The GUI offers storage settings, retry, reselect source, and detail actions. Older JSON without new error fields still displays `error`. Network, timeout, rate-limit, and server errors are usually retryable. Check whether the server already received an image before repeating an upload.
 
@@ -30,7 +31,7 @@ Do not edit queue files while the app is running. To make a manual backup, quit 
 
 ## Export diagnostics
 
-Export deliberately from the app's diagnostic entry point. The record contains only version, error categories, and operation stages, excluding credentials, request bodies, and URL query parameters. It is not a full log or a queue backup. Add reproduction steps and the OS version when reporting an issue.
+Use the diagnostic export option in the app. The record contains only version, error categories, and operation stages, excluding credentials, request bodies, and URL query parameters. It is not a full log or a queue backup. Add reproduction steps and the OS version when reporting an issue.
 
 ## Configuration and CLI
 

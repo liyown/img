@@ -1,15 +1,16 @@
 ---
-title: "Quick start"
-description: "Configure your first storage provider and copy your first image link."
+title: 'Quick start'
+description: 'Configure your first storage provider and copy your first image link.'
 locale: en
 topic: quick-start
 order: 0
 ---
+
 ## Choose your workflow
 
 Use the native macOS GUI for drag and drop and a visual library. Use the standalone CLI for terminals, editors, and automation. The GUI includes the same-version CLI; both share the upload core and storage configuration.
 
-This is the **0.3.0 preview**. Follow the [source installation guide](/img/en/install/); the older v0.2.0 download is still the Go implementation.
+Get the latest desktop community build from the [installation page](/img/en/install/#gui), then follow the first-launch instructions. No compilation is needed.
 
 ## Upload from the desktop
 

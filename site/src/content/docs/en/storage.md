@@ -1,10 +1,11 @@
 ---
-title: "Storage configuration"
-description: "Choose providers directly and understand credentials, paths, and configuration precedence."
+title: 'Storage configuration'
+description: 'Choose providers directly and understand credentials, paths, and configuration precedence.'
 locale: en
 topic: storage
 order: 1
 ---
+
 ## Configure storage in the GUI
 
 Settings → Storage supports create, edit, test, set default, and remove. R2, S3, OSS, GitHub, and HTTP have dedicated forms. New credentials go into macOS Keychain; the configuration stores references. Leaving a credential field blank while editing preserves its current value.

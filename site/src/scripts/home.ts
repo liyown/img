@@ -5,7 +5,8 @@ const media = window.matchMedia(
 let cleanup: (() => void) | undefined;
 let loading = false;
 async function setup() {
-  if (!media.matches || cleanup || loading) return;
+  const area = document.querySelector<HTMLElement>('[data-workflow]');
+  if (!area || !media.matches || cleanup || loading) return;
   loading = true;
   try {
     const [{ gsap }, { ScrollTrigger }] = await Promise.all([
@@ -14,8 +15,6 @@ async function setup() {
     ]);
     if (!media.matches) return;
     gsap.registerPlugin(ScrollTrigger);
-    const area = document.querySelector<HTMLElement>('[data-workflow]');
-    if (!area) return;
     document.documentElement.classList.add('motion-enabled');
     const context = gsap.context(() => {
       const panels = gsap.utils.toArray<HTMLElement>('[data-panel]', area);

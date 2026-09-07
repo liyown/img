@@ -4,6 +4,7 @@ export default defineConfig({
   base: '/img',
   trailingSlash: 'always',
   output: 'static',
+  build: { inlineStylesheets: 'always' },
   devToolbar: { enabled: false },
   markdown: { shikiConfig: { theme: 'github-light' } },
 });

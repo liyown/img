@@ -1,10 +1,51 @@
 ---
 import { evidence } from '../lib/comparison';
 import { t, type Locale } from '../lib/site';
-const {locale}=Astro.props as {locale:Locale};
+const { locale } = Astro.props as { locale: Locale };
 ---
+
 <div class="comparison-bars">
-  <div class="chart-heading"><strong>{t(locale,'更轻的开始','A lighter starting point')}</strong><span>macOS ARM64 · DMG · MB</span></div>
-  {evidence.products.map(p=><div class:list={['bar-row',{featured:p.name==='img'}]}><div class="bar-label"><strong>{p.name}</strong><small>{p.version}</small></div><div class="bar-track">{p.bytes!==null?<div class="bar" style={`--width:${p.bytes/159758553*100}%`}></div>:<span class="unknown">{t(locale,'暂无可比数据','Comparable data unavailable')}</span>}</div><span class="bar-value">{p.bytes!==null?(p.bytes/1e6).toFixed(1):'—'}</span></div>)}
-  <p class="fine-print">{t(locale,'压缩安装包大小，非安装后占用或运行内存。核验于 2026-09-07。','Compressed package size, not installed size or runtime memory. Checked Sep 7, 2026.')}</p>
+  <div class="chart-heading">
+    <strong>{t(locale, 'macOS 安装包大小', 'macOS package sizes')}</strong><span
+      >macOS ARM64 · DMG · MB</span
+    >
+  </div>
+  {
+    evidence.products.map((p) => (
+      <div class:list={['bar-row', { featured: p.name === 'img' }]}>
+        <>
+          <div class="bar-label">
+            <>
+              <strong>{p.name}</strong>
+              <small>{p.version}</small>
+            </>
+          </div>
+          <div class="bar-track">
+            {p.bytes !== null ? (
+              <div
+                class="bar"
+                style={`--width:${(p.bytes / 159758553) * 100}%`}
+              />
+            ) : (
+              <span class="unknown">
+                {t(locale, '暂无可比数据', 'Comparable data unavailable')}
+              </span>
+            )}
+          </div>
+          <span class="bar-value">
+            {p.bytes !== null ? (p.bytes / 1e6).toFixed(1) : '—'}
+          </span>
+        </>
+      </div>
+    ))
+  }
+  <p class="fine-print">
+    {
+      t(
+        locale,
+        '压缩安装包大小，非安装后占用或运行内存。核验于 2026-09-07。',
+        'Compressed package size, not installed size or runtime memory. Checked Sep 7, 2026.',
+      )
+    }
+  </p>
 </div>

@@ -1,0 +1,127 @@
+---
+import { t, type Locale } from '../lib/site';
+const { locale, product = 'desktop' } = Astro.props as {
+  locale: Locale;
+  product?: 'desktop' | 'cli';
+};
+---
+
+<div
+  class="downloads"
+  data-downloads
+  data-locale={locale}
+  data-product={product}
+>
+  <p data-release-status aria-live="polite">
+    {t(locale, '正在获取最新社区版…', 'Finding the latest community release…')}
+  </p>
+  <div class="actions">
+    {
+      (product === 'desktop'
+        ? [
+            ['arm64', 'macOS · Apple silicon · DMG'],
+            ['x86_64', 'macOS · Intel · DMG'],
+            ['windows', 'Windows · x64 · EXE'],
+            ['linux', 'Linux · x64 · DEB'],
+          ]
+        : [
+            ['img_darwin_arm64.tar.gz', 'macOS · Apple silicon'],
+            ['img_darwin_amd64.tar.gz', 'macOS · Intel'],
+            ['img_windows_amd64.zip', 'Windows · x64'],
+            ['img_linux_amd64.tar.gz', 'Linux · x64'],
+            ['img_linux_arm64.tar.gz', 'Linux · ARM64'],
+          ]
+      ).map(([key, label]) => (
+        <a
+          class="button secondary"
+          data-desktop-arch={key}
+          href="https://github.com/liyown/img/releases"
+        >
+          {label}
+        </a>
+      ))
+    }
+  </div>
+  <p>
+    <a data-release-page href="https://github.com/liyown/img/releases"
+      >{
+        t(
+          locale,
+          '版本说明、ZIP 与校验文件',
+          'Release notes, ZIPs and checksums',
+        )
+      }</a
+    >
+  </p>
+  <noscript
+    ><p>
+      {
+        t(
+          locale,
+          '请到 GitHub Releases 选择最新 desktop-v 版本。',
+          'Choose the latest desktop-v release on GitHub Releases.',
+        )
+      }
+    </p></noscript
+  >
+</div>
+<script>
+  import { latestDesktop, latestCLI } from '../lib/releases.mjs';
+  async function resolveDownloads() {
+    const panels = document.querySelectorAll<HTMLElement>('[data-downloads]');
+    if (!panels.length) return;
+    try {
+      const response = await fetch(
+        'https://api.github.com/repos/liyown/img/releases?per_page=100',
+        { cache: 'no-store', signal: AbortSignal.timeout(10000) },
+      );
+      if (!response.ok) throw new Error('Release service unavailable');
+      const data = await response.json();
+      for (const panel of panels) {
+        const release =
+          panel.dataset.product === 'cli'
+            ? latestCLI(data)
+            : latestDesktop(data);
+        const zh = panel.dataset.locale === 'zh';
+        const status = panel.querySelector<HTMLElement>(
+          '[data-release-status]',
+        )!;
+        if (!release) {
+          status.textContent = zh
+            ? '对应安装包尚未发布，请查看发布进度。'
+            : 'No matching package is published yet. Check release progress.';
+          continue;
+        }
+        status.textContent = zh
+          ? `最新社区版 ${release.version} · 无需编译`
+          : `Latest community release ${release.version} · No build tools needed`;
+        for (const link of panel.querySelectorAll<HTMLAnchorElement>(
+          '[data-desktop-arch]',
+        )) {
+          const url = release.downloads[link.dataset.desktopArch!];
+          link.href = url || release.page;
+          if (!url) link.textContent += zh ? ' · 暂未提供' : ' · Not available';
+        }
+        panel.querySelector<HTMLAnchorElement>('[data-release-page]')!.href =
+          release.page;
+      }
+    } catch {
+      for (const panel of panels)
+        panel.querySelector<HTMLElement>('[data-release-status]')!.textContent =
+          panel.dataset.locale === 'zh'
+            ? '暂时无法获取版本，请通过下方入口到 GitHub Releases 下载最新版本。'
+            : 'Unable to fetch the version. Use the links below to find the latest desktop release on GitHub.';
+    }
+  }
+  resolveDownloads();
+</script>
+
+<style>
+  .actions {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .actions .button {
+    font-size: 14px;
+  }
+</style>

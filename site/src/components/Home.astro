@@ -9,24 +9,24 @@ const steps = t(
   locale,
   [
     [
-      '把图片放进来',
-      '拖入文件，粘贴图片，或导入外链。主窗口先入队，把决定权留给你。',
+      '导入图片',
+      '拖入文件、粘贴图片或导入图片链接。主窗口会先把图片加入队列，点击上传后才发送。',
       'img upload photo.png --provider r2',
     ],
     [
-      '发往你的存储',
+      '选择存储并上传',
       '选好存储源和处理参数，点击上传。需要的时候，可以暂停、继续和重试。',
       'img upload photo.png --optimize --resize 1600',
     ],
     [
-      '复制，继续创作',
-      '成功链接自动进入剪贴板。URL、Markdown、HTML，让每个工作流都顺手。',
+      '复制链接',
+      '上传成功后自动复制链接。可选 URL、Markdown 或 HTML，直接粘贴到文章里。',
       'img upload photo.png --format markdown --copy',
     ],
   ],
   [
     [
-      'Bring your images',
+      'Import images',
       'Drop files, paste an image, or import a URL. In the main window, imports wait until you are ready.',
       'img upload photo.png --provider r2',
     ],
@@ -36,8 +36,8 @@ const steps = t(
       'img upload photo.png --optimize --resize 1600',
     ],
     [
-      'Copy. Keep creating.',
-      'Successful links go straight to your clipboard. URL, Markdown, or HTML: ready for your workflow.',
+      'Copy the links',
+      'After uploading, copy links automatically as URLs, Markdown, or HTML and paste them into your document.',
       'img upload photo.png --format markdown --copy',
     ],
   ],
@@ -47,27 +47,27 @@ const features = t(
   [
     [
       'image',
-      '有条理的图库',
+      '图库与历史',
       '网格与列表自由切换，搜索记录，随时找回已上传的图片。',
     ],
     [
       'sliders',
-      '恰好的图片处理',
+      '上传前处理图片',
       '压缩、缩放、清理 JPEG EXIF。上传前处理，保留原文件。',
     ],
     [
       'command',
-      '少几步，更顺手',
+      '菜单栏与快捷键',
       '菜单栏与全局快捷操作。关掉窗口，上传还在继续。',
     ],
     [
       'shield',
-      '失败也有下一步',
+      '错误提示与队列恢复',
       '清楚的错误分类，可恢复的队列，两份有效备份。',
     ],
     [
       'copy',
-      '链接，按你习惯的格式',
+      '选择复制格式',
       '自动复制成功链接，也支持 Markdown、HTML 与 BBCode。',
     ],
     [
@@ -79,27 +79,27 @@ const features = t(
   [
     [
       'image',
-      'A library that stays useful',
+      'Library and history',
       'Switch between grids and lists, search records, and find uploaded images again.',
     ],
     [
       'sliders',
-      'Just enough image processing',
+      'Process images before upload',
       'Compress, resize, and remove JPEG EXIF before upload. Keep your originals.',
     ],
     [
       'command',
-      'Fewer steps, more flow',
+      'Menu bar and shortcuts',
       'Menu-bar and global quick actions. Close the window; uploads keep going.',
     ],
     [
       'shield',
-      'A way forward after failure',
+      'Errors and queue recovery',
       'Clear error categories, a recoverable queue, and two valid backups.',
     ],
     [
       'copy',
-      'Links in your language',
+      'Choose a link format',
       'Copy successful links automatically. Markdown, HTML, and BBCode are also available.',
     ],
     [
@@ -122,7 +122,7 @@ const faq = t(
     ],
     [
       '现在可以直接下载安装包吗？',
-      '0.3.0 目前是内测预览，官网提供源码构建指南。本轮尚未发布安装包，旧 v0.2.0 仍是 Go 版本。',
+      '可以。安装页自动获取 GitHub Releases 最新桌面版，选择芯片后下载 DMG 即可，无需编译。',
     ],
     [
       '“64 MiB”指整个应用的内存吗？',
@@ -140,7 +140,7 @@ const faq = t(
     ],
     [
       'Can I download a ready-made package now?',
-      '0.3.0 is a preview with source-build instructions. No installer release is published for this version yet; the older v0.2.0 is the Go implementation.',
+      'Yes. The installation page resolves the latest desktop release from GitHub. Choose your chip and download the DMG; no compilation is required.',
     ],
     [
       'Is 64 MiB the whole application’s memory use?',
@@ -152,8 +152,8 @@ const faq = t(
 
 <section class="hero wrap">
   <a class="release-note" href={href(locale, 'install')}
-    ><span class="status-dot"></span>0.3.0 {
-      t(locale, '内测预览', 'PREVIEW')
+    ><span class="status-dot"></span>{
+      t(locale, '社区版 · 免费开源', 'COMMUNITY · OPEN SOURCE')
     }<span class="release-divider"></span> RUST + NATIVE <Icon
       name="arrow"
       size={14}
@@ -165,12 +165,17 @@ const faq = t(
     ><span class="hero-spark" aria-hidden="true">✳</span>
   </h1>
   <p class="hero-description">
-    {t(locale, '一个轻巧的图片上传工具。', 'A small tool for your images.')}<br
-    />{
+    {
       t(
         locale,
-        '原生桌面的从容，命令行的利落。',
-        'The ease of a native app. The precision of a CLI.',
+        '轻巧的图片上传工具，支持自己的存储。',
+        'A small image uploader for your own storage.',
+      )
+    }<br />{
+      t(
+        locale,
+        '在 macOS 桌面操作，也能用命令行上传。',
+        'Use the native macOS app or upload from the CLI.',
       )
     }
   </p>
@@ -191,7 +196,11 @@ const faq = t(
   <div class="showcase-topline">
     <span class="mono">01 / THE WORKSPACE</span><span
       >{
-        t(locale, '轻松放进去，随时找回来', 'Easy to add. Easy to find again.')
+        t(
+          locale,
+          '在图库中查找和复制已上传的图片',
+          'Find uploaded images and copy their links.',
+        )
       }<span class="tiny-dot"></span></span
     >
   </div>
@@ -210,8 +219,12 @@ const faq = t(
       class="terminal-bottom"
     >
       <span class="status-dot"></span>{
-        t(locale, '同一核心，两种工作方式', 'One core. Two ways to work.')
-      }<span class="mono">CLI 0.3.0</span>
+        t(
+          locale,
+          'GUI 和 CLI 共用上传核心',
+          'The GUI and CLI share an upload core.',
+        )
+      }<span class="mono">Rust CLI</span>
     </div>
   </div>
   <p class="showcase-caption">
@@ -246,7 +259,7 @@ const faq = t(
     >
   </div>
   <a class="metric-method" href={href(locale, 'compare')}
-    >{t(locale, '数字背后的方法', 'Behind the numbers')}<Icon
+    >{t(locale, '测量方法与来源', 'Measurement methods and sources')}<Icon
       name="external"
       size={18}
     /></a
@@ -254,14 +267,14 @@ const faq = t(
 </section>
 <section class="workflow-section section wrap">
   <div class="section-intro">
-    <span class="eyebrow">LESS FRICTION. MORE FLOW.</span><h2>
-      {t(locale, '三步，回到创作。', 'Three steps. Back to creating.')}
+    <span class="eyebrow">UPLOAD WORKFLOW</span><h2>
+      {t(locale, '导入、上传，拿到链接。', 'Import, upload, copy.')}
     </h2><p>
       {
         t(
           locale,
-          '把重复的动作变简单，把注意力留给重要的事。',
-          'Make the repetitive part simple. Keep your attention on the work.',
+          '桌面端可先检查队列；命令行可以一次完成上传和复制。',
+          'Review the queue in the app, or upload and copy with a single command.',
         )
       }
     </p>
@@ -312,8 +325,8 @@ const faq = t(
 <section class="storage-band">
   <div class="wrap">
     <div>
-      <span class="eyebrow">YOUR IMAGES. YOUR STORAGE.</span><h2>
-        {t(locale, '存到哪里，你说了算。', 'Your storage. Your choice.')}
+      <span class="eyebrow">STORAGE PROVIDERS</span><h2>
+        {t(locale, '连接自己的存储。', 'Connect your own storage.')}
       </h2><p>
         {
           t(
@@ -347,13 +360,11 @@ const faq = t(
 <section class="section wrap">
   <div class="section-intro split-intro">
     <div>
-      <span class="eyebrow">SMALL TOOL. THOUGHTFUL DETAILS.</span><h2>
-        {t(locale, '轻巧，也周到。', 'Small. Not bare-bones.')}
+      <span class="eyebrow">FEATURES</span><h2>
+        {t(locale, '日常上传会用到的功能。', 'For everyday image uploads.')}
       </h2>
     </div><a class="text-link" href={href(locale, 'features')}
-      >{t(locale, '探索全部功能', 'Explore all features')}<Icon
-        name="arrow"
-      /></a
+      >{t(locale, '查看全部功能', 'View all features')}<Icon name="arrow" /></a
     >
   </div><div class="feature-grid">
     {
@@ -373,16 +384,16 @@ const faq = t(
 </section>
 <section class="compare-home section wrap">
   <div>
-    <span class="eyebrow">A LITTLE LESS TO CARRY.</span><h2>
-      {t(locale, '轻装上阵，', 'Less to carry.')}<br />{
-        t(locale, '各有所长。', 'Room to choose.')
+    <span class="eyebrow">COMPARISON</span><h2>
+      {t(locale, '包体积与功能，', 'Compare sizes')}<br />{
+        t(locale, '放在一起看。', 'and features.')
       }
     </h2><p>
       {
         t(
           locale,
-          'img 专注本地上传与原生命令行。也有工具更擅长插件扩展、远端图库或 macOS 系统集成。选适合你的。',
-          'img focuses on local uploads and a standalone native CLI. Other tools shine at plugins, remote libraries, or macOS integration. Choose what fits.',
+          'img 提供原生 GUI 和独立 Rust CLI。PicGo 有插件生态，PicList 支持远端文件管理，uPic 也有原生 macOS 界面和快捷操作。',
+          'img has a native GUI and standalone Rust CLI. PicGo has a plugin ecosystem, PicList adds remote file management, and uPic also has a native macOS app with quick actions.',
         )
       }
     </p><a class="text-link" href={href(locale, 'compare')}
@@ -394,8 +405,8 @@ const faq = t(
 </section>
 <section class="faq-section section wrap">
   <div>
-    <span class="eyebrow">A FEW GOOD QUESTIONS.</span><h2>
-      {t(locale, '你可能想知道。', 'Good to know.')}
+    <span class="eyebrow">FAQ</span><h2>
+      {t(locale, '常见问题', 'Common questions')}
     </h2>
   </div><div class="faq-list">
     {
@@ -414,16 +425,16 @@ const faq = t(
   </div>
 </section>
 <section class="closing wrap">
-  <span class="eyebrow">READY WHEN YOU ARE.</span><h2>
-    {t(locale, '下一张图片，', 'Your next image.')}<br />{
-      t(locale, '试试 img。', 'Meet img.')
+  <span class="eyebrow">GET STARTED</span><h2>
+    {t(locale, '准备好存储，', 'Set up your storage.')}<br />{
+      t(locale, '试试 img。', 'Try img.')
     }
   </h2><Actions locale={locale} /><p>
     {
       t(
         locale,
-        '0.3.0 内测预览 · 从源码开始',
-        '0.3.0 preview · Start from source',
+        '下载社区版 · 无需编译',
+        'Download the community build · No compilation',
       )
     }
   </p>

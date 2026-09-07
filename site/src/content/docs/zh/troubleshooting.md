@@ -1,24 +1,25 @@
 ---
-title: "故障排查"
-description: "识别上传错误，恢复队列，并导出最少必要的诊断信息。"
+title: '故障排查'
+description: '识别上传错误，恢复队列，并导出最少必要的诊断信息。'
 locale: zh
 topic: troubleshooting
 order: 4
 ---
+
 ## 上传失败先看错误分类
 
-| 错误代码 | 处理方法 |
-| --- | --- |
-| `invalid_config` | 检查默认源、必填字段和配置格式 |
-| `authentication` / `permission` | 检查凭据有效性、桶或仓库写入权限 |
-| `network` / `timeout` | 检查网络和服务地址后重试 |
-| `rate_limited` / `server` | 稍后重试，必要时降低并发 |
-| `conflict` | 换名，或确认后启用覆盖 |
-| `too_large` | 检查本地与服务端上限，压缩或缩小图片 |
-| `invalid_image` | 检查图片是否损坏或格式受支持 |
-| `file_not_found` / `io` | 重新选择原文件，检查读写权限 |
-| `invalid_response` | 检查 HTTP 响应字段和公开图片地址 |
-| `cancelled` / `unknown` | 根据当前任务状态检查详情 |
+| 错误代码                        | 处理方法                             |
+| ------------------------------- | ------------------------------------ |
+| `invalid_config`                | 检查默认源、必填字段和配置格式       |
+| `authentication` / `permission` | 检查凭据有效性、桶或仓库写入权限     |
+| `network` / `timeout`           | 检查网络和服务地址后重试             |
+| `rate_limited` / `server`       | 稍后重试，必要时降低并发             |
+| `conflict`                      | 换名，或确认后启用覆盖               |
+| `too_large`                     | 检查本地与服务端上限，压缩或缩小图片 |
+| `invalid_image`                 | 检查图片是否损坏或格式受支持         |
+| `file_not_found` / `io`         | 重新选择原文件，检查读写权限         |
+| `invalid_response`              | 检查 HTTP 响应字段和公开图片地址     |
+| `cancelled` / `unknown`         | 根据当前任务状态检查详情             |
 
 GUI 提供修改存储配置、重试、选择原文件和查看详情入口。旧 JSON 缺少新错误字段时仍能显示原有 `error`。网络、超时、限流和服务端错误通常可重试；确认远端是否已有图片再决定重复上传。
 

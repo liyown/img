@@ -3,7 +3,24 @@ import Icon from './Icon.astro';
 import { href, t, type Locale } from '../lib/site';
 const { locale } = Astro.props as { locale: Locale };
 ---
+
 <div class="actions">
-  <a class="button primary" data-track="gui" href={href(locale, 'install')+'#gui'}><Icon name="desktop"/>{t(locale,'使用 GUI','Use the GUI')}<Icon name="arrow" size={17}/></a>
-  <a class="button secondary" data-track="cli" href={href(locale, 'install')+'#cli'}><Icon name="terminal"/>{t(locale,'使用 CLI','Use the CLI')}<Icon name="arrow" size={17}/></a>
+  <a
+    class="button primary"
+    data-track="gui"
+    href={href(locale, 'install') + '#gui'}
+    ><Icon name="desktop" />{t(locale, '使用 GUI', 'Use the GUI')}<Icon
+      name="arrow"
+      size={17}
+    /></a
+  >
+  <a
+    class="button secondary"
+    data-track="cli"
+    href={href(locale, 'install') + '#cli'}
+    ><Icon name="terminal" />{t(locale, '使用 CLI', 'Use the CLI')}<Icon
+      name="arrow"
+      size={17}
+    /></a
+  >
 </div>
