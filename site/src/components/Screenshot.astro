@@ -1,16 +1,73 @@
 ---
-import { Image } from 'astro:assets';
-import gallery from '../assets/screenshots/gallery.jpg';
-import queue from '../assets/screenshots/queue.jpg';
-import settings from '../assets/screenshots/settings.jpg';
 import Icon from './Icon.astro';
-import { t, type Locale } from '../lib/site';
-interface Props { name?: 'gallery'|'queue'|'settings'; locale: Locale; eager?: boolean; caption?: boolean; }
-const { name='gallery', locale, eager=false, caption=true }=Astro.props;
-const src = {gallery,queue,settings}[name];
-const alt = {gallery:t(locale,'img 原生图库：网格中的图片缩略图、文件名与复制链接操作。隔离演示数据。','The native img library with image thumbnails, file names, and copy-link controls. Isolated demo data; current app UI is Chinese.'),queue:t(locale,'img 上传队列：导入区域、紧凑工具栏、待上传图片与已完成记录。','The img upload queue with import area, compact toolbar, ready images, and completed records. Chinese app UI; demo data.'),settings:t(locale,'img 分区设置：诊断恢复、存储源以及上传与图片处理参数。','img settings sections for diagnostics, storage, and image processing. Chinese app UI; demo data.')}[name];
+import { t, asset, type Locale } from '../lib/site';
+interface Props {
+  name?: 'gallery' | 'queue' | 'settings';
+  locale: Locale;
+  eager?: boolean;
+  caption?: boolean;
+}
+const { name = 'gallery', locale, eager = false, caption = true } = Astro.props;
+const src = asset(`screenshots/${name}.webp`);
+const alt = {
+  gallery: t(
+    locale,
+    'img 原生图库：网格中的图片缩略图、文件名与复制链接操作。隔离演示数据。',
+    'The native img library with image thumbnails, file names, and copy-link controls. Isolated demo data; current app UI is Chinese.',
+  ),
+  queue: t(
+    locale,
+    'img 上传队列：导入区域、紧凑工具栏、待上传图片与已完成记录。',
+    'The img upload queue with import area, compact toolbar, ready images, and completed records. Chinese app UI; demo data.',
+  ),
+  settings: t(
+    locale,
+    'img 分区设置：诊断恢复、存储源以及上传与图片处理参数。',
+    'img settings sections for diagnostics, storage, and image processing. Chinese app UI; demo data.',
+  ),
+}[name];
 ---
+
 <figure class="app-figure">
-  <a class="screenshot-link" href={src.src} data-lightbox data-caption={alt} aria-label={t(locale,'放大截图：','Enlarge screenshot: ')+t(locale,name==='gallery'?'图库':name==='queue'?'上传队列':'设置',name)}><Image src={src} alt={alt} widths={[640,960,1280,1920]} sizes="(max-width: 700px) 92vw, (max-width: 1200px) 86vw, 1120px" width={1280} loading={eager?'eager':'lazy'} fetchpriority={eager?'high':'auto'} format="webp" quality={88}/><span class="zoom-indicator"><Icon name="zoom" size={17}/></span></a>
-  {caption && <figcaption>{t(locale,'0.3.0 原生应用实拍 · 演示数据 · 点击放大','0.3.0 native app · Demo data · Click to enlarge')}</figcaption>}
+  <a
+    class="screenshot-link"
+    href={src}
+    data-lightbox
+    data-caption={alt}
+    aria-label={t(locale, '放大截图：', 'Enlarge screenshot: ') +
+      t(
+        locale,
+        name === 'gallery' ? '图库' : name === 'queue' ? '上传队列' : '设置',
+        name,
+      )}
+    ><img
+      src={src}
+      alt={alt}
+      srcset={[640, 960]
+        .map(
+          (width) => `${asset(`screenshots/${name}-${width}.webp`)} ${width}w`,
+        )
+        .concat(`${src} 1280w`)
+        .join(', ')}
+      sizes={eager
+        ? '(max-width: 520px) 490px, (max-width: 1200px) calc(100vw - 56px), 1160px'
+        : '(max-width: 520px) calc(100vw - 48px), (max-width: 780px) calc(100vw - 52px), (max-width: 1200px) 60vw, 720px'}
+      width={1280}
+      height={900}
+      loading={eager ? 'eager' : 'lazy'}
+      fetchpriority={eager ? 'high' : 'auto'}
+      decoding="async"
+    /><span class="zoom-indicator"><Icon name="zoom" size={17} /></span></a
+  >
+  {
+    caption && (
+      <figcaption>
+        {t(
+          locale,
+          '0.3.0 原生应用实拍 · 演示数据 · 点击放大',
+          '0.3.0 native app · Demo data · Click to enlarge',
+        )}
+      </figcaption>
+    )
+  }
 </figure>
