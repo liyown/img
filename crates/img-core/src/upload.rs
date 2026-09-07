@@ -166,7 +166,13 @@ fn one(
         &name,
         &processed.data,
         template,
-        if o.path.is_empty() { &c.path } else { &o.path },
+        if !o.path.is_empty() {
+            &o.path
+        } else if !c.path.is_empty() {
+            &c.path
+        } else {
+            p.path_prefix()
+        },
         &c.rename,
         chrono::Local::now(),
     )?;

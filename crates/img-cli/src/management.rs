@@ -5,6 +5,74 @@ use img_core::{
     output,
 };
 use std::{io::Write, path::Path};
+pub fn import_config(path: &Path, source: &Path, apply: bool) -> Result<()> {
+    let before = std::fs::read(path).ok();
+    let mut config = config::read_global(path)?;
+    let plan = img_records::migration::parse(
+        &std::fs::read(source)?,
+        &config.providers.keys().cloned().collect::<Vec<_>>(),
+    )?;
+    for candidate in &plan.candidates {
+        println!("{} ({})", output::clean(&candidate.name), candidate.kind);
+        for warning in &candidate.warnings {
+            println!("  {}", output::clean(warning));
+        }
+    }
+    for skipped in &plan.skipped {
+        println!("Skipped: {}", output::clean(skipped));
+    }
+    if !apply {
+        println!("Preview only. Use --apply to import; existing configurations are preserved.");
+        return Ok(());
+    }
+    ensure!(
+        !plan.candidates.is_empty(),
+        "no supported configurations to import"
+    );
+    let mut keys = vec![];
+    let result = (|| -> Result<()> {
+        for candidate in plan.candidates {
+            let mut values = candidate.values;
+            for field in ["access_key", "secret_key", "token"] {
+                if let Some(value) = values.get_mut(field)
+                    && !value.is_empty()
+                    && !value.starts_with("${")
+                {
+                    let key = format!("IMG_DESKTOP_{}", uuid::Uuid::new_v4().simple());
+                    img_records::credentials::set(&key, value.as_bytes())?;
+                    keys.push(key.clone());
+                    *value = format!("${{{key}}}");
+                }
+            }
+            values.insert(
+                "type".into(),
+                if candidate.kind == "oss" {
+                    "s3".into()
+                } else {
+                    candidate.kind
+                },
+            );
+            let provider: ProviderConfig = serde_json::from_value(serde_json::to_value(values)?)?;
+            config.providers.insert(candidate.name, provider);
+        }
+        ensure!(
+            std::fs::read(path).ok() == before,
+            "configuration changed during import; retry preview"
+        );
+        config::save(path, &config)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        for key in keys {
+            img_records::credentials::remove(&key);
+        }
+    }
+    result?;
+    println!(
+        "Imported. Use img provider test NAME to verify a connection, then img provider use NAME."
+    );
+    Ok(())
+}
 fn prompt(text: &str) -> Result<String> {
     print!("{text}: ");
     std::io::stdout().flush()?;

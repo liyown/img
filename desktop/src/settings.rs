@@ -26,6 +26,7 @@ pub struct StorageSettings {
     editor: Option<ProviderEditor>,
     saving: bool,
     notice: Option<(String, bool)>,
+    import_plan: Option<img_records::migration::Plan>,
 }
 struct ProviderEditor {
     draft: ProviderDraft,
@@ -94,7 +95,57 @@ impl StorageSettings {
             editor: None,
             saving: false,
             notice,
+            import_plan: None,
         }
+    }
+    fn choose_import(&mut self, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("选择 PicGo / PicList 配置 JSON".into()),
+        });
+        let existing = self
+            .providers
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect::<Vec<_>>();
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = paths.await else {
+                return;
+            };
+            let Some(path) = paths.into_iter().next() else {
+                return;
+            };
+            let task = cx.background_executor().spawn(async move {
+                img_records::migration::parse(&std::fs::read(path)?, &existing)
+            });
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(plan) => {
+                        this.notice = Some((
+                            format!(
+                                "找到 {} 项配置，{} 项无法导入。逐项检查后保存，原文件不会修改。",
+                                plan.candidates.len(),
+                                plan.skipped.len()
+                            ),
+                            false,
+                        ));
+                        this.import_plan = Some(plan);
+                    }
+                    Err(_) => {
+                        this.notice = Some((
+                            "无法读取配置，请选择有效的 PicGo / PicList JSON 文件。原文件已保留。"
+                                .into(),
+                            true,
+                        ))
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
     fn edit(&mut self, draft: ProviderDraft, window: &mut Window, cx: &mut Context<Self>) {
         let name = cx.new(|cx| {
@@ -605,6 +656,62 @@ impl Render for StorageSettings {
                         })),
                 ),
         );
+        body = body.child(
+            button("import-config", "导入 PicGo / PicList 配置")
+                .disabled(self.saving || self.uploading || self.editor.is_some())
+                .on_click(cx.listener(|this, _, _, cx| this.choose_import(cx))),
+        );
+        if let Some(plan) = &self.import_plan {
+            for (index, candidate) in plan.candidates.iter().enumerate() {
+                let candidate = candidate.clone();
+                let summary = format!(
+                    "{} · {}{}",
+                    candidate.name,
+                    candidate.kind,
+                    if candidate.warnings.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" · {}", candidate.warnings.join("; "))
+                    }
+                );
+                body = body.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(12.))
+                        .child(text(summary, 12., MUTED).flex_1())
+                        .child(
+                            button(
+                                SharedString::from(format!("review-import-{index}")),
+                                "检查并添加",
+                            )
+                            .disabled(self.saving || self.uploading || self.editor.is_some())
+                            .on_click(cx.listener(
+                                move |this, _, window, cx| {
+                                    let kind = if candidate.kind == "github" {
+                                        ProviderKind::Github
+                                    } else {
+                                        ProviderKind::Oss
+                                    };
+                                    let mut draft = ProviderDraft::new(kind);
+                                    draft.name = candidate.name.clone();
+                                    draft.values.extend(candidate.values.clone());
+                                    this.edit(draft, window, cx);
+                                },
+                            )),
+                        ),
+                );
+            }
+            for skipped in &plan.skipped {
+                body = body.child(text(skipped.clone(), 12., MUTED));
+            }
+            body = body.child(
+                button("dismiss-import", "关闭导入预览").on_click(cx.listener(|this, _, _, cx| {
+                    this.import_plan = None;
+                    cx.notify();
+                })),
+            );
+        }
         if self.providers.is_empty() && self.editor.is_none() {
             body = body.child(
                 div()

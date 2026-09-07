@@ -17,6 +17,15 @@ pub struct Cli {
 }
 #[derive(Subcommand)]
 pub enum Command {
+    /// Preview or import PicGo/PicList storage configurations
+    ImportConfig {
+        file: PathBuf,
+        #[arg(
+            long,
+            help = "Save supported configurations using the system credential store"
+        )]
+        apply: bool,
+    },
     /// Verify public image URLs without sending storage credentials
     Check {
         #[arg(required = true)]

@@ -69,7 +69,7 @@ impl ProviderKind {
             secret: true,
             required,
         };
-        match self {
+        let mut fields = match self {
             Self::S3 | Self::R2 | Self::Oss => vec![
                 text(
                     "endpoint",
@@ -121,7 +121,14 @@ impl ProviderKind {
                 text("url_json_path", "返回链接字段", "data.url", true),
                 secret("authorization", "Authorization 请求头", false),
             ],
-        }
+        };
+        fields.push(text(
+            "path_prefix",
+            "此存储源的默认目录",
+            "例如 posts/images",
+            false,
+        ));
+        fields
     }
 }
 
@@ -318,6 +325,17 @@ fn set_field(table: &mut Table, key: &str, value: String) -> Result<()> {
 }
 
 fn validate_provider(draft: &ProviderDraft, provider: &Table) -> Result<()> {
+    let prefix = field_value(provider, "path_prefix");
+    ensure!(
+        prefix.is_empty()
+            || (!prefix.starts_with('/')
+                && !prefix.contains('\\')
+                && !prefix.chars().any(char::is_control)
+                && prefix
+                    .split('/')
+                    .all(|s| !s.is_empty() && s != "." && s != "..")),
+        "默认目录必须是有效相对路径"
+    );
     ensure!(!draft.name.trim().is_empty(), "请填写存储源名称");
     ensure!(
         draft.name.len() <= 100 && !draft.name.chars().any(char::is_control),

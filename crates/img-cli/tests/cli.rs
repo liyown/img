@@ -152,6 +152,20 @@ fn repeated_bytes_reuse_only_with_opt_in_and_force_transfers_again() {
     assert_eq!(seen.lock().unwrap().len(), 2);
 }
 #[test]
+fn migration_preview_never_writes_or_prints_credentials() {
+    let f = Fixture::new("https://unused.test");
+    let source = f.dir.path().join("picgo.json");
+    let bytes = br#"{"picBed":{"github":{"repo":"me/img","token":"do-not-print"}}}"#;
+    std::fs::write(&source, bytes).unwrap();
+    let before = std::fs::read(&f.config).unwrap();
+    let result = f.run(&["import-config", source.to_str().unwrap()]);
+    assert!(result.status.success());
+    assert!(!String::from_utf8_lossy(&result.stdout).contains("do-not-print"));
+    assert!(!String::from_utf8_lossy(&result.stderr).contains("do-not-print"));
+    assert_eq!(std::fs::read(&f.config).unwrap(), before);
+    assert_eq!(std::fs::read(&source).unwrap(), bytes);
+}
+#[test]
 fn json_setup_errors_keep_exit_code_and_hide_config_contents() {
     let f = Fixture::new("https://unused.test");
     std::fs::write(

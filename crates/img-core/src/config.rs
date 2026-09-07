@@ -90,6 +90,7 @@ impl Default for Upload {
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ProviderConfig {
+    pub path_prefix: String,
     #[serde(rename = "type")]
     pub kind: String,
     pub endpoint: String,
@@ -331,6 +332,9 @@ impl Config {
 }
 impl ProviderConfig {
     pub fn validate(&self) -> Result<()> {
+        if !self.path_prefix.is_empty() {
+            crate::pathgen::validate(&self.path_prefix)?;
+        }
         match self.kind.as_str() {
             "http" => {
                 ensure!(

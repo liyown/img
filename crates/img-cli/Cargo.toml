@@ -10,6 +10,8 @@ name = "img"
 path = "src/main.rs"
 
 [dependencies]
+uuid = { version = "1", features = ["v4"] }
+img-records = { path = "../img-records" }
 img-core = { path = "../img-core" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }

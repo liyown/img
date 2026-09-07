@@ -58,6 +58,7 @@ fn normalized_args(mut args: Vec<OsString>) -> Vec<OsString> {
         if ![
             "upload",
             "check",
+            "import-config",
             "fetch",
             "screenshot",
             "serve",
@@ -116,6 +117,7 @@ fn report(
 fn run(cli: Cli, control: &Control) -> Result<i32> {
     let path = cli.config.unwrap_or(config::global_path()?);
     match cli.command {
+        Command::ImportConfig { file, apply } => management::import_config(&path, &file, apply)?,
         Command::Check {
             urls,
             allow_insecure,

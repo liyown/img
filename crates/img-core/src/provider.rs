@@ -63,6 +63,9 @@ pub struct Request<'a> {
     pub overwrite: bool,
 }
 impl Provider {
+    pub fn path_prefix(&self) -> &str {
+        &self.cfg.path_prefix
+    }
     pub fn reuse_scope(&self) -> Result<Option<Vec<u8>>> {
         // Default-chain credentials can change accounts without changing config.
         if self.cfg.kind == "s3" && self.cfg.access_key.is_empty() {

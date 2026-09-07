@@ -449,6 +449,7 @@ pub fn upload(
     let mut command = Command::new(binary);
     command
         .current_dir(working_directory.path())
+        .env("IMG_DATA_DIR", root)
         .env_remove("IMG_PROVIDER")
         .env_remove("IMG_DEFAULT_PROVIDER")
         .env_remove("IMG_OUTPUT_FORMAT")
