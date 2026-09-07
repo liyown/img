@@ -1,0 +1,44 @@
+---
+import { getCollection, render } from 'astro:content';
+import Base from '../layouts/Base.astro';
+import Home from '../components/Home.astro';
+import ContentPages from '../components/ContentPages.astro';
+import Icon from '../components/Icon.astro';
+import { locales, pages, href, t, type Locale } from '../lib/site';
+export async function getStaticPaths() {
+  return locales.flatMap(locale=>[...pages.map(([path])=>({params:{route:(locale==='en'?'en/':'')+path || undefined},props:{locale,path}})),{params:{route:(locale==='en'?'en/':'')+'404'},props:{locale,path:'404'}}]);
+}
+const {locale,path}=Astro.props as {locale:Locale,path:string};
+const docs=(await getCollection('docs',d=>d.data.locale===locale)).sort((a,b)=>a.data.order-b.data.order);
+const doc=path.startsWith('docs/')?docs.find(d=>d.data.topic===path.slice(5)):undefined;
+const rendered=doc?await render(doc):null;
+const Content=rendered?.Content;
+const metadata:Record<string,[string,string]>= locale==='zh'?{
+ '':['从图片到链接，轻松一步','img 是轻巧的原生 macOS 图片上传工具与独立 Rust CLI。支持 R2、S3、OSS、GitHub 和 HTTP，自动复制链接、可恢复队列与本地图库。'],
+ features:['功能：轻巧，也周到','探索 img 的原生图库、可恢复上传队列、图片处理、分区设置、快捷操作与 Rust CLI。'],
+ compare:['img、PicGo、PicList、uPic 对比','按统一口径比较图片上传工具的包体积、功能与使用场景，附 img 性能基准、缓存预算、官方来源和测量限制。'],
+ install:['安装 img 0.3.0：GUI 与 CLI','从源码构建 img 0.3.0 内测预览：macOS 原生 GUI 内置 CLI，也可在 macOS、Linux 和 Windows 独立安装 Rust CLI。'],
+ docs:['img 使用文档','从配置存储到上传第一张图片，了解 img 桌面、CLI、编辑器与 Agent 集成，以及诊断恢复。'],
+ privacy:['隐私说明','了解 img 网站统计状态、GitHub Pages 托管、图片上传、本地数据、凭据与主动导出的诊断记录。'],
+ '404':['页面未找到','这个地址没有对应页面。返回 img 官网或查阅使用文档。']
+}:{
+ '':['From image to link, with less friction','img is a small native macOS image uploader and standalone Rust CLI. Use R2, S3, OSS, GitHub, or HTTP with automatic link copying and a recoverable local queue.'],
+ features:['Features: small and thoughtful','Explore img’s native library, recoverable upload queue, image processing, direct settings, quick actions, and Rust CLI.'],
+ compare:['Compare img, PicGo, PicList, and uPic','Compare image uploader package sizes, capabilities, and fit, with img benchmarks, a clearly labeled cache budget, official sources, and measurement limits.'],
+ install:['Install img 0.3.0: GUI and CLI','Build the img 0.3.0 preview from source: a native macOS GUI with a bundled CLI, or a standalone Rust CLI for macOS, Linux, and Windows.'],
+ docs:['img documentation','Configure storage, upload your first image, and learn the desktop app, CLI, editor and agent integrations, diagnostics, and recovery.'],
+ privacy:['Privacy','Understand img website analytics, GitHub Pages hosting, image uploads, local data, credentials, and deliberately exported diagnostics.'],
+ '404':['Page not found','This address does not have a page. Return to the img website or read the documentation.']
+};
+const [title,description]=doc?[doc.data.title,doc.data.description]:metadata[path];
+---
+<Base locale={locale} path={path} title={title} description={description} noindex={path==='404'}>
+  {path===''?<Home locale={locale}/>:path==='docs'?<>
+    <section class="page-hero wrap"><span class="eyebrow">A PLACE TO START.</span><h1>{t(locale,'用得顺手，','Get comfortable.')}<br/><em>{t(locale,'从这里开始。','Start here.')}</em></h1><p>{t(locale,'配置、上传、集成。从第一张图片到你的整个工作流。','Configure, upload, integrate. From your first image to your whole workflow.')}</p></section>
+    <section class="docs-cards wrap" aria-label={t(locale,'文档目录','Documentation index')}>{docs.map((d,i)=><a href={href(locale,'docs/'+d.data.topic)}><span class="mono">0{i+1}</span><h2>{d.data.title}<Icon name="arrow"/></h2><p>{d.data.description}</p></a>)}</section>
+  </>:doc&&Content?<div class="doc-layout wrap">
+    <aside class="doc-sidebar"><a class="doc-overview" href={href(locale,'docs')}>{t(locale,'使用文档','Documentation')}</a><nav aria-label={t(locale,'文档导航','Documentation navigation')}>{docs.map(d=><a href={href(locale,'docs/'+d.data.topic)} aria-current={d.id===doc.id?'page':undefined}>{d.data.title}</a>)}</nav><span class="doc-version">0.3.0 {t(locale,'内测预览','preview')}</span></aside>
+    <article class="doc-article"><nav class="breadcrumbs" aria-label={t(locale,'面包屑导航','Breadcrumbs')}><a href={href(locale)}>{t(locale,'首页','Home')}</a><span>/</span><a href={href(locale,'docs')}>{t(locale,'文档','Docs')}</a><span>/</span><span>{doc.data.title}</span></nav><header><h1>{doc.data.title}</h1><p>{doc.data.description}</p></header><details class="mobile-toc"><summary>{t(locale,'本页目录','On this page')}</summary><nav>{rendered?.headings.filter(h=>h.depth===2).map(h=><a href={'#'+h.slug}>{h.text}</a>)}</nav></details><div class="prose"><Content/></div><div class="doc-end"><a href={`https://github.com/liyown/img/blob/main/site/src/content/docs/${locale}/${doc.data.topic}.md`}>{t(locale,'在 GitHub 查看此页源码','View this page on GitHub')} ↗</a><span>0.3.0 · 2026-09-07</span></div></article>
+    <aside class="doc-toc"><span>{t(locale,'本页目录','On this page')}</span><nav>{rendered?.headings.filter(h=>h.depth===2).map(h=><a href={'#'+h.slug}>{h.text}</a>)}</nav></aside>
+  </div>:path==='404'?<section class="not-found wrap"><span class="eyebrow">404 / OFF THE PATH.</span><h1>{t(locale,'这张地图，','A missing link.')}<br/><em>{t(locale,'少了一页。','Let’s head back.')}</em></h1><p>{t(locale,'页面可能已移动，或者链接中有个小笔误。','The page may have moved, or a small typo slipped into the URL.')}</p><a class="button primary" href={href(locale)}>{t(locale,'回到首页','Back to home')}<Icon name="arrow"/></a><a class="text-link" href={href(locale,'docs')}>{t(locale,'查看文档','Read the docs')}<Icon name="arrow"/></a></section>:<ContentPages locale={locale} path={path}/>}
+</Base>

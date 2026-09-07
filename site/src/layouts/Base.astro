@@ -1,0 +1,58 @@
+---
+import '../styles/global.css';
+import Icon from '../components/Icon.astro';
+import { site, t, href, asset, absolute, pageName, type Locale } from '../lib/site';
+interface Props { locale: Locale; path?: string; title: string; description: string; noindex?: boolean; }
+const { locale, path='', title, description, noindex=false } = Astro.props;
+const nav = [['features',t(locale,'功能','Features')],['compare',t(locale,'对比','Compare')],['docs',t(locale,'文档','Docs')]];
+const switchLocale = locale === 'zh' ? 'en' : 'zh';
+const og = site.origin + asset(`og/${locale}.png`);
+const schema = [
+ { '@context':'https://schema.org', '@type':'WebSite', name:'img', url:absolute(locale), inLanguage:locale==='zh'?'zh-CN':'en', description },
+ ...(path === '' ? [{ '@context':'https://schema.org', '@type':'SoftwareApplication', name:'img', applicationCategory:'DeveloperApplication', operatingSystem:'macOS (GUI and CLI), Linux and Windows (CLI)', softwareVersion:site.version, url:absolute(locale), screenshot:site.origin+asset('screenshots/gallery.webp'), description:t(locale,'原生 macOS 图片上传工具与独立 Rust CLI。支持自选存储源、链接复制和可恢复上传队列。','A native macOS image uploader and standalone Rust CLI with your own storage, link copying, and a recoverable queue.') }] : [{ '@context':'https://schema.org', '@type':'BreadcrumbList', itemListElement:[{ '@type':'ListItem', position:1,name:t(locale,'首页','Home'), item:absolute(locale) }, ...(path.startsWith('docs/')?[{ '@type':'ListItem',position:2,name:pageName(locale,'docs'),item:absolute(locale,'docs') }]:[]), { '@type':'ListItem',position:path.startsWith('docs/')?3:2,name:pageName(locale,path),item:absolute(locale,path) }] }]),
+];
+---
+<!doctype html>
+<html lang={locale==='zh'?'zh-CN':'en'}>
+<head>
+  <meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="theme-color" content="#f8f7f3"/>
+  <title>{title} · img</title><meta name="description" content={description}/>
+  <link rel="canonical" href={absolute(locale,path)}/>
+  <link rel="alternate" hreflang="zh-CN" href={absolute('zh',path)}/>
+  <link rel="alternate" hreflang="en" href={absolute('en',path)}/>
+  <link rel="alternate" hreflang="x-default" href={absolute('zh',path)}/>
+  <meta name="robots" content={noindex?'noindex, follow':'index, follow, max-image-preview:large'}/>
+  <meta property="og:type" content="website"/><meta property="og:site_name" content="img"/>
+  <meta property="og:title" content={title+' · img'}/><meta property="og:description" content={description}/>
+  <meta property="og:url" content={absolute(locale,path)}/><meta property="og:locale" content={locale==='zh'?'zh_CN':'en_US'}/>
+  <meta property="og:locale:alternate" content={locale==='zh'?'en_US':'zh_CN'}/>
+  <meta property="og:image" content={og}/><meta property="og:image:width" content="1200"/><meta property="og:image:height" content="630"/>
+  <meta property="og:image:alt" content={t(locale,'img — 从图片到链接，轻松一步。Rust CLI + 原生 macOS。','img — From image to link. Rust CLI + native macOS.')}/>
+  <meta name="twitter:card" content="summary_large_image"/><meta name="twitter:image" content={og}/><meta name="twitter:title" content={title+' · img'}/><meta name="twitter:description" content={description}/><meta name="twitter:image:alt" content={t(locale,'img 图片上传工具','img image uploader')}/>
+  <link rel="icon" type="image/svg+xml" href={asset('favicon.svg')}/><link rel="apple-touch-icon" href={asset('apple-touch-icon.png')}/>
+  <link rel="sitemap" href={asset('sitemap.xml')}/>
+  {site.verification && <meta name="google-site-verification" content={site.verification}/>}
+  <script is:inline type="application/ld+json" set:html={JSON.stringify(schema).replace(/</g,'\\u003c')}/>
+</head>
+<body data-locale={locale} data-ga-id={site.gaId || undefined}>
+  <a href="#main" class="skip-link">{t(locale,'跳到正文','Skip to content')}</a>
+  <header class="site-header">
+    <div class="nav-inner wrap">
+      <a class="brand" href={href(locale)} aria-label={t(locale,'img 首页','img home')}><span class="brand-mark"><Icon name="image" size={21}/></span><span>img<span class="brand-period">.</span></span></a>
+      <nav class="desktop-nav" aria-label={t(locale,'主导航','Main navigation')}>{nav.map(([url,label])=><a aria-current={path===url?'page':undefined} href={href(locale,url)}>{label}</a>)}</nav>
+      <div class="nav-end"><a class="language" data-language href={href(switchLocale,path)} lang={switchLocale==='en'?'en':'zh-CN'} aria-label={t(locale,'Read this page in English','用中文阅读此页')}><Icon name="globe" size={16}/>{t(locale,'EN','中文')}</a><a class="github-link" data-track="github" href={site.repository}>GitHub<Icon name="external" size={15}/></a><a class="nav-start" href={href(locale,'install')}>{t(locale,'开始使用','Get started')}<Icon name="arrow" size={15}/></a></div>
+      <details class="mobile-menu"><summary aria-label={t(locale,'打开导航菜单','Open navigation menu')}><Icon name="menu"/></summary><nav aria-label={t(locale,'移动导航','Mobile navigation')}>{[...nav,['install',t(locale,'开始使用','Get started')]].map(([url,label])=><a href={href(locale,url)}>{label}</a>)}<a href={site.repository} data-track="github">GitHub ↗</a></nav></details>
+    </div>
+  </header>
+  <main id="main"><slot/></main>
+  <footer class="site-footer wrap">
+    <div class="footer-main"><a class="brand" href={href(locale)}><span class="brand-mark"><Icon name="image" size={21}/></span><span>img<span class="brand-period">.</span></span></a><p>{t(locale,'让图片去该去的地方。','Give your images a place to go.')}</p><span class="mono">RUST CORE. NATIVE FEEL.</span></div>
+    <div class="footer-links"><div><span>{t(locale,'产品','Product')}</span><a href={href(locale,'features')}>{t(locale,'所有功能','All features')}</a><a href={href(locale,'compare')}>{t(locale,'竞品对比','Comparison')}</a><a href={href(locale,'install')}>{t(locale,'安装指南','Installation')}</a></div><div><span>{t(locale,'资源','Resources')}</span><a href={href(locale,'docs')}>{t(locale,'使用文档','Documentation')}</a><a href={site.repository} data-track="github">GitHub ↗</a><a href={href(locale,'privacy')}>{t(locale,'隐私说明','Privacy')}</a>{site.gaId && <button class="text-button" data-consent-open>{t(locale,'统计偏好','Analytics preferences')}</button>}</div></div>
+    <div class="footer-bottom"><span>img {site.version} · {t(locale,'内测预览','Preview')}</span><span>{t(locale,'用 Rust 构建，为日常而做。','Built with Rust. Made for everyday work.')}</span></div>
+  </footer>
+  <dialog class="lightbox" aria-label={t(locale,'截图预览','Screenshot preview')}><button class="lightbox-close" autofocus aria-label={t(locale,'关闭预览','Close preview')}><Icon name="close"/></button><img width="1280" height="900" alt=""/><p></p></dialog>
+  {site.gaId && <section class="consent" role="region" aria-label={t(locale,'可选网站统计','Optional website analytics')} hidden><p>{t(locale,'允许匿名化的使用统计吗？我们仅在你同意后加载 Google Analytics，了解页面访问与上手入口点击。','Allow usage analytics? We load Google Analytics only with your consent to understand page visits and get-started clicks.')} <a href={href(locale,'privacy')}>{t(locale,'了解详情','Details')}</a></p><div><button class="button primary" data-consent="granted">{t(locale,'允许统计','Allow analytics')}</button><button class="button secondary" data-consent="denied">{t(locale,'拒绝','Decline')}</button><button class="text-button" data-consent="withdrawn">{t(locale,'撤回同意','Withdraw consent')}</button></div></section>}
+  <script>import '../scripts/site';</script>
+</body>
+</html>
