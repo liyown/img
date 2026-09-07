@@ -58,7 +58,7 @@ const features = t(
     [
       'command',
       '菜单栏与快捷键',
-      '菜单栏与全局快捷操作。关掉窗口，上传还在继续。',
+      '快捷键直接上传剪贴板或截图。macOS 还支持菜单栏操作和关闭窗口后继续上传。',
     ],
     [
       'shield',
@@ -72,8 +72,8 @@ const features = t(
     ],
     [
       'terminal',
-      '从终端到编辑器',
-      '独立 Rust CLI、JSON、编辑器代理和 Markdown 批量转存。',
+      '让 Agent 直接上传',
+      '原生 CLI 与可安装的 Skill，返回 JSON 结果。Agent 和桌面共用存储配置。',
     ],
   ],
   [
@@ -90,7 +90,7 @@ const features = t(
     [
       'command',
       'Menu bar and shortcuts',
-      'Menu-bar and global quick actions. Close the window; uploads keep going.',
+      'Upload screenshots or clipboard images with shortcuts. macOS also has menu-bar controls and keeps uploading when the window closes.',
     ],
     [
       'shield',
@@ -104,8 +104,8 @@ const features = t(
     ],
     [
       'terminal',
-      'From shell to editor',
-      'A standalone Rust CLI, JSON output, an editor proxy, and Markdown rewriting.',
+      'Let your agent upload',
+      'A native CLI and installable Skill with JSON results. Your agent and desktop share the same storage configuration.',
     ],
   ],
 );
@@ -168,14 +168,14 @@ const faq = t(
     {
       t(
         locale,
-        '轻巧的图片上传工具，支持自己的存储。',
-        'A small image uploader for your own storage.',
+        '截图上传后，链接直接粘贴。',
+        'Upload a screenshot and paste the link.',
       )
     }<br />{
       t(
         locale,
-        '在 macOS 桌面操作，也能用命令行上传。',
-        'Use the native desktop app or upload from the CLI.',
+        '你用桌面，AI 用原生 CLI 和 Skill，共用自己的图床。',
+        'A desktop for you, a native CLI and Skill for your AI. Your storage for both.',
       )
     }
   </p>
@@ -183,8 +183,8 @@ const faq = t(
     {
       t(
         locale,
-        '三端 GUI · 跨平台 CLI · 你的图片，你的存储',
-        'Cross-platform GUI · Cross-platform CLI · Your images, your storage',
+        'macOS / Windows / Linux · 图片和域名由你掌握',
+        'macOS / Windows / Linux · Keep your images and domain',
       )
     }
   </p>
@@ -392,8 +392,8 @@ const faq = t(
       {
         t(
           locale,
-          'img 提供原生 GUI 和独立 Rust CLI。PicGo 有插件生态，PicList 支持远端文件管理，uPic 也有原生 macOS 界面和快捷操作。',
-          'img has a native GUI and standalone Rust CLI. PicGo has a plugin ecosystem, PicList adds remote file management, and uPic also has a native macOS app with quick actions.',
+          '想把手动上传和 Agent 工作流接到一起，可以试试 img 的原生桌面、CLI 和 Skill。支持的存储源继续用，旧文章链接不用改；配置需要在 img 中重新添加。对照功能和安装包信息，看看它是否适合你。',
+          'Try img if you want manual uploads and agent workflows to share a native desktop, CLI, and Skill. Keep supported storage providers and existing article links; add the provider settings again in img. Compare features and packages to see whether it fits.',
         )
       }
     </p><a class="text-link" href={href(locale, 'compare')}

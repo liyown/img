@@ -52,4 +52,12 @@ img upload cover.png --format json --no-copy --progress
 
 stdout contains final JSON; stderr carries separate progress events. `--progress` accepts one file only. Check the exit code and each file's `success`. Failures retain `error` and may include `error_code`, `http_status`, and `retryable`. A progress value of 100% is not server-confirmed success.
 
-The repository's [SKILL.md](https://github.com/liyown/img/blob/main/skills/img-uploader/SKILL.md) documents agent usage; the [GitHub Action](https://github.com/liyown/img/blob/main/action.yml) supports workflows. The Action installer still fetches a published CLI, which may currently be the older Go version. To use Rust 0.3.0 in CI, build the CLI from a reviewed commit as described in the installation guide, then invoke img rewrite directly. Pinning the Action commit does not pin its downloaded CLI version.
+Install the companion Skill for assistants that support Agent Skills and can run local commands:
+
+```sh
+npx skills add liyown/img --skill img-uploader
+```
+
+Install the native CLI and configure your default storage first. Your agent can then upload local images and insert the returned links into an article. The Skill checks files and configuration, reads per-file JSON results, and preserves successful links when other uploads fail. It reuses existing storage settings without requiring credentials in the conversation. Read the full [Skill workflow](https://github.com/liyown/img/blob/main/skills/img-uploader/SKILL.md).
+
+The [GitHub Action](https://github.com/liyown/img/blob/main/action.yml) uploads and rewrites Markdown images in a workflow. Its installer fetches the latest released CLI; pinning the Action commit does not pin the downloaded CLI. For a reproducible version, download and verify a specific CLI release in your workflow, then call `img rewrite`.
