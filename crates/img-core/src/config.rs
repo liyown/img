@@ -58,6 +58,7 @@ impl Default for Output {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Upload {
+    pub recipe: crate::media::Recipe,
     pub reuse: bool,
     pub path: String,
     pub path_template: String,
@@ -73,6 +74,7 @@ pub struct Upload {
 impl Default for Upload {
     fn default() -> Self {
         Self {
+            recipe: Default::default(),
             reuse: false,
             path: String::new(),
             path_template: "{year}/{month}/{filename}".into(),
@@ -229,6 +231,7 @@ pub fn is_sensitive(s: &str) -> bool {
 }
 impl Config {
     pub fn validate(&self) -> Result<()> {
+        self.upload.recipe.validate()?;
         ensure!(
             self.version == 1,
             "unsupported configuration version (expected 1)"
@@ -336,6 +339,14 @@ impl ProviderConfig {
             crate::pathgen::validate(&self.path_prefix)?;
         }
         match self.kind.as_str() {
+            "webdav" => {
+                let endpoint = crate::network::secure_url(&self.endpoint, self.allow_insecure)?;
+                ensure!(
+                    endpoint.query().is_none(),
+                    "WebDAV endpoint must not contain a query"
+                );
+                ensure!(!self.public_url.is_empty(), "WebDAV public_url is required");
+            }
             "http" => {
                 ensure!(
                     !self.url_json_path.is_empty(),

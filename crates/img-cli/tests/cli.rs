@@ -7,6 +7,142 @@ use std::{
     time::Duration,
 };
 const BIN: &str = env!("CARGO_BIN_EXE_img");
+#[test]
+fn remote_s3_lists_pages_and_deletes_only_with_explicit_version() {
+    let s = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", s.server_addr());
+    let f = Fixture::new(&endpoint);
+    std::fs::write(&f.config,format!("version=1\nallow_plaintext_credentials=true\ndefault_provider='local'\n[providers.local]\ntype='s3'\nendpoint='{endpoint}'\nbucket='images'\nregion='test'\naccess_key='test'\nsecret_key='test'\npublic_url='https://cdn.test'\npath_style=true\nallow_insecure=true\n")).unwrap();
+    let handle = std::thread::spawn(move || {
+        let r = s.recv_timeout(Duration::from_secs(8)).unwrap().unwrap();
+        assert_eq!(r.method().as_str(), "GET");
+        assert!(r.url().contains("prefix=folder%2F"));
+        assert!(r.url().contains("continuation-token=opaque"));
+        r.respond(tiny_http::Response::from_string(r#"<ListBucketResult><IsTruncated>true</IsTruncated><NextContinuationToken>next</NextContinuationToken><Contents><Key>folder/a &amp; b.png</Key><Size>12</Size><ETag>"v1"</ETag></Contents><CommonPrefixes><Prefix>folder/sub/</Prefix></CommonPrefixes></ListBucketResult>"#)).unwrap();
+        let r = s.recv_timeout(Duration::from_secs(8)).unwrap().unwrap();
+        assert_eq!(r.method().as_str(), "DELETE");
+        assert_eq!(r.url(), "/images/folder/a%20%26%20b.png");
+        assert_eq!(
+            r.headers()
+                .iter()
+                .find(|h| h.field.equiv("if-match"))
+                .unwrap()
+                .value
+                .as_str(),
+            "\"v1\""
+        );
+        r.respond(tiny_http::Response::empty(412)).unwrap();
+    });
+    let list = f.run(&[
+        "remote", "list", "--prefix", "folder/", "--cursor", "opaque",
+    ]);
+    assert!(
+        list.status.success(),
+        "{}",
+        String::from_utf8_lossy(&list.stderr)
+    );
+    assert_eq!(parsed(&list)["next"], "next");
+    assert_eq!(parsed(&list)["items"][0]["path"], "folder/a & b.png");
+    assert_eq!(parsed(&list)["items"][1]["directory"], true);
+    assert!(
+        !f.run(&[
+            "remote",
+            "delete",
+            "folder/a & b.png",
+            "--version",
+            "\"v1\""
+        ])
+        .status
+        .success()
+    );
+    assert!(
+        !f.run(&[
+            "remote",
+            "delete",
+            "folder/a & b.png",
+            "--version",
+            "\"v1\"",
+            "--yes"
+        ])
+        .status
+        .success()
+    );
+    handle.join().unwrap();
+}
+#[test]
+fn webdav_upload_creates_collections_and_preserves_existing_files() {
+    let s = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}/dav", s.server_addr());
+    let f = Fixture::new(&endpoint);
+    std::fs::write(&f.config,format!("version=1\ndefault_provider='local'\n[upload]\npath_template='folder/{{filename}}'\n[providers.local]\ntype='webdav'\nendpoint='{endpoint}'\npublic_url='https://cdn.test'\nallow_insecure=true\n")).unwrap();
+    let handle = std::thread::spawn(move || {
+        let r = s.recv_timeout(Duration::from_secs(8)).unwrap().unwrap();
+        assert_eq!(r.method().as_str(), "MKCOL");
+        assert_eq!(r.url(), "/dav/folder/");
+        r.respond(tiny_http::Response::empty(405)).unwrap();
+        let mut r = s.recv_timeout(Duration::from_secs(8)).unwrap().unwrap();
+        assert_eq!(r.method().as_str(), "PUT");
+        assert_eq!(r.url(), "/dav/folder/picture.png");
+        assert_eq!(
+            r.headers()
+                .iter()
+                .find(|h| h.field.equiv("if-none-match"))
+                .unwrap()
+                .value
+                .as_str(),
+            "*"
+        );
+        let mut bytes = vec![];
+        r.as_reader().read_to_end(&mut bytes).unwrap();
+        assert!(bytes.starts_with(b"\x89PNG"));
+        r.respond(tiny_http::Response::empty(412)).unwrap();
+    });
+    let before = std::fs::read(&f.image).unwrap();
+    let out = f.command().arg("upload").arg(&f.image).output().unwrap();
+    assert!(!out.status.success());
+    assert_eq!(std::fs::read(&f.image).unwrap(), before);
+    handle.join().unwrap();
+}
+#[test]
+fn backup_cli_preview_does_not_restore_and_apply_retains_recovery() {
+    let f = Fixture::new("https://test.invalid");
+    let destination = f.dir.path().join("backup");
+    assert!(
+        f.command()
+            .arg("backup")
+            .arg(&destination)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    std::fs::write(&f.config, "version=1\n").unwrap();
+    let before = std::fs::read(&f.config).unwrap();
+    assert!(
+        f.command()
+            .arg("restore")
+            .arg(&destination)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    assert_eq!(std::fs::read(&f.config).unwrap(), before);
+    let result = f
+        .command()
+        .arg("restore")
+        .arg(&destination)
+        .arg("--apply")
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(std::path::Path::new(parsed(&result)["recovery"].as_str().unwrap()).is_dir());
+    assert_ne!(std::fs::read(&f.config).unwrap(), before);
+}
 struct Fixture {
     dir: tempfile::TempDir,
     config: PathBuf,

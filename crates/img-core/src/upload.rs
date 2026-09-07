@@ -61,6 +61,7 @@ fn zero(n: &u64) -> bool {
 }
 #[derive(Clone, Default)]
 pub struct Options {
+    pub recipe: Option<media::Recipe>,
     pub reuse: bool,
     pub force: bool,
     pub record_origin: Option<String>,
@@ -130,7 +131,7 @@ fn one(
         )
     };
     let typ = media::inspect(&data, c.max_size)?;
-    let processed = media::process(
+    let processed = media::process_recipe(
         data,
         typ,
         o.strip_exif || c.strip_exif,
@@ -140,6 +141,7 @@ fn one(
             o.max_width
         },
         o.optimize,
+        o.recipe.as_ref().unwrap_or(&c.recipe),
     )?;
     control.check()?;
     if processed.content_type != typ {
@@ -153,6 +155,10 @@ fn one(
             .to_string_lossy()
             .into_owned();
     }
+    ensure!(
+        processed.data.len() as u64 <= c.max_size,
+        "processed image exceeds configured maximum size"
+    );
     let template = if o.name.is_empty() {
         &c.path_template
     } else {

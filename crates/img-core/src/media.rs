@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, ensure};
 use image::{DynamicImage, ImageDecoder, ImageEncoder, ImageReader, metadata::Orientation};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     io::{Cursor, Read},
     path::Path,
@@ -142,6 +142,146 @@ pub struct Processed {
     pub content_type: String,
     pub original_size: u64,
 }
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Recipe {
+    pub format: String,
+    pub quality: u8,
+    pub max_edge: u32,
+    pub watermark: String,
+    pub opacity: u8,
+}
+impl Default for Recipe {
+    fn default() -> Self {
+        Self {
+            format: "original".into(),
+            quality: 85,
+            max_edge: 0,
+            watermark: String::new(),
+            opacity: 60,
+        }
+    }
+}
+impl Recipe {
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            matches!(self.format.as_str(), "original" | "png" | "jpeg" | "webp"),
+            "unsupported output image format"
+        );
+        ensure!(
+            (1..=100).contains(&self.quality) && self.opacity <= 100,
+            "quality must be 1–100 and opacity 0–100"
+        );
+        ensure!(self.max_edge <= 32768, "longest edge exceeds 32768 pixels");
+        Ok(())
+    }
+    pub fn preset(name: &str) -> Self {
+        match name {
+            "web" => Self {
+                format: "webp".into(),
+                max_edge: 1600,
+                ..Self::default()
+            },
+            "photo" => Self {
+                format: "jpeg".into(),
+                max_edge: 2400,
+                quality: 82,
+                ..Self::default()
+            },
+            _ => Self::default(),
+        }
+    }
+}
+pub fn process_recipe(
+    data: Vec<u8>,
+    ct: &str,
+    strip: bool,
+    max_width: u32,
+    optimize: bool,
+    recipe: &Recipe,
+) -> Result<Processed> {
+    recipe.validate()?;
+    if recipe == &Recipe::default() {
+        return process(data, ct, strip, max_width, optimize);
+    }
+    ensure!(
+        matches!(ct, "image/png" | "image/jpeg" | "image/webp"),
+        "explicit image processing supports PNG, JPEG and static WebP; animation/vector input is preserved only with original settings"
+    );
+    let mut dec = decoder(&data)?;
+    let orientation = dec.orientation()?;
+    // Reject animated WebP instead of silently discarding frames.
+    if ct == "image/webp" {
+        ensure!(
+            !data.windows(4).any(|w| w == b"ANIM"),
+            "animated WebP cannot be flattened by image processing"
+        );
+    }
+    let mut image = DynamicImage::from_decoder(dec)?;
+    image.apply_orientation(orientation);
+    let mut scale = 1f64;
+    if max_width > 0 {
+        scale = scale.min(max_width as f64 / image.width() as f64);
+    }
+    if recipe.max_edge > 0 {
+        scale = scale.min(recipe.max_edge as f64 / image.width().max(image.height()) as f64);
+    }
+    if scale < 1. {
+        image = image.resize_exact(
+            (image.width() as f64 * scale).round().max(1.) as u32,
+            (image.height() as f64 * scale).round().max(1.) as u32,
+            image::imageops::FilterType::CatmullRom,
+        );
+    }
+    if !recipe.watermark.is_empty() {
+        let bytes = read_image(Path::new(&recipe.watermark), 20 << 20)?;
+        let mut mark = DynamicImage::from_decoder(decoder(&bytes)?)?
+            .thumbnail((image.width() / 4).max(1), (image.height() / 4).max(1))
+            .to_rgba8();
+        for pixel in mark.pixels_mut() {
+            pixel.0[3] = (u16::from(pixel.0[3]) * u16::from(recipe.opacity) / 100) as u8;
+        }
+        let margin = (image.width().min(image.height()) / 50).max(1);
+        let x = image.width().saturating_sub(mark.width() + margin);
+        let y = image.height().saturating_sub(mark.height() + margin);
+        image::imageops::overlay(&mut image, &mark, i64::from(x), i64::from(y));
+    }
+    let format = if recipe.format == "original" {
+        match ct {
+            "image/jpeg" => "jpeg",
+            "image/webp" => "webp",
+            _ => "png",
+        }
+    } else {
+        &recipe.format
+    };
+    let bytes = match format {
+        "jpeg" => {
+            // Composite transparency on white, rather than turning transparent pixels black.
+            if transparent(&image) {
+                let mut background = DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+                    image.width(),
+                    image.height(),
+                    image::Rgba([255, 255, 255, 255]),
+                ));
+                image::imageops::overlay(&mut background, &image, 0, 0);
+                image = background;
+            }
+            encode_jpeg(&image, recipe.quality)?
+        }
+        "webp" => encode_webp(&image)?,
+        _ => {
+            let mut out = Cursor::new(vec![]);
+            image.write_to(&mut out, image::ImageFormat::Png)?;
+            out.into_inner()
+        }
+    };
+    Ok(Processed {
+        original_size: data.len() as u64,
+        data: bytes,
+        content_type: format!("image/{format}"),
+    })
+}
 pub fn process(
     mut data: Vec<u8>,
     content_type: &str,
@@ -281,6 +421,70 @@ pub fn info(path: &Path) -> ImageInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn recipe_limits_portrait_longest_edge_and_preserves_input() {
+        let image = DynamicImage::new_rgba8(50, 200);
+        let mut png = Cursor::new(vec![]);
+        image.write_to(&mut png, image::ImageFormat::Png).unwrap();
+        let bytes = png.into_inner();
+        let recipe = Recipe {
+            format: "png".into(),
+            max_edge: 80,
+            ..Default::default()
+        };
+        let result = process_recipe(bytes.clone(), "image/png", false, 0, false, &recipe).unwrap();
+        let dec = decoder(&result.data).unwrap();
+        assert_eq!(dec.dimensions(), (20, 80));
+        assert_eq!(decoder(&bytes).unwrap().dimensions(), (50, 200));
+        let jpeg = process_recipe(
+            bytes,
+            "image/png",
+            false,
+            0,
+            false,
+            &Recipe {
+                format: "jpeg".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let decoded = DynamicImage::from_decoder(decoder(&jpeg.data).unwrap())
+            .unwrap()
+            .to_rgb8();
+        assert!(decoded.get_pixel(0, 0).0.iter().all(|v| *v > 245));
+    }
+    #[test]
+    fn watermark_changes_output_without_modifying_logo() {
+        let root = tempfile::tempdir().unwrap();
+        let mark = root.path().join("mark.png");
+        image::RgbaImage::from_pixel(8, 8, image::Rgba([255, 0, 0, 255]))
+            .save(&mark)
+            .unwrap();
+        let before = std::fs::read(&mark).unwrap();
+        let mut original = Cursor::new(vec![]);
+        DynamicImage::new_rgba8(80, 80)
+            .write_to(&mut original, image::ImageFormat::Png)
+            .unwrap();
+        let result = process_recipe(
+            original.into_inner(),
+            "image/png",
+            false,
+            0,
+            false,
+            &Recipe {
+                format: "png".into(),
+                watermark: mark.to_string_lossy().into_owned(),
+                opacity: 100,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let pixels = DynamicImage::from_decoder(decoder(&result.data).unwrap())
+            .unwrap()
+            .to_rgba8();
+        assert!(pixels.pixels().any(|p| p[0] == 255 && p[3] == 255));
+        assert_eq!(std::fs::read(mark).unwrap(), before);
+    }
     fn png(img: &DynamicImage) -> Vec<u8> {
         let mut b = Cursor::new(Vec::new());
         img.write_to(&mut b, image::ImageFormat::Png).unwrap();

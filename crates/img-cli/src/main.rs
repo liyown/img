@@ -1,4 +1,5 @@
 mod args;
+use args::RemoteCommand;
 mod management;
 mod markdown;
 mod platform;
@@ -57,11 +58,15 @@ fn normalized_args(mut args: Vec<OsString>) -> Vec<OsString> {
         }
         let command = args[i].to_string_lossy();
         if ![
+            "backup",
+            "restore",
+            "remote",
             "upload",
             "check",
             "import-config",
             "watch",
             "restore-document",
+            "process",
             "fetch",
             "screenshot",
             "serve",
@@ -120,6 +125,105 @@ fn report(
 fn run(cli: Cli, control: &Control) -> Result<i32> {
     let path = cli.config.unwrap_or(config::global_path()?);
     match cli.command {
+        Command::Remote {
+            provider: name,
+            command,
+        } => {
+            let cfg = load(&path)?;
+            let provider = provider(&cfg, &name)?;
+            match command {
+                RemoteCommand::List { prefix, cursor } => println!(
+                    "{}",
+                    serde_json::to_string(&provider.list_remote(&prefix, cursor.as_deref())?)?
+                ),
+                RemoteCommand::Delete { path, version, yes } => {
+                    ensure!(
+                        yes,
+                        "remote deletion requires --yes and the version from remote list"
+                    );
+                    provider.delete_remote(&path, &version)?;
+                    println!("{}", serde_json::json!({"deleted":path}));
+                }
+            }
+        }
+        Command::Backup {
+            destination,
+            without_config,
+            without_records,
+            include_cache,
+            include_credentials,
+        } => {
+            let manifest = img_records::backup::export(
+                &img_records::data_dir()?,
+                &path,
+                &destination,
+                img_records::backup::Options {
+                    config: !without_config,
+                    records: !without_records,
+                    cache: include_cache,
+                    credentials: include_credentials,
+                },
+            )?;
+            println!("{}", serde_json::to_string_pretty(&manifest)?);
+        }
+        Command::Restore {
+            source,
+            apply,
+            include_credentials,
+        } => {
+            let manifest = img_records::backup::inspect(&source)?;
+            if apply {
+                let recovery = img_records::backup::restore(
+                    &source,
+                    &img_records::data_dir()?,
+                    &path,
+                    include_credentials,
+                )?;
+                println!(
+                    "{}",
+                    serde_json::json!({"restored":true,"recovery":recovery})
+                );
+            } else {
+                println!("{}", serde_json::to_string_pretty(&manifest)?);
+            }
+        }
+        Command::Process {
+            file,
+            output,
+            processing,
+        } => {
+            ensure!(!output.exists(), "output already exists; choose a new file");
+            let cfg = config::read_global(&path)?;
+            let options = processing.options();
+            let bytes = media::read_image(&file, cfg.upload.max_size)?;
+            let ct = media::detect(&bytes)?;
+            let original_size = bytes.len();
+            let result = media::process_recipe(
+                bytes,
+                ct,
+                options.strip_exif || cfg.upload.strip_exif,
+                if options.max_width > 0 {
+                    options.max_width
+                } else {
+                    cfg.upload.max_width
+                },
+                options.optimize,
+                options.recipe.as_ref().unwrap_or(&cfg.upload.recipe),
+            )?;
+            let parent = output
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or(Path::new("."));
+            let mut saved = tempfile::NamedTempFile::new_in(parent)?;
+            saved.write_all(&result.data)?;
+            saved.as_file().sync_all()?;
+            saved.persist_noclobber(&output).map_err(|e| e.error)?;
+            let info = media::info(&output);
+            println!(
+                "{}",
+                serde_json::json!({"original_size":original_size,"size":result.data.len(),"content_type":result.content_type,"output":output,"info":info})
+            );
+        }
         Command::RestoreDocument { backup, target } => {
             ensure!(backup != target, "backup and target must differ");
             let original = std::fs::read(&target)?;

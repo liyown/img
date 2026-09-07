@@ -17,6 +17,47 @@ pub struct Cli {
 }
 #[derive(Subcommand)]
 pub enum Command {
+    /// Browse remote files or explicitly delete one version
+    Remote {
+        #[arg(long, default_value = "")]
+        provider: String,
+        #[command(subcommand)]
+        command: RemoteCommand,
+    },
+    /// Back up local settings and records to a new directory (never uploads)
+    Backup {
+        destination: PathBuf,
+        #[arg(long)]
+        without_config: bool,
+        #[arg(long)]
+        without_records: bool,
+        #[arg(long)]
+        include_cache: bool,
+        #[arg(
+            long,
+            help = "Include unencrypted credentials; keep this backup private"
+        )]
+        include_credentials: bool,
+    },
+    /// Verify a backup, or restore it while img desktop is closed
+    Restore {
+        source: PathBuf,
+        #[arg(
+            long,
+            help = "Apply the verified backup; keep a recovery copy of current data"
+        )]
+        apply: bool,
+        #[arg(long)]
+        include_credentials: bool,
+    },
+    /// Preview processing locally without uploading or modifying the source
+    Process {
+        file: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+        #[command(flatten)]
+        processing: Processing,
+    },
     /// Restore a Markdown document from a backup created by img rewrite
     RestoreDocument { backup: PathBuf, target: PathBuf },
     /// Upload new or changed images after they settle in a directory
@@ -82,8 +123,39 @@ pub enum Command {
         dir: Option<PathBuf>,
     },
 }
+#[derive(Subcommand)]
+pub enum RemoteCommand {
+    List {
+        #[arg(long, default_value = "")]
+        prefix: String,
+        #[arg(long)]
+        cursor: Option<String>,
+    },
+    Delete {
+        path: String,
+        #[arg(long, help = "ETag or GitHub SHA returned by remote list")]
+        version: String,
+        #[arg(
+            long,
+            help = "Confirm remote deletion; existing links may stop working"
+        )]
+        yes: bool,
+    },
+}
 #[derive(Args, Clone, Default)]
 pub struct Processing {
+    #[arg(long, value_parser=["original","web","photo"])]
+    pub preset: Option<String>,
+    #[arg(long, value_parser=["original","png","jpeg","webp"])]
+    pub image_format: Option<String>,
+    #[arg(long, value_parser=clap::value_parser!(u8).range(1..=100), help="JPEG encoding quality")]
+    pub quality: Option<u8>,
+    #[arg(long, value_parser=clap::value_parser!(u32).range(1..=32768))]
+    pub max_edge: Option<u32>,
+    #[arg(long, help = "Local image watermark placed at bottom right")]
+    pub watermark: Option<PathBuf>,
+    #[arg(long, value_parser=clap::value_parser!(u8).range(0..=100))]
+    pub watermark_opacity: Option<u8>,
     #[arg(
         long,
         help = "Reuse a previous link for identical processed bytes in this destination"
@@ -119,7 +191,36 @@ impl Processing {
         options
     }
     pub fn options(&self) -> img_core::upload::Options {
+        let recipe = if self.preset.is_some()
+            || self.image_format.is_some()
+            || self.quality.is_some()
+            || self.max_edge.is_some()
+            || self.watermark.is_some()
+            || self.watermark_opacity.is_some()
+        {
+            let mut recipe =
+                img_core::media::Recipe::preset(self.preset.as_deref().unwrap_or("original"));
+            if let Some(format) = &self.image_format {
+                recipe.format = format.clone();
+            }
+            if let Some(quality) = self.quality {
+                recipe.quality = quality;
+            }
+            if let Some(edge) = self.max_edge {
+                recipe.max_edge = edge;
+            }
+            if let Some(path) = &self.watermark {
+                recipe.watermark = path.to_string_lossy().into_owned();
+            }
+            if let Some(opacity) = self.watermark_opacity {
+                recipe.opacity = opacity;
+            }
+            Some(recipe)
+        } else {
+            None
+        };
         img_core::upload::Options {
+            recipe,
             reuse: self.reuse,
             force: self.force,
             record_origin: if self.no_history
@@ -227,6 +328,12 @@ pub struct Info {
 }
 #[derive(Args, Default)]
 pub struct Init {
+    #[arg(
+        long,
+        default_value = "",
+        help = "Authorization header reference, for HTTP or WebDAV"
+    )]
+    pub authorization: String,
     #[arg(long = "type", default_value = "")]
     pub kind: String,
     #[arg(long, default_value = "")]

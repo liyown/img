@@ -87,9 +87,14 @@ fn prompt(text: &str) -> Result<String> {
 }
 pub fn init(path: &Path, mut v: Init) -> Result<()> {
     if v.kind.is_empty() {
-        v.kind = prompt("Provider type (http/s3/github)")?;
+        v.kind = prompt("Provider type (http/s3/github/webdav)")?;
         v.name = prompt("Provider name")?;
         match v.kind.as_str() {
+            "webdav" => {
+                v.endpoint = prompt("WebDAV collection URL")?;
+                v.public_url = prompt("Public image URL base")?;
+                v.authorization = prompt("Authorization header environment reference")?;
+            }
             "http" => v.url = prompt("Upload URL")?,
             "s3" => {
                 v.bucket = prompt("Bucket")?;
@@ -112,6 +117,11 @@ pub fn init(path: &Path, mut v: Init) -> Result<()> {
         "invalid provider name"
     );
     let pc = ProviderConfig {
+        headers: if v.authorization.is_empty() {
+            Default::default()
+        } else {
+            [("Authorization".into(), v.authorization)].into()
+        },
         kind: v.kind,
         url: v.url,
         url_json_path: v.url_json_path,

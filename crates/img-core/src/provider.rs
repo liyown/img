@@ -3,6 +3,7 @@ use crate::{
     control::{Control, ProgressReader},
     network, pathgen,
 };
+mod remote;
 use anyhow::{Context, Result, bail, ensure};
 use aws_credential_types::{
     Credentials,
@@ -16,6 +17,7 @@ use aws_sigv4::{
     sign::v4,
 };
 use base64::Engine;
+pub use remote::{RemoteItem, RemotePage};
 use reqwest::{
     Method, StatusCode,
     blocking::{Body, Client, Response, multipart},
@@ -71,7 +73,29 @@ impl Provider {
         if self.cfg.kind == "s3" && self.cfg.access_key.is_empty() {
             return Ok(None);
         }
-        Ok(Some(serde_json::to_vec(&self.cfg)?))
+        let epoch = match std::fs::read(self.reuse_epoch_path()?) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => vec![],
+            Err(e) => return Err(e.into()),
+        };
+        Ok(Some(serde_json::to_vec(&(&self.cfg, epoch))?))
+    }
+    fn reuse_epoch_path(&self) -> Result<std::path::PathBuf> {
+        use sha2::{Digest, Sha256};
+        let key = format!("{:x}", Sha256::digest(serde_json::to_vec(&self.cfg)?));
+        Ok(img_records::data_dir()?
+            .join("reuse")
+            .join(format!("{key}.epoch")))
+    }
+    fn invalidate_reuse(&self) -> Result<()> {
+        use std::io::Write;
+        let path = self.reuse_epoch_path()?;
+        std::fs::create_dir_all(path.parent().unwrap())?;
+        let mut file = tempfile::NamedTempFile::new_in(path.parent().unwrap())?;
+        file.write_all(uuid::Uuid::new_v4().to_string().as_bytes())?;
+        file.as_file().sync_all()?;
+        file.persist(path).map_err(|e| e.error)?;
+        Ok(())
     }
     pub fn new(name: &str, config: &ProviderConfig) -> Result<Self> {
         let cfg = config.resolved()?;
@@ -185,6 +209,7 @@ impl Provider {
             "http" => self.http_upload(&r, control),
             "github" => self.github_upload(&r, control),
             "s3" => self.s3_upload(&r, control),
+            "webdav" => self.webdav_upload(&r, control),
             _ => bail!("unsupported provider"),
         };
         result.map_err(|e| self.safe_error(e))
@@ -192,6 +217,9 @@ impl Provider {
     pub fn test(&self) -> Result<()> {
         let result = (|| -> Result<()> {
             match self.cfg.kind.as_str() {
+                "webdav" => {
+                    self.list_remote("", None)?;
+                }
                 "http" => {
                     let r = self
                         .client
@@ -419,6 +447,19 @@ impl Provider {
         no_overwrite: bool,
         control: &Control,
     ) -> Result<Response> {
+        self.s3_request_condition(method, url, data, content_type, no_overwrite, None, control)
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn s3_request_condition(
+        &self,
+        method: Method,
+        url: &str,
+        data: Option<Arc<[u8]>>,
+        content_type: &str,
+        no_overwrite: bool,
+        if_match: Option<&str>,
+        control: &Control,
+    ) -> Result<Response> {
         let identity = self.credentials()?.into();
         let region = if self.cfg.region.is_empty() {
             "auto"
@@ -444,6 +485,9 @@ impl Provider {
         }
         if no_overwrite {
             headers.push(("if-none-match", "*"));
+        }
+        if let Some(etag) = if_match {
+            headers.push(("if-match", etag));
         }
         let signable = SignableRequest::new(
             method.as_str(),

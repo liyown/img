@@ -318,7 +318,6 @@ dependencies = [
  "getrandom 0.4.3",
  "serde",
  "serde_repr",
- "tokio",
  "wayland-backend",
  "wayland-client",
  "wayland-protocols",
@@ -4129,6 +4128,8 @@ dependencies = [
  "image",
  "img-records",
  "keyring",
+ "percent-encoding",
+ "quick-xml",
  "regex",
  "reqwest",
  "security-framework",
@@ -4164,6 +4165,7 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "quick-xml",
+ "regex",
  "resvg 0.46.0",
  "rust-embed",
  "security-framework",
@@ -4189,7 +4191,9 @@ dependencies = [
  "security-framework",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
+ "toml 0.9.12+spec-1.1.0",
  "uuid",
 ]
 
@@ -6139,6 +6143,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
 dependencies = [
  "memchr",
+ "serde",
 ]
 
 [[package]]
