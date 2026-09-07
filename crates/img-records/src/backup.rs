@@ -84,13 +84,14 @@ fn credentials(value: &mut toml::Value, include: bool, keys: &mut Vec<String>, s
         }
         toml::Value::Table(values) => {
             for (key, value) in values {
-                let key = key.to_ascii_lowercase();
+                let key = key.to_ascii_lowercase().replace(['-', '_', ' '], "");
                 let private = sensitive
                     || [
                         "secret",
                         "token",
                         "password",
-                        "access_key",
+                        "accesskey",
+                        "apikey",
                         "authorization",
                         "headers",
                         "fields",
@@ -270,17 +271,21 @@ pub fn restore(
             config: true,
             records: true,
             cache: true,
-            credentials: false,
+            credentials: include_credentials,
         },
     )?;
     // Keep exact pre-restore bytes privately for rollback, including plaintext
     // credentials in legacy configurations. This directory is never uploaded.
     if config.exists() {
-        write(&rollback.join("config.toml"), &std::fs::read(config)?)?;
+        let original = std::fs::read(config)?;
+        write(&rollback.join("config.toml"), &original)?;
         let mut old: Manifest =
             serde_json::from_slice(&std::fs::read(rollback.join("manifest.json"))?)?;
-        old.files
-            .insert("config.toml".into(), digest(&std::fs::read(config)?));
+        let mut sanitized: toml::Value = toml::from_str(std::str::from_utf8(&original)?)?;
+        let before = sanitized.clone();
+        credentials(&mut sanitized, false, &mut vec![], false);
+        old.options.credentials |= sanitized != before;
+        old.files.insert("config.toml".into(), digest(&original));
         write(
             &rollback.join("manifest.json"),
             &serde_json::to_vec_pretty(&old)?,

@@ -82,7 +82,7 @@ img watch ./screenshots --reuse
 img watch ./screenshots --new-only --interval 2
 ```
 
-Watching waits for two matching size and modification-time observations before uploading. Only successful versions are marked processed. --new-only skips files already present at startup. Desktop watching continues after closing the window, stops on quitting and does not restart automatically.
+Watching waits for two matching size and modification-time observations before uploading. Only successful versions are marked processed. --new-only skips files already present at startup. Desktop watching continues after closing the window, stops on quitting and does not restart automatically. Watched directories must be separate from application data to avoid uploading cached images in a loop.
 
 ## Back up local data
 
@@ -99,7 +99,7 @@ Restore without --apply only verifies and previews. Close desktop before applyin
 
 Image cache and plaintext credentials are excluded by default. Records without cache retain links; previewing or uploading again requires selecting the original file. Credential backups are explicitly opt-in and **unencrypted**; keep them private.
 
-Restoring replaces included settings and records, restores cache files and keeps unrelated files. A recovery copy named img-before-restore-UUID is created first. A failed restore attempts rollback and reports the recovery location. Remote storage and original image files are unchanged.
+Restoring replaces included settings and records, restores cache files and keeps unrelated files. A recovery copy named img-before-restore-UUID is created first. It preserves exact original settings, including any plaintext keys in legacy configurations. When importing credentials, it also backs up the keychain entries referenced by your current configuration. Keep recovery copies private. A failed restore attempts rollback and reports the recovery location. Remote storage and original image files are unchanged.
 
 ## Remote files and WebDAV
 

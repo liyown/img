@@ -584,5 +584,6 @@
   "文章或备份已变化，请重新选择": "The document or backup changed. Select it again.",
   "文章恢复未完成，原文件已保留": "Document restore did not complete. The original file is preserved.",
   "文章已恢复，恢复前版本已另存备份": "Document restored. The previous version is backed up.",
-  "恢复文章备份": "Restore document backup"
+  "恢复文章备份": "Restore document backup",
+  "监听目录不能与应用数据目录互相包含，以免重复上传缓存图片": "The watched directory must be separate from application data to prevent uploading cached images repeatedly."
 }

@@ -46,7 +46,6 @@ fn main() -> anyhow::Result<()> {
     };
     std::fs::create_dir_all(&root)?;
     backup::apply_pending(&root)?;
-    let restart_root = root.clone();
     let lock = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -215,10 +214,5 @@ fn main() -> anyhow::Result<()> {
         })
         .detach();
     });
-    if backup::pending(&restart_root) {
-        std::process::Command::new(std::env::current_exe()?)
-            .args(std::env::args_os().skip(1))
-            .spawn()?;
-    }
     Ok(())
 }

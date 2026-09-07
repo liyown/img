@@ -12,13 +12,12 @@ struct Request {
     credentials: bool,
     manifest: Vec<u8>,
 }
-pub fn schedule(root: &Path, source: &Path, credentials: bool) -> Result<()> {
-    img_records::backup::inspect(source)?;
+pub fn schedule(root: &Path, source: &Path, credentials: bool, manifest: Vec<u8>) -> Result<()> {
     let request = Request {
         source: source.to_owned(),
         config: crate::storage::config_path()?,
         credentials,
-        manifest: std::fs::read(source.join("manifest.json"))?,
+        manifest,
     };
     let mut file = tempfile::NamedTempFile::new_in(root)?;
     file.write_all(&serde_json::to_vec(&request)?)?;
@@ -35,6 +34,22 @@ pub fn commit(root: &Path) -> Result<()> {
         root.join("restore-request.json"),
         root.join("restore-ready.json"),
     )?;
+    Ok(())
+}
+pub fn restart(root: &Path) -> Result<()> {
+    let executable = std::env::current_exe()?;
+    commit(root)?;
+    let launched = std::process::Command::new(executable)
+        .args(std::env::args_os().skip(1))
+        .spawn();
+    if let Err(error) = launched {
+        // Do not leave an armed request when relaunch could not start.
+        std::fs::rename(
+            root.join("restore-ready.json"),
+            root.join("restore-request.json"),
+        )?;
+        return Err(error.into());
+    }
     Ok(())
 }
 pub fn apply_pending(root: &Path) -> Result<()> {

@@ -17,7 +17,15 @@ pub fn run(
     control: &Control,
 ) -> Result<i32> {
     ensure!(directory.is_dir(), "watch requires an existing directory");
-    let roots = [directory.to_path_buf()];
+    let data = img_records::data_dir()?;
+    std::fs::create_dir_all(&data)?;
+    let data = data.canonicalize()?;
+    let directory = directory.canonicalize()?;
+    ensure!(
+        !directory.starts_with(&data) && !data.starts_with(&directory),
+        "watch directory must be separate from img's data directory to prevent upload loops"
+    );
+    let roots = [directory];
     let mut previous = HashMap::new();
     let mut uploaded = HashMap::new();
     if new_only {

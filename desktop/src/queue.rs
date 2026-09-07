@@ -637,7 +637,7 @@ impl ImgDesktop {
             let _ = this.update(cx, |this, cx| match result {
                 Ok(()) => {
                     if this.pending_restore
-                        && let Err(error) = crate::backup::commit(&this.root)
+                        && let Err(error) = crate::backup::restart(&this.root)
                     {
                         this.pending_restore = false;
                         this.shutting_down = false;

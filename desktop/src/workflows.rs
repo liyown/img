@@ -135,22 +135,27 @@ impl ImgDesktop {
             let Some(path)=path else {let _=this.update(cx,|this,cx|{this.workflow_busy=false;cx.notify();});return;};
             let inspected=if restore {
                 let source=path.clone();
-                cx.background_executor().spawn(async move{img_records::backup::inspect(&source).map(|m|m.files.len())}).await
-            }else{Ok(0)};
+                cx.background_executor().spawn(async move{
+                    let manifest=std::fs::read(source.join("manifest.json"))?;
+                    let count=img_records::backup::inspect(&source)?.files.len();
+                    anyhow::ensure!(std::fs::read(source.join("manifest.json"))?==manifest,"备份在确认后发生变化，恢复已取消");
+                    Ok::<_,anyhow::Error>((count,manifest))
+                }).await
+            }else{Ok((0,vec![]))};
             let prompt=this.update_in(cx,|this,window,cx|match inspected {
                 Err(e)=>{this.workflow_busy=false;this.message(e.to_string(),true,cx);None},
-                Ok(count)=>Some(crate::i18n::prompt(window, PromptLevel::Info,
+                Ok((count,manifest))=>Some((crate::i18n::prompt(window, PromptLevel::Info,
                     if restore{"恢复备份并重启？"}else{"选择备份内容"},
                     Some(&if restore{format!("已校验 {count} 个文件。应用会安全退出，替换备份中的设置与记录，并保留恢复前的数据副本。远端图片与原文件不受影响。凭据可单独选择。")}else{"默认包含设置和记录。可加入图片缓存；包含凭据时备份不加密，请存放在私人目录。".into()}),
-                    if restore{&["取消","恢复，不导入凭据","恢复并导入凭据"][..]}else{&["取消","设置与记录","包含缓存","包含缓存与凭据"][..]},cx))
+                    if restore{&["取消","恢复，不导入凭据","恢复并导入凭据"][..]}else{&["取消","设置与记录","包含缓存","包含缓存与凭据"][..]},cx),manifest))
             }).ok().flatten();
-            let Some(prompt)=prompt else{return;};
+            let Some((prompt,manifest))=prompt else{return;};
             let choice=prompt.await.unwrap_or(0);
             if choice==0 {let _=this.update(cx,|this,cx|{this.workflow_busy=false;cx.notify();});return;}
             if restore {
                 let _=this.update(cx,|this,cx|{
                     this.workflow_busy=false;
-                    match crate::backup::schedule(&this.root,&path,choice==2) {
+                    match crate::backup::schedule(&this.root,&path,choice==2,manifest) {
                         Ok(())=>{this.pending_restore=true;this.begin_shutdown(cx);},
                         Err(e)=>this.message(e.to_string(),true,cx),
                     }
@@ -260,6 +265,7 @@ impl ImgDesktop {
             })),
         });
         let binary = self.engine.clone();
+        let watch_root = self.root.clone();
         cx.spawn_in(window, async move |this,cx| {
             let path = match paths.await {
                 Ok(Ok(Some(paths))) => paths.into_iter().next(),
@@ -270,7 +276,12 @@ impl ImgDesktop {
             };
             let preview_path = path.clone();
             let preview = cx.background_executor().spawn(async move {
-                if watch {return Ok((String::from("会上传此目录及子目录中的现有、新建和修改后的图片。关闭应用后停止。"),None));}
+                if watch {
+                    let selected=preview_path.canonicalize()?;
+                    let data=watch_root.canonicalize()?;
+                    anyhow::ensure!(!selected.starts_with(&data) && !data.starts_with(&selected),"监听目录不能与应用数据目录互相包含，以免重复上传缓存图片");
+                    return Ok((String::from("会上传此目录及子目录中的现有、新建和修改后的图片。关闭应用后停止。"),None));
+                }
                 anyhow::ensure!(preview_path.extension().and_then(|v|v.to_str()).is_some_and(|v|matches!(v.to_ascii_lowercase().as_str(),"md"|"markdown")),"请选择 Markdown 文件");
                 let before = std::fs::read(&preview_path)?;
                 let mut command = std::process::Command::new(binary);

@@ -165,6 +165,23 @@ pub fn parse(bytes: &[u8], existing: &[String]) -> Result<Plan> {
                 .into(),
             );
             let mut warnings = vec![];
+            if values.get("public_url").is_some_and(|v| v.is_empty()) && target != "github" {
+                warnings.push("Set a public image URL before saving this storage".into());
+            }
+            if !get("acl").is_empty() {
+                warnings.push("Object ACL was not imported; review bucket public access".into());
+            }
+            if !get("proxy").is_empty() {
+                warnings.push(
+                    "Per-profile proxy was not imported; img uses system proxy settings".into(),
+                );
+            }
+            if values.get("path_prefix").is_some_and(|v| v.contains('{')) {
+                warnings.push(
+                    "Path template variables were not converted; review the default directory"
+                        .into(),
+                );
+            }
             if name != base {
                 warnings.push(format!("Name already exists; imported as {name}"));
             }

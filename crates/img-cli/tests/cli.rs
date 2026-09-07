@@ -8,6 +8,16 @@ use std::{
 };
 const BIN: &str = env!("CARGO_BIN_EXE_img");
 #[test]
+fn directory_watch_rejects_its_own_cache_and_ancestors() {
+    let f = Fixture::new("https://unused.invalid/upload");
+    std::fs::create_dir_all(f.dir.path().join("data")).unwrap();
+    for path in [f.dir.path().to_path_buf(), f.dir.path().join("data")] {
+        let output = f.command().arg("watch").arg(path).output().unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("prevent upload loops"));
+    }
+}
+#[test]
 fn webdav_lists_namespaced_properties_and_rechecks_version_before_delete() {
     let s = tiny_http::Server::http("127.0.0.1:0").unwrap();
     let endpoint = format!("http://{}/dav", s.server_addr());

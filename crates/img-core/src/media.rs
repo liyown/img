@@ -213,7 +213,7 @@ pub fn process_recipe(
     // Reject animated WebP instead of silently discarding frames.
     if ct == "image/webp" {
         ensure!(
-            !data.windows(4).any(|w| w == b"ANIM"),
+            !image::codecs::webp::WebPDecoder::new(Cursor::new(&data))?.has_animation(),
             "animated WebP cannot be flattened by image processing"
         );
     }

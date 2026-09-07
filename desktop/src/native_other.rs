@@ -120,7 +120,7 @@ fn create_tray(sender: async_channel::Sender<DesktopEvent>) -> anyhow::Result<tr
         ("暂停 / 继续", DesktopEvent::TogglePause),
         ("退出", DesktopEvent::Quit),
     ] {
-        let item = MenuItem::new(&crate::i18n::text(title), true, None);
+        let item = MenuItem::new(crate::i18n::text(title), true, None);
         events.push((item.id().clone(), event));
         menu.append(&item)?;
     }
