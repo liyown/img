@@ -3,6 +3,7 @@ import Icon from './Icon.astro';
 import Actions from './Actions.astro';
 import Screenshot from './Screenshot.astro';
 import Comparison from './Comparison.astro';
+import { evidence } from '../lib/comparison';
 import { href, t, type Locale } from '../lib/site';
 const { locale } = Astro.props as { locale: Locale };
 const steps = t(
@@ -72,8 +73,8 @@ const features = t(
     ],
     [
       'terminal',
-      'AI Agent 集成',
-      '提供原生 CLI 与 Agent Skill，支持 JSON 输出、逐文件结果和退出码。复用本地存储配置。',
+      'Markdown 图片转存',
+      '批量上传文章中的本地图片与外链图片，替换引用并保留 alt 和 title。',
     ],
   ],
   [
@@ -104,8 +105,8 @@ const features = t(
     ],
     [
       'terminal',
-      'AI agent integration',
-      'Native CLI and Agent Skill with JSON output, per-file results, and exit codes. Reuse local storage configuration.',
+      'Markdown image migration',
+      'Upload local and remote images from an article, replacing references while preserving alt text and titles.',
     ],
   ],
 );
@@ -121,12 +122,12 @@ const faq = t(
       '上传由本地工具直接发往你配置的存储服务。img 不提供统一托管图床，你可以选择自己的 R2、S3、OSS、GitHub 或 HTTP 服务。',
     ],
     [
-      '现在可以直接下载安装包吗？',
-      '可以。安装页自动获取 GitHub Releases 最新桌面版，选择芯片后下载 DMG 即可，无需编译。',
+      '支持哪些操作系统？',
+      '桌面版支持 macOS 13+（Apple silicon / Intel）、Windows x64，以及 Ubuntu 24.04 / Debian 13+ x64。独立 CLI 另提供 Linux ARM64。安装页按系统列出最新稳定版。',
     ],
     [
-      '“64 MiB”指整个应用的内存吗？',
-      '指解码后列表缩略图的缓存预算，不是应用进程的全部内存。完整的测量条件和比较方法可在对比页查看。',
+      '已有图床和文章链接需要迁移吗？',
+      '支持的存储服务和公开域名可以继续使用。在 img 中添加配置并验证上传后，即可调整编辑器入口；已有文章链接不受影响。目前不支持自动导入其他客户端的配置与历史记录。',
     ],
   ],
   [
@@ -139,12 +140,12 @@ const faq = t(
       'Uploads go directly from your device to the storage you configure. img does not operate a shared image host. Choose your own R2, S3, OSS, GitHub, or HTTP service.',
     ],
     [
-      'Can I download a ready-made package now?',
-      'Yes. The installation page resolves the latest desktop release from GitHub. Choose your chip and download the DMG; no compilation is required.',
+      'Which operating systems are supported?',
+      'The desktop app supports macOS 13+ on Apple silicon and Intel, Windows x64, and Ubuntu 24.04 / Debian 13+ x64. The standalone CLI also supports Linux ARM64. The installation page lists current stable packages by system.',
     ],
     [
-      'Is 64 MiB the whole application’s memory use?',
-      'It is the decoded list-thumbnail cache budget, not total process memory. See the comparison page for measurement conditions and methodology.',
+      'Do I need to migrate my storage or existing links?',
+      'Keep supported storage services and your public domain. Add the configuration in img and verify an upload before changing your editor integration. Existing article links remain unchanged. Configuration and history imports from other clients are not supported.',
     ],
   ],
 );
@@ -159,23 +160,23 @@ const faq = t(
       size={14}
     /></a
   >
-  <h1>
-    {t(locale, '从图片，', 'From image,')}<br /><span
-      >{t(locale, '到链接。', 'to link.')}</span
-    ><span class="hero-spark" aria-hidden="true">✳</span>
+  <h1 class="product-title">
+    {t(locale, '原生图片', 'Native image')}<br /><span
+      >{t(locale, '上传工具', 'uploader')}</span
+    >
   </h1>
   <p class="hero-description">
     {
       t(
         locale,
-        '上传到自有存储，自动生成图片链接。',
-        'Upload to your own storage and generate image links.',
+        '面向写作与自动化，将图片上传到自有存储并生成链接。',
+        'Upload images to your own storage for publishing and automation.',
       )
     }<br />{
       t(
         locale,
-        '原生桌面应用、独立 CLI 与 Agent Skill。',
-        'Native desktop app, standalone CLI, and Agent Skill.',
+        '原生桌面、独立 CLI 与 Agent Skill 共享存储配置。',
+        'Native desktop, standalone CLI, and Agent Skill with shared storage configuration.',
       )
     }
   </p>
@@ -231,32 +232,36 @@ const faq = t(
     {
       t(
         locale,
-        '真实原生界面 · 隔离演示数据 · 终端输出为使用示例',
-        'Real native UI · Isolated demo data · Illustrative terminal output',
+        'macOS 桌面界面，使用演示数据；终端为命令示例。',
+        'macOS desktop with demo data. Terminal shows an example command.',
       )
     }
   </p>
 </section>
 <section
   class="metrics wrap"
-  aria-label={t(locale, '轻量设计数据', 'Lightweight design data')}
+  aria-label={t(locale, '安装与平台', 'Packages and platforms')}
 >
   <div>
-    <span class="metric">25.8<small>MB</small></span><p>
+    <span class="metric"
+      >{(evidence.products[0].bytes! / 1e6).toFixed(1)}<small>MB</small></span
+    ><p>
       {t(locale, 'GUI 安装包，已含 CLI', 'GUI package, CLI included')}
     </p><span class="metric-note">macOS ARM64 · DMG</span>
   </div>
   <div>
-    <span class="metric">6.97<small>MB</small></span><p>
+    <span class="metric"
+      >{(evidence.cli.bytes / 1e6).toFixed(2)}<small>MB</small></span
+    ><p>
       {t(locale, '独立 CLI 压缩包', 'Standalone CLI archive')}
     </p><span class="metric-note">macOS ARM64 · tar.gz</span>
   </div>
   <div>
-    <span class="metric">64<small>MiB</small></span><p>
-      {t(locale, '列表缩略图缓存预算', 'List-thumbnail cache budget')}
-    </p><span class="metric-note"
-      >{t(locale, '按需加载 · LRU 释放', 'Load on demand · LRU eviction')}</span
-    >
+    <span class="metric"
+      >3<small>{t(locale, '个平台', 'platforms')}</small></span
+    ><p>
+      {t(locale, '原生桌面与独立 CLI', 'Native desktop and standalone CLI')}
+    </p><span class="metric-note">macOS · Windows · Linux</span>
   </div>
   <a class="metric-method" href={href(locale, 'compare')}
     >{t(locale, '测量方法与来源', 'Measurement methods and sources')}<Icon
@@ -268,13 +273,13 @@ const faq = t(
 <section class="workflow-section section wrap">
   <div class="section-intro">
     <span class="eyebrow">UPLOAD WORKFLOW</span><h2>
-      {t(locale, '导入、上传，拿到链接。', 'Import, upload, copy.')}
+      {t(locale, '桌面上传', 'Desktop uploads')}
     </h2><p>
       {
         t(
           locale,
-          '桌面端可先检查队列；命令行可以一次完成上传和复制。',
-          'Review the queue in the app, or upload and copy with a single command.',
+          '在窗口中管理批量上传，或通过快捷键直接上传剪贴板和截图。完成后自动复制链接。',
+          'Manage batch uploads in the app, or upload clipboard images and screenshots with a shortcut. Links are copied when uploads complete.',
         )
       }
     </p>
@@ -322,17 +327,69 @@ const faq = t(
     </div>
   </div>
 </section>
+<section class="agent-section section wrap" id="automation">
+  <div class="agent-intro">
+    <span class="eyebrow">CLI &amp; AGENT SKILL</span>
+    <h2>{t(locale, '接入自动化工作流', 'Integrate with your workflow')}</h2>
+    <p>
+      {
+        t(
+          locale,
+          '独立 CLI 可直接用于脚本、编辑器和 AI Agent，无需启动桌面应用。上传结果以 JSON 返回，便于读取链接、判断失败并继续后续任务。',
+          'The standalone CLI works with scripts, editors, and AI agents without launching the desktop app. JSON results expose uploaded URLs and failures for subsequent tasks.',
+        )
+      }
+    </p>
+    <p>
+      {
+        t(
+          locale,
+          'Agent Skill 定义文件检查、配置校验和上传流程，复用已配置的存储源。适用于支持 Agent Skills 且能够执行本地命令的助手。',
+          'The Agent Skill defines file checks, configuration validation, and uploads using existing storage settings. It works with assistants that support Agent Skills and local command execution.',
+        )
+      }
+    </p>
+    <a class="text-link" href={href(locale, 'docs/integrations')}
+      >{t(locale, '查看集成文档', 'Integration guide')}<Icon name="arrow" /></a
+    >
+  </div>
+  <div class="agent-examples">
+    <div class="agent-code">
+      <span class="mono"
+        >{
+          t(locale, '上传图片 · JSON 输出', 'Upload an image · JSON output')
+        }</span
+      >
+      <pre><code>img upload ./assets/chart.png --format json --no-copy</code></pre>
+    </div>
+    <div class="agent-code">
+      <span class="mono"
+        >{t(locale, '安装 Agent Skill', 'Install the Agent Skill')}</span
+      >
+      <pre><code>npx skills add liyown/img --skill img-uploader</code></pre>
+    </div>
+    <p class="fine-print">
+      {
+        t(
+          locale,
+          '使用前安装 CLI 并配置默认存储源。Skill 调用本地配置，无需在提示词中提供凭据。',
+          'Install the CLI and configure a default provider first. The Skill uses local configuration; credentials do not belong in prompts.',
+        )
+      }
+    </p>
+  </div>
+</section>
 <section class="storage-band">
   <div class="wrap">
     <div>
       <span class="eyebrow">STORAGE PROVIDERS</span><h2>
-        {t(locale, '连接自己的存储。', 'Connect your own storage.')}
+        {t(locale, '支持自有存储', 'Use your own storage')}
       </h2><p>
         {
           t(
             locale,
-            '从自己的对象存储，到熟悉的 GitHub。一次配置，桌面和终端都能用。',
-            'From object storage to GitHub. Configure once and use it from your desktop or terminal.',
+            '连接对象存储、GitHub 仓库或自定义 HTTP 服务，沿用现有公开域名。桌面与 CLI 共享配置，支持按项目选择存储源。',
+            'Connect object storage, a GitHub repository, or a custom HTTP service with your existing public domain. Desktop and CLI share configuration, with provider selection per project.',
           )
         }
       </p><a class="text-link" href={href(locale, 'docs/storage')}
@@ -361,7 +418,7 @@ const faq = t(
   <div class="section-intro split-intro">
     <div>
       <span class="eyebrow">FEATURES</span><h2>
-        {t(locale, '日常上传会用到的功能。', 'For everyday image uploads.')}
+        {t(locale, '图库与图片处理', 'Library and image processing')}
       </h2>
     </div><a class="text-link" href={href(locale, 'features')}
       >{t(locale, '查看全部功能', 'View all features')}<Icon name="arrow" /></a
@@ -385,9 +442,7 @@ const faq = t(
 <section class="compare-home section wrap">
   <div>
     <span class="eyebrow">COMPARISON</span><h2>
-      {t(locale, '包体积与功能，', 'Compare sizes')}<br />{
-        t(locale, '放在一起看。', 'and features.')
-      }
+      {t(locale, '安装包与功能对比', 'Packages and features')}
     </h2><p>
       {
         t(
@@ -426,9 +481,7 @@ const faq = t(
 </section>
 <section class="closing wrap">
   <span class="eyebrow">GET STARTED</span><h2>
-    {t(locale, '准备好存储，', 'Set up your storage.')}<br />{
-      t(locale, '试试 img。', 'Try img.')
-    }
+    {t(locale, '下载 img', 'Download img')}
   </h2><Actions locale={locale} /><p>
     {
       t(

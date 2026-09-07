@@ -9,7 +9,7 @@ const { locale } = Astro.props as { locale: Locale };
     class="button primary"
     data-track="gui"
     href={href(locale, 'install') + '#gui'}
-    ><Icon name="desktop" />{t(locale, '使用 GUI', 'Use the GUI')}<Icon
+    ><Icon name="desktop" />{t(locale, '下载桌面版', 'Download desktop')}<Icon
       name="arrow"
       size={17}
     /></a
@@ -18,7 +18,7 @@ const { locale } = Astro.props as { locale: Locale };
     class="button secondary"
     data-track="cli"
     href={href(locale, 'install') + '#cli'}
-    ><Icon name="terminal" />{t(locale, '使用 CLI', 'Use the CLI')}<Icon
+    ><Icon name="terminal" />{t(locale, '下载 CLI', 'Download CLI')}<Icon
       name="arrow"
       size={17}
     /></a

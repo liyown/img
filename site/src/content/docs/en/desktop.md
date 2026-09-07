@@ -28,9 +28,9 @@ Copy as URL, Markdown image, Markdown link, HTML, or BBCode. Automatic copying i
 | App preferences       | Shortcuts and interface preferences                                                   |
 | About and updates     | Version, diagnostics, CLI entry point, manual update checks                           |
 
-Dark mode, remote library management, tags, folder imports, and automatic app replacement are not available in this preview. The current app UI is Chinese.
+Dark mode, remote library management, tags, and folder imports are not available. The current app UI is Chinese.
 
-## Windows and quick actions
+## macOS window and quick actions
 
 Closing the window or pressing ⌘W hides it while uploads continue. ⌘Q exits; during uploads you can wait for completion or pause and exit. The menu bar offers Open, Upload clipboard, Capture and upload, Pause/resume, and Quit.
 

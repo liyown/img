@@ -6,10 +6,10 @@ export const evidence = {
   products: [
     {
       name: 'img',
-      version: '0.3.0 preview',
-      bytes: 25796913,
-      source: 'https://github.com/liyown/img/blob/main/site/QA.md',
-      kind: 'local-artifact',
+      version: '0.3.0',
+      bytes: 26268008,
+      source: 'https://github.com/liyown/img/releases/tag/desktop-v0.3.0',
+      kind: 'official-release',
     },
     {
       name: 'PicGo',
@@ -36,10 +36,10 @@ export const evidence = {
     },
   ],
   cli: {
-    bytes: 6966652,
+    bytes: 7088101,
     platform: 'macOS ARM64',
     package: 'tar.gz',
-    version: '0.3.0 preview',
+    version: '0.3.0',
   },
   benchmark: {
     version: '0.3.0',
