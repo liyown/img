@@ -17,6 +17,13 @@ pub struct Cli {
 }
 #[derive(Subcommand)]
 pub enum Command {
+    /// Verify public image URLs without sending storage credentials
+    Check {
+        #[arg(required = true)]
+        urls: Vec<String>,
+        #[arg(long)]
+        allow_insecure: bool,
+    },
     /// Upload local files or remote image URLs
     Upload(Upload),
     /// Download an image URL without uploading it

@@ -57,6 +57,7 @@ fn normalized_args(mut args: Vec<OsString>) -> Vec<OsString> {
         let command = args[i].to_string_lossy();
         if ![
             "upload",
+            "check",
             "fetch",
             "screenshot",
             "serve",
@@ -115,6 +116,21 @@ fn report(
 fn run(cli: Cli, control: &Control) -> Result<i32> {
     let path = cli.config.unwrap_or(config::global_path()?);
     match cli.command {
+        Command::Check {
+            urls,
+            allow_insecure,
+        } => {
+            let results: Vec<_> = urls
+                .iter()
+                .map(|url| img_core::link_check::check(url, allow_insecure))
+                .collect();
+            println!("{}", serde_json::to_string(&results)?);
+            return Ok(if results.iter().all(|r| r.accessible) {
+                0
+            } else {
+                1
+            });
+        }
         Command::Version => {
             println!(
                 "img {}\nimplementation: Rust\ncommit: {}\nbuilt: {}",

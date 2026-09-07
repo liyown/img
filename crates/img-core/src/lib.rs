@@ -1,6 +1,7 @@
 pub mod config;
 pub mod control;
 pub mod failure;
+pub mod link_check;
 pub mod media;
 pub mod network;
 pub mod output;

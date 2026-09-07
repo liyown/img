@@ -928,10 +928,57 @@ impl ImgDesktop {
                                     }),
                             );
                         }
-                        menu
+                        let weak = weak.clone();
+                        let url = menu_item.url.clone();
+                        menu.item(
+                            PopupMenuItem::new("检查公开链接").on_click(move |_, _, cx| {
+                                if let Some(url) = &url {
+                                    let _ = weak.update(cx, |this, cx| {
+                                        this.check_public_link(url.clone(), cx)
+                                    });
+                                }
+                            }),
+                        )
                     }),
             )
             .into_any_element()
+    }
+    fn check_public_link(&mut self, url: String, cx: &mut Context<Self>) {
+        self.message("正在检查公开链接…", false, cx);
+        let binary = self.engine.clone();
+        let control = Control::default();
+        self.queue.auxiliary.push(control.clone());
+        let task = cx.background_executor().spawn(async move {
+            let mut command = std::process::Command::new(binary);
+            command.args(["check", &url]);
+            if url.starts_with("http://") {
+                command.arg("--allow-insecure");
+            }
+            let out = engine::run(command, &control)?;
+            let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout)?;
+            let row = rows
+                .first()
+                .ok_or_else(|| anyhow::anyhow!("empty result"))?;
+            let code = row["code"].as_str().unwrap_or("");
+            let message = match code {
+                "ok" => "公开链接正常，已返回图片数据。",
+                "access_denied" => "图片访问被拒绝，请检查存储桶公开权限、CDN 规则和防盗链。",
+                "not_found" => "找不到图片，请检查公开域名、路径，或重新上传已删除的图片。",
+                "not_image" => "链接没有返回图片，请检查登录页、域名路由或 CDN 配置。",
+                "rate_limited" => "公开链接访问频率受限，请稍后重试。",
+                "server_error" => "存储服务或 CDN 暂时不可用，请稍后重试。",
+                _ => "无法验证链接，请检查网络、DNS、TLS、代理和跳转配置。",
+            };
+            Ok::<_, anyhow::Error>((message, code != "ok"))
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| match result {
+                Ok((message, error)) => this.message(message, error, cx),
+                Err(_) => this.message("链接检查未完成，请确认内置 CLI 版本与应用一致。", true, cx),
+            });
+        })
+        .detach();
     }
     fn filtered(&self, cx: &App) -> std::sync::Arc<Vec<String>> {
         self.record_index.borrow_mut().rows(
