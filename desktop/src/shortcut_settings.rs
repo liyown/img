@@ -53,17 +53,19 @@ impl Render for ShortcutSettings {
                 div()
                     .text_size(px(16.))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child("后台与全局快捷键"),
+                    .child(crate::i18n::text("后台与全局快捷键")),
             )
             .child(
                 div()
                     .text_size(px(12.))
                     .text_color(crate::theme::color(MUTED))
-                    .child("关闭窗口或 ⌘W 后继续上传，⌘Q 退出。快捷操作自动上传并复制成功链接。"),
+                    .child(crate::i18n::text(
+                        "关闭窗口或 ⌘W 后继续上传，⌘Q 退出。快捷操作自动上传并复制成功链接。",
+                    )),
             )
             .child(
                 Switch::new("global-shortcuts")
-                    .label("启用全局快捷键")
+                    .label(crate::i18n::text("启用全局快捷键"))
                     .checked(self.enabled)
                     .on_click(cx.listener(|this, value, _, cx| {
                         this.enabled = *value;
@@ -75,7 +77,7 @@ impl Render for ShortcutSettings {
                     .flex()
                     .items_center()
                     .gap(px(16.))
-                    .child(div().w(px(120.)).child("上传剪贴板"))
+                    .child(div().w(px(120.)).child(crate::i18n::text("上传剪贴板")))
                     .child(Input::new(&self.clipboard).disabled(!self.enabled)),
             )
             .child(
@@ -83,14 +85,16 @@ impl Render for ShortcutSettings {
                     .flex()
                     .items_center()
                     .gap(px(16.))
-                    .child(div().w(px(120.)).child("截图上传"))
+                    .child(div().w(px(120.)).child(crate::i18n::text("截图上传")))
                     .child(Input::new(&self.screenshot).disabled(!self.enabled)),
             )
             .child(
                 div()
                     .text_size(px(12.))
                     .text_color(crate::theme::color(MUTED))
-                    .child("例如 Cmd+Alt+U。需要修饰键；冲突时保留原快捷键，并显示注册失败。"),
+                    .child(crate::i18n::text(
+                        "例如 Cmd+Alt+U。需要修饰键；冲突时保留原快捷键，并显示注册失败。",
+                    )),
             )
             .when_some(self.notice.clone(), |d, (text, error)| {
                 d.child(
@@ -102,7 +106,7 @@ impl Render for ShortcutSettings {
             })
             .child(
                 Button::new("save-shortcuts")
-                    .label("保存快捷键")
+                    .label(crate::i18n::text("保存快捷键"))
                     .small()
                     .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
             )

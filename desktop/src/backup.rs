@@ -1,0 +1,76 @@
+use anyhow::{Context, Result, ensure};
+use serde::{Deserialize, Serialize};
+use std::{
+    io::Write,
+    path::{Path, PathBuf},
+};
+
+#[derive(Serialize, Deserialize)]
+struct Request {
+    source: PathBuf,
+    config: PathBuf,
+    credentials: bool,
+    manifest: Vec<u8>,
+}
+pub fn schedule(root: &Path, source: &Path, credentials: bool) -> Result<()> {
+    img_records::backup::inspect(source)?;
+    let request = Request {
+        source: source.to_owned(),
+        config: crate::storage::config_path()?,
+        credentials,
+        manifest: std::fs::read(source.join("manifest.json"))?,
+    };
+    let mut file = tempfile::NamedTempFile::new_in(root)?;
+    file.write_all(&serde_json::to_vec(&request)?)?;
+    file.as_file().sync_all()?;
+    file.persist(root.join("restore-request.json"))
+        .map_err(|e| e.error)?;
+    Ok(())
+}
+pub fn pending(root: &Path) -> bool {
+    root.join("restore-request.json").is_file()
+}
+pub fn apply_pending(root: &Path) -> Result<()> {
+    if !pending(root) {
+        return Ok(());
+    }
+    let request: Request =
+        serde_json::from_slice(&std::fs::read(root.join("restore-request.json"))?)?;
+    // A restart can reach this point before the previous process releases its lock.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(root.join("session.lock"))?;
+        if lock.try_lock().is_ok() {
+            break;
+        }
+        ensure!(
+            std::time::Instant::now() < deadline,
+            "等待应用退出超时，恢复尚未执行"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let result = (|| -> Result<_> {
+        ensure!(
+            std::fs::read(request.source.join("manifest.json"))? == request.manifest,
+            "备份在确认后发生变化，恢复已取消"
+        );
+        img_records::backup::restore(&request.source, root, &request.config, request.credentials)
+    })();
+    let (message, error) = match result {
+        Ok(path) => (
+            format!("恢复完成。恢复前的数据保留在 {}", path.display()),
+            false,
+        ),
+        Err(e) => (format!("恢复未完成：{e:#}"), true),
+    };
+    std::fs::write(
+        root.join("restore-result.json"),
+        serde_json::to_vec(&(message, error))?,
+    )?;
+    std::fs::remove_file(root.join("restore-request.json")).context("无法清除恢复请求")?;
+    Ok(())
+}

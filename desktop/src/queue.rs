@@ -466,7 +466,8 @@ impl ImgDesktop {
             self.message("没有可清理的记录，请先取消正在等待的任务", false, cx);
             return;
         }
-        let prompt = window.prompt(
+        let prompt = crate::i18n::prompt(
+            window,
             PromptLevel::Warning,
             &format!(
                 "清理 {} 条记录？其中 {hidden} 项不在当前搜索结果中",
@@ -571,9 +572,16 @@ impl ImgDesktop {
             return;
         }
         if !self.queue.persistence_ok {
-            let prompt = window.prompt(PromptLevel::Warning, "本地队列尚未保存",
-                Some("退出会保留原队列和图片副本；本次未能保存的记录需要重新导入。也可以继续修复队列。"),
-                &["继续修复", "退出并保留原文件"], cx);
+            let prompt = crate::i18n::prompt(
+                window,
+                PromptLevel::Warning,
+                "本地队列尚未保存",
+                Some(
+                    "退出会保留原队列和图片副本；本次未能保存的记录需要重新导入。也可以继续修复队列。",
+                ),
+                &["继续修复", "退出并保留原文件"],
+                cx,
+            );
             cx.spawn(async move |this, cx| {
                 if prompt.await.ok() == Some(1) {
                     let _ = this.update(cx, |this, cx| this.shutdown_with_mode(true, cx));
@@ -586,7 +594,8 @@ impl ImgDesktop {
             self.begin_shutdown(cx);
             return;
         }
-        let prompt = window.prompt(
+        let prompt = crate::i18n::prompt(
+            window,
             PromptLevel::Warning,
             "还有图片正在上传",
             Some("可以等本批完成后退出，或暂停上传并保存队列。"),

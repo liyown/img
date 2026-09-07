@@ -48,16 +48,16 @@ fn extra_editor(
     ExtraEditor {
         key: cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("名称")
+                .placeholder(crate::i18n::text("名称"))
                 .default_value(row.key.clone())
         }),
         value: cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder(if row.original_key.is_some() {
+                .placeholder(crate::i18n::text(if row.original_key.is_some() {
                     "留空保留已保存的值"
                 } else {
                     "值"
-                })
+                }))
                 .default_value(row.value.clone())
                 .masked(true)
         }),
@@ -71,11 +71,11 @@ fn text(value: impl Into<SharedString>, size: f32, color: u32) -> Div {
     div()
         .text_size(px(size))
         .text_color(crate::theme::color(color))
-        .child(value.into())
+        .child(crate::i18n::text(value))
 }
 fn button(id: impl Into<ElementId>, title: &str) -> Button {
     Button::new(id)
-        .label(title.to_owned())
+        .label(crate::i18n::text(title.to_owned()))
         .small()
         .h(px(34.))
         .rounded(px(9.))
@@ -103,7 +103,7 @@ impl StorageSettings {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some("选择 PicGo / PicList 配置 JSON".into()),
+            prompt: Some(crate::i18n::text("选择 PicGo / PicList 配置 JSON")),
         });
         let existing = self
             .providers
@@ -150,7 +150,7 @@ impl StorageSettings {
     fn edit(&mut self, draft: ProviderDraft, window: &mut Window, cx: &mut Context<Self>) {
         let name = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("例如：个人图床")
+                .placeholder(crate::i18n::text("例如：个人图床"))
                 .default_value(draft.name.clone())
         });
         let fields = draft
@@ -168,7 +168,7 @@ impl StorageSettings {
                     field.key.into(),
                     cx.new(|cx| {
                         InputState::new(window, cx)
-                            .placeholder(placeholder)
+                            .placeholder(crate::i18n::text(placeholder))
                             .default_value(value)
                             .masked(field.secret)
                     }),
@@ -290,7 +290,8 @@ impl StorageSettings {
         if self.saving || self.uploading {
             return;
         }
-        let prompt = window.prompt(
+        let prompt = crate::i18n::prompt(
+            window,
             PromptLevel::Warning,
             &format!("删除存储源“{name}”？"),
             Some("移除本机配置和不再使用的凭据。远端图片与本地历史记录会保留。"),
@@ -381,7 +382,7 @@ impl StorageSettings {
                     .child(
                         div().flex_1().min_w(px(0.)).child(
                             Input::new(&row.key)
-                                .aria_label(format!("{title}名称 {}", index + 1))
+                                .aria_label(crate::i18n::text(format!("{title}名称 {}", index + 1)))
                                 .disabled(self.saving || self.uploading)
                                 .h(px(34.)),
                         ),
@@ -389,7 +390,7 @@ impl StorageSettings {
                     .child(
                         div().flex_1().min_w(px(0.)).child(
                             Input::new(&row.value)
-                                .aria_label(format!("{title}值 {}", index + 1))
+                                .aria_label(crate::i18n::text(format!("{title}值 {}", index + 1)))
                                 .disabled(self.saving || self.uploading)
                                 .h(px(34.)),
                         ),
@@ -436,7 +437,7 @@ impl StorageSettings {
                     ))
                     .child(
                         Input::new(state)
-                            .aria_label(field.label)
+                            .aria_label(crate::i18n::text(field.label))
                             .disabled(self.saving || self.uploading)
                             .h(px(36.))
                             .text_size(px(12.))
@@ -476,7 +477,7 @@ impl StorageSettings {
                             .child(text("存储源名称 *", 12., NAV_TEXT))
                             .child(
                                 Input::new(&editor.name)
-                                    .aria_label("存储源名称")
+                                    .aria_label(crate::i18n::text("存储源名称"))
                                     .disabled(self.saving || self.uploading || editing)
                                     .h(px(36.))
                                     .text_size(px(12.))
@@ -501,7 +502,7 @@ impl StorageSettings {
                                         for next in ProviderKind::ALL {
                                             let weak = weak.clone();
                                             menu = menu.item(
-                                                PopupMenuItem::new(next.label())
+                                                PopupMenuItem::new(crate::i18n::text(next.label()))
                                                     .checked(next == kind)
                                                     .on_click(move |_, window, cx| {
                                                         let _ = weak.update(cx, |this, cx| {
@@ -545,7 +546,7 @@ impl StorageSettings {
                                     for next in ["POST", "PUT", "PATCH"] {
                                         let weak = weak.clone();
                                         menu = menu.item(
-                                            PopupMenuItem::new(next)
+                                            PopupMenuItem::new(crate::i18n::text(next))
                                                 .checked(next == method)
                                                 .on_click(move |_, _, cx| {
                                                     let _ = weak.update(cx, |this, cx| {
@@ -566,7 +567,7 @@ impl StorageSettings {
             })
             .child(
                 Switch::new("allow-insecure-storage")
-                    .label("允许 HTTP 服务地址（仅用于可信服务）")
+                    .label(crate::i18n::text("允许 HTTP 服务地址（仅用于可信服务）"))
                     .checked(editor.draft.allow_insecure)
                     .disabled(self.saving || self.uploading)
                     .on_click(cx.listener(|this, checked: &bool, _, cx| {
@@ -584,7 +585,7 @@ impl StorageSettings {
                 |this| {
                     this.child(
                         Switch::new("path-style")
-                            .label("使用路径形式访问存储桶")
+                            .label(crate::i18n::text("使用路径形式访问存储桶"))
                             .checked(editor.draft.path_style)
                             .disabled(self.saving || self.uploading)
                             .on_click(cx.listener(|this, checked: &bool, _, cx| {

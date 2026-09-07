@@ -350,13 +350,14 @@ impl ImgDesktop {
         self.notification_batches.insert(id.clone(), order);
         cx.show_system_notification(SystemNotification {
             tag: id.into(),
-            title: if failed > 0 {
+            title: crate::i18n::text(if failed > 0 {
                 "img · 上传有失败项"
             } else {
                 "img · 上传完成"
-            }
-            .into(),
-            body: format!("{count} 张上传成功，{failed} 张失败。点击查看队列。").into(),
+            }),
+            body: crate::i18n::text(format!(
+                "{count} 张上传成功，{failed} 张失败。点击查看队列。"
+            )),
             actions: vec![],
         });
     }

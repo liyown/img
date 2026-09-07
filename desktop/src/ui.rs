@@ -9,6 +9,8 @@ mod performance;
 mod queue;
 #[path = "quick_upload.rs"]
 mod quick_upload;
+#[path = "remote_ui.rs"]
+mod remote_ui;
 #[path = "workflows.rs"]
 mod workflows;
 
@@ -90,6 +92,7 @@ pub struct ImgDesktop {
     records_revision: u64,
     inbox_busy: bool,
     workflow_busy: bool,
+    remote: remote_ui::RemoteState,
     watch_control: Option<Control>,
     selection: crate::selection::Selection,
     record_index: std::cell::RefCell<crate::record_index::RecordIndex>,
@@ -144,7 +147,7 @@ fn label(text: impl Into<SharedString>, size: f32, color: u32) -> Div {
         .text_size(px(size))
         .font_weight(FontWeight::NORMAL)
         .text_color(crate::theme::color(color))
-        .child(text.into())
+        .child(crate::i18n::text(text))
 }
 fn mono(text: impl Into<SharedString>, size: f32, color: u32) -> Div {
     label(text, size, color).font_family("Menlo")
@@ -158,7 +161,9 @@ fn dot(color: u32) -> Div {
 }
 fn action(id: impl Into<ElementId>, text: &str) -> Button {
     Button::new(id)
-        .when(!text.is_empty(), |this| this.label(text.to_string()))
+        .when(!text.is_empty(), |this| {
+            this.label(crate::i18n::text(text.to_string()))
+        })
         .small()
         .font_weight(FontWeight::NORMAL)
         .h(px(36.))
@@ -260,10 +265,13 @@ impl ImgDesktop {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus = cx.focus_handle();
-        let search =
-            cx.new(|cx| InputState::new(window, cx).placeholder("搜索文件、存储源或 URL..."));
-        let url_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("https://example.com/image.png"));
+        let search = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(crate::i18n::text("搜索文件、存储源或 URL..."))
+        });
+        let url_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(crate::i18n::text("https://example.com/image.png"))
+        });
         let subscription = cx.subscribe(&search, |_, _, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
                 cx.notify();
@@ -301,8 +309,15 @@ impl ImgDesktop {
             notice = Some(("上传设置无法读取，已使用默认值".into(), true));
             UploadOptions::default()
         });
-        let upload_settings =
-            cx.new(|cx| UploadSettings::new(root.clone(), upload_options.clone(), window, cx));
+        let upload_settings = cx.new(|cx| {
+            UploadSettings::new(
+                root.clone(),
+                engine.clone(),
+                upload_options.clone(),
+                window,
+                cx,
+            )
+        });
         let upload_subscription = cx.subscribe(
             &upload_settings,
             |this, _, event: &UploadOptionsChanged, cx| {
@@ -401,6 +416,7 @@ impl ImgDesktop {
             records_revision: 1,
             inbox_busy: false,
             workflow_busy: false,
+            remote: Default::default(),
             watch_control: None,
             record_index: Default::default(),
             selection: Default::default(),
@@ -574,7 +590,7 @@ impl ImgDesktop {
             files: true,
             directories: true,
             multiple: true,
-            prompt: Some("选择图片或文件夹".into()),
+            prompt: Some(crate::i18n::text("选择图片或文件夹")),
         });
         cx.spawn(async move |this, cx| match paths.await {
             Ok(Ok(Some(paths))) => {
@@ -900,17 +916,19 @@ impl ImgDesktop {
                     .px(px(5.))
                     .text_color(crate::theme::color(ORANGE))
                     .text_size(px(11.))
-                    .label(if self.copied.as_ref() == Some(&item.id) {
-                        "已复制"
-                    } else {
-                        "复制链接"
-                    })
-                    .tooltip(format!("复制为 {}", selected.label()))
+                    .label(crate::i18n::text(
+                        if self.copied.as_ref() == Some(&item.id) {
+                            "已复制"
+                        } else {
+                            "复制链接"
+                        },
+                    ))
+                    .tooltip(crate::i18n::text(format!("复制为 {}", selected.label())))
                     .on_click(cx.listener(move |this, _, _, cx| this.copy(&copy, cx))),
             )
             .child(
                 Button::new(SharedString::from(format!("{scope}-format-{}", item.id)))
-                    .accessibility_label(format!("复制格式：{}", item.name))
+                    .accessibility_label(crate::i18n::text(format!("复制格式：{}", item.name)))
                     .ghost()
                     .xsmall()
                     .h(px(26.))
@@ -918,7 +936,7 @@ impl ImgDesktop {
                     .p_0()
                     .text_color(crate::theme::color(ORANGE))
                     .child(icon("caret-down", 10.).text_color(crate::theme::color(ORANGE)))
-                    .tooltip("选择格式并复制")
+                    .tooltip(crate::i18n::text("选择格式并复制"))
                     .dropdown_menu(move |mut menu, _, _| {
                         menu = menu
                             .min_w(px(190.))
@@ -927,7 +945,7 @@ impl ImgDesktop {
                             let weak = weak.clone();
                             let item = menu_item.clone();
                             menu = menu.item(
-                                PopupMenuItem::new(format.label())
+                                PopupMenuItem::new(crate::i18n::text(format.label()))
                                     .checked(format == selected)
                                     .on_click(move |_, _, cx| {
                                         let _ = weak.update(cx, |this, cx| {
@@ -941,13 +959,15 @@ impl ImgDesktop {
                         let weak = weak.clone();
                         let url = menu_item.url.clone();
                         menu.item(
-                            PopupMenuItem::new("检查公开链接").on_click(move |_, _, cx| {
-                                if let Some(url) = &url {
-                                    let _ = weak.update(cx, |this, cx| {
-                                        this.check_public_link(url.clone(), cx)
-                                    });
-                                }
-                            }),
+                            PopupMenuItem::new(crate::i18n::text("检查公开链接")).on_click(
+                                move |_, _, cx| {
+                                    if let Some(url) = &url {
+                                        let _ = weak.update(cx, |this, cx| {
+                                            this.check_public_link(url.clone(), cx)
+                                        });
+                                    }
+                                },
+                            ),
                         )
                     }),
             )
@@ -1054,7 +1074,7 @@ impl ImgDesktop {
             let color = if active { TEXT } else { NAV_TEXT };
             nav = nav.child(
                 Button::new(SharedString::from(format!("nav-{title}")))
-                    .accessibility_label(title)
+                    .accessibility_label(crate::i18n::text(title))
                     .selected(active)
                     .ghost()
                     .w_full()
@@ -1103,8 +1123,8 @@ impl ImgDesktop {
                     .p(px(10.))
                     .child(
                         Button::new("storage-summary")
-                            .accessibility_label("管理存储源")
-                            .tooltip("管理存储源")
+                            .accessibility_label(crate::i18n::text("管理存储源"))
+                            .tooltip(crate::i18n::text("管理存储源"))
                             .ghost()
                             .w_full()
                             .h(px(54.))
@@ -1169,7 +1189,7 @@ impl ImgDesktop {
                     .rounded(px(8.))
                     .bg(crate::theme::color(if active { TEXT } else { CANVAS }))
                     .text_color(crate::theme::color(if active { CARD } else { MUTED }))
-                    .label(title)
+                    .label(crate::i18n::text(title))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if this.filter != filter {
                             this.content_revision = this.content_revision.wrapping_add(1);
@@ -1208,7 +1228,7 @@ impl ImgDesktop {
         let provider = action("provider", "")
             .h(px(28.))
             .rounded(px(6.))
-            .accessibility_label("选择存储源")
+            .accessibility_label(crate::i18n::text("选择存储源"))
             .px(px(12.))
             .border_color(crate::theme::color(BORDER))
             .bg(crate::theme::color(CARD))
@@ -1235,15 +1255,16 @@ impl ImgDesktop {
                     menu = menu.item(PopupMenuItem::label("参考图中的示例存储"));
                     for name in ["SM.MS", "Imgur"] {
                         let weak = weak.clone();
-                        menu =
-                            menu.item(PopupMenuItem::new(name).checked(name == current).on_click(
-                                move |_, _, cx| {
+                        menu = menu.item(
+                            PopupMenuItem::new(crate::i18n::text(name))
+                                .checked(name == current)
+                                .on_click(move |_, _, cx| {
                                     let _ = weak.update(cx, |this, cx| {
                                         this.provider = name.into();
                                         cx.notify();
                                     });
-                                },
-                            ));
+                                }),
+                        );
                     }
                 }
                 if !providers.is_empty() {
@@ -1253,23 +1274,26 @@ impl ImgDesktop {
                     let selected = name == &current;
                     let name = name.clone();
                     let weak = weak.clone();
-                    menu = menu.item(PopupMenuItem::new(name.clone()).checked(selected).on_click(
-                        move |_, _, cx| {
-                            let _ = weak.update(cx, |this, cx| {
-                                this.provider = name.clone();
-                                cx.notify();
-                            });
-                        },
-                    ));
+                    menu = menu.item(
+                        PopupMenuItem::new(crate::i18n::text(name.clone()))
+                            .checked(selected)
+                            .on_click(move |_, _, cx| {
+                                let _ = weak.update(cx, |this, cx| {
+                                    this.provider = name.clone();
+                                    cx.notify();
+                                });
+                            }),
+                    );
                 }
                 let weak = weak.clone();
-                menu.separator()
-                    .item(
-                        PopupMenuItem::new("管理存储源…").on_click(move |_, window, cx| {
+                menu.separator().item(
+                    PopupMenuItem::new(crate::i18n::text("管理存储源…")).on_click(
+                        move |_, window, cx| {
                             let _ = weak
                                 .update(cx, |this, cx| this.navigate(Page::Settings, window, cx));
-                        }),
-                    )
+                        },
+                    ),
+                )
             });
         let collapsed = self.preferences.sidebar_collapsed;
         let toggle = if collapsed {
@@ -1285,8 +1309,8 @@ impl ImgDesktop {
         };
         let chrome_button = |id, label: &str, symbol| {
             Button::new(id)
-                .accessibility_label(label.to_owned())
-                .tooltip(label.to_owned())
+                .accessibility_label(crate::i18n::text(label.to_owned()))
+                .tooltip(crate::i18n::text(label.to_owned()))
                 .ghost()
                 .small()
                 .size(px(28.))
@@ -1368,7 +1392,7 @@ impl ImgDesktop {
                         this.child(
                             div().w(px(220.)).min_w(px(140.)).flex_shrink(1.).child(
                                 Input::new(&self.search)
-                                    .aria_label("搜索图片")
+                                    .aria_label(crate::i18n::text("搜索图片"))
                                     .h(px(30.))
                                     .text_size(px(12.))
                                     .bg(crate::theme::color(CANVAS))
@@ -1389,7 +1413,7 @@ impl ImgDesktop {
             SharedString::from(format!("{scope}-copy-format")),
             selected.label(),
         )
-        .accessibility_label("选择链接格式")
+        .accessibility_label(crate::i18n::text("选择链接格式"))
         .outline()
         .px(px(10.))
         .child(icon("caret-down", 10.).text_color(crate::theme::color(NAV_TEXT)))
@@ -1398,7 +1422,7 @@ impl ImgDesktop {
             for format in CopyFormat::ALL {
                 let weak = weak.clone();
                 menu = menu.item(
-                    PopupMenuItem::new(format.label())
+                    PopupMenuItem::new(crate::i18n::text(format.label()))
                         .checked(format == selected)
                         .on_click(move |_, _, cx| {
                             let _ = weak.update(cx, |this, cx| {
@@ -1590,7 +1614,7 @@ impl ImgDesktop {
                         .child(
                             div().flex_1().child(
                                 Input::new(&self.url_input)
-                                    .aria_label("图片链接")
+                                    .aria_label(crate::i18n::text("图片链接"))
                                     .h(px(36.)),
                             ),
                         )
@@ -1788,7 +1812,7 @@ impl ImgDesktop {
             .when(!crate::installer::installed(), |body| {
                 body.child(
                     Button::new("install-application")
-                        .label("安装到应用程序并重新打开")
+                        .label(crate::i18n::text("安装到应用程序并重新打开"))
                         .primary()
                         .small()
                         .disabled(self.install_preparing || self.shutting_down)
@@ -1803,7 +1827,7 @@ impl ImgDesktop {
                     .child(label("已内置 Rust CLI · 可独立在终端使用", 13., TEXT))
                     .child(
                         Button::new("install-cli")
-                            .label("添加终端命令")
+                            .label(crate::i18n::text("添加终端命令"))
                             .outline()
                             .small()
                             .on_click(cx.listener(|this, _, _, cx| this.install_cli(cx))),
@@ -1817,7 +1841,7 @@ impl ImgDesktop {
                     .child(label("每天自动检查新版本", 13., TEXT))
                     .child(
                         Switch::new("check-updates-auto")
-                            .accessibility_label("每天自动检查新版本")
+                            .accessibility_label(crate::i18n::text("每天自动检查新版本"))
                             .checked(self.preferences.check_updates)
                             .on_click(cx.listener(|this, checked: &bool, _, cx| {
                                 this.preferences.check_updates = *checked;
@@ -1835,11 +1859,11 @@ impl ImgDesktop {
                     .gap(px(8.))
                     .child(
                         Button::new("check-updates")
-                            .label(if self.update_checking {
+                            .label(crate::i18n::text(if self.update_checking {
                                 "正在检查…"
                             } else {
                                 "检查更新"
-                            })
+                            }))
                             .outline()
                             .small()
                             .disabled(self.update_checking || self.update_downloading)
@@ -1847,7 +1871,7 @@ impl ImgDesktop {
                     )
                     .child(
                         Button::new("all-releases")
-                            .label("版本页面")
+                            .label(crate::i18n::text("版本页面"))
                             .ghost()
                             .small()
                             .on_click(|_, _, cx| cx.open_url(crate::updates::RELEASES_PAGE)),
@@ -1855,18 +1879,18 @@ impl ImgDesktop {
                     .when_some(self.available_update.clone(), |this, update| {
                         this.child(
                             Button::new("release-notes")
-                                .label("版本说明")
+                                .label(crate::i18n::text("版本说明"))
                                 .ghost()
                                 .small()
                                 .on_click(move |_, _, cx| cx.open_url(&update.page)),
                         )
                         .child(
                             Button::new("download-update")
-                                .label(if self.update_downloading {
+                                .label(crate::i18n::text(if self.update_downloading {
                                     "下载中…"
                                 } else {
                                     "获取更新"
-                                })
+                                }))
                                 .primary()
                                 .small()
                                 .disabled(self.update_downloading)
@@ -1877,11 +1901,11 @@ impl ImgDesktop {
                         let manual = file.clone();
                         this.child(
                             Button::new("install-update")
-                                .label(if self.install_preparing {
+                                .label(crate::i18n::text(if self.install_preparing {
                                     "正在准备…"
                                 } else {
                                     crate::installer::install_label()
-                                })
+                                }))
                                 .primary()
                                 .small()
                                 .disabled(
@@ -1898,7 +1922,7 @@ impl ImgDesktop {
                         )
                         .child(
                             Button::new("open-update")
-                                .label("手动安装")
+                                .label(crate::i18n::text("手动安装"))
                                 .ghost()
                                 .small()
                                 .disabled(self.queue.batch.is_some())
@@ -1949,6 +1973,7 @@ impl ImgDesktop {
             .child(card().child(self.upload_settings.clone()))
             .child(card().child(self.shortcut_settings.clone()))
             .child(card().child(self.workflow_controls(cx)))
+            .child(card().child(self.remote_controls(cx)))
             .child(
                 card()
                     .child(label("链接与剪贴板", 16., TEXT).font_weight(FontWeight::SEMIBOLD))
@@ -1964,7 +1989,7 @@ impl ImgDesktop {
                             ))
                             .child(
                                 Switch::new("auto-copy")
-                                    .accessibility_label("上传后自动复制")
+                                    .accessibility_label(crate::i18n::text("上传后自动复制"))
                                     .checked(self.preferences.auto_copy)
                                     .color(crate::theme::color(NAV_ACTIVE))
                                     .on_click(cx.listener(|this, checked: &bool, _, cx| {
@@ -1993,11 +2018,31 @@ impl ImgDesktop {
                             .flex()
                             .items_center()
                             .justify_between()
+                            .child(row("Language / 语言", "English / 简体中文"))
+                            .child(
+                                Switch::new("english-language")
+                                    .checked(self.preferences.english)
+                                    .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                                        this.preferences.english = *checked;
+                                        this.save_preferences(cx);
+                                        this.message(
+                                            "语言偏好已保存，重新打开应用后生效",
+                                            false,
+                                            cx,
+                                        );
+                                    })),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
                             .child(row("深色主题", "切换应用颜色，偏好会保留。"))
                             .child(
                                 Switch::new("dark-mode")
                                     .checked(self.preferences.dark_mode)
-                                    .accessibility_label("深色主题")
+                                    .accessibility_label(crate::i18n::text("深色主题"))
                                     .on_click(cx.listener(|this, checked: &bool, window, cx| {
                                         this.preferences.dark_mode = *checked;
                                         crate::theme::set_dark(*checked, cx);
@@ -2014,7 +2059,7 @@ impl ImgDesktop {
                             .child(row("收起侧边栏", "隐藏侧栏以腾出空间，左上角可随时展开。"))
                             .child(
                                 Switch::new("sidebar-preference")
-                                    .accessibility_label("收起侧边栏")
+                                    .accessibility_label(crate::i18n::text("收起侧边栏"))
                                     .checked(self.preferences.sidebar_collapsed)
                                     .color(crate::theme::color(NAV_ACTIVE))
                                     .on_click(cx.listener(|this, checked: &bool, _, cx| {
@@ -2058,11 +2103,11 @@ impl ImgDesktop {
             .mb(px(12.))
             .child(
                 Button::new("pause-all")
-                    .label(if paused || self.queue.batch.is_none() {
+                    .label(crate::i18n::text(if paused || self.queue.batch.is_none() {
                         "继续队列"
                     } else {
                         "暂停全部"
-                    })
+                    }))
                     .outline()
                     .small()
                     .disabled(self.queue.batch.is_none() && !has_paused)
@@ -2076,7 +2121,7 @@ impl ImgDesktop {
             )
             .child(
                 Button::new("cancel-all")
-                    .label("取消本批")
+                    .label(crate::i18n::text("取消本批"))
                     .ghost()
                     .small()
                     .disabled(self.queue.batch.is_none())
@@ -2084,7 +2129,7 @@ impl ImgDesktop {
             )
             .child(
                 Button::new("retry-failed")
-                    .label("重试失败项")
+                    .label(crate::i18n::text("重试失败项"))
                     .ghost()
                     .small()
                     .disabled(
@@ -2100,7 +2145,7 @@ impl ImgDesktop {
             .child(div().flex_1())
             .child(
                 Button::new("clear-finished")
-                    .label("清理已结束记录")
+                    .label(crate::i18n::text("清理已结束记录"))
                     .ghost()
                     .small()
                     .disabled(!self.queue.items.iter().any(|i| {
@@ -2176,11 +2221,11 @@ impl ImgDesktop {
                                 .ghost()
                                 .small()
                                 .ml(px(8.))
-                                .label(if self.selection.active {
+                                .label(crate::i18n::text(if self.selection.active {
                                     "完成"
                                 } else {
                                     "选择"
-                                })
+                                }))
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     if this.selection.active {
                                         this.selection.finish();
@@ -2457,11 +2502,11 @@ impl Render for ImgDesktop {
                     .child(label(text.clone(), 12., if *error { RED } else { MUTED }).flex_1())
                     .child(
                         Button::new("dismiss-notice")
-                            .accessibility_label("关闭提示")
+                            .accessibility_label(crate::i18n::text("关闭提示"))
                             .ghost()
                             .xsmall()
                             .icon(Icon::default().path("icons/x.svg"))
-                            .tooltip("关闭提示")
+                            .tooltip(crate::i18n::text("关闭提示"))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.notice = None;
                                 cx.notify();

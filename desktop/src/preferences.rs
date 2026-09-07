@@ -86,6 +86,7 @@ fn html_escape(value: &str) -> String {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Preferences {
+    pub english: bool,
     pub dark_mode: bool,
     pub library_view: LibraryView,
     pub copy_format: CopyFormat,
@@ -98,6 +99,7 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             dark_mode: false,
+            english: false,
             library_view: LibraryView::Grid,
             copy_format: CopyFormat::Url,
             auto_copy: true,
@@ -158,6 +160,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         std::fs::write(temp.path().join("queue.json"), "[]").unwrap();
         let preferences = Preferences {
+            english: true,
             library_view: LibraryView::List,
             copy_format: CopyFormat::MarkdownImage,
             auto_copy: false,

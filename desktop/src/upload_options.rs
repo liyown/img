@@ -5,6 +5,11 @@ use std::{io::Write, path::Path};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UploadOptions {
+    pub image_format: String,
+    pub quality: u8,
+    pub max_edge: u32,
+    pub watermark: String,
+    pub watermark_opacity: u8,
     pub reuse: bool,
     pub optimize: bool,
     pub strip_exif: bool,
@@ -21,6 +26,11 @@ pub struct UploadOptions {
 impl Default for UploadOptions {
     fn default() -> Self {
         Self {
+            image_format: "original".into(),
+            quality: 85,
+            max_edge: 0,
+            watermark: String::new(),
+            watermark_opacity: 60,
             reuse: false,
             optimize: false,
             strip_exif: false,
@@ -41,6 +51,18 @@ impl UploadOptions {
         self.max_size_mb * 1024 * 1024
     }
     pub fn validate(&self) -> Result<()> {
+        ensure!(
+            matches!(
+                self.image_format.as_str(),
+                "original" | "png" | "jpeg" | "webp"
+            ),
+            "图片输出格式无效"
+        );
+        ensure!(
+            (1..=100).contains(&self.quality) && self.watermark_opacity <= 100,
+            "JPEG 质量应为 1–100，水印透明度应为 0–100"
+        );
+        ensure!(self.max_edge <= 32768, "最长边应为 0–32768");
         ensure!((1..=6).contains(&self.concurrency), "同时上传数量应为 1–6");
         ensure!(self.retry_count <= 5, "自动重试次数应为 0–5");
         ensure!(
@@ -122,6 +144,32 @@ impl UploadOptions {
             "upload".into(),
             toml::Value::Table(
                 [
+                    (
+                        "recipe".into(),
+                        toml::Value::Table(
+                            [
+                                (
+                                    "format".into(),
+                                    toml::Value::String(self.image_format.clone()),
+                                ),
+                                ("quality".into(), toml::Value::Integer(self.quality.into())),
+                                (
+                                    "max_edge".into(),
+                                    toml::Value::Integer(self.max_edge.into()),
+                                ),
+                                (
+                                    "watermark".into(),
+                                    toml::Value::String(self.watermark.clone()),
+                                ),
+                                (
+                                    "opacity".into(),
+                                    toml::Value::Integer(self.watermark_opacity.into()),
+                                ),
+                            ]
+                            .into_iter()
+                            .collect(),
+                        ),
+                    ),
                     ("reuse".into(), toml::Value::Boolean(self.reuse)),
                     ("path".into(), toml::Value::String(self.path.clone())),
                     (

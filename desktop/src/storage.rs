@@ -16,6 +16,7 @@ pub enum ProviderKind {
     Oss,
     Github,
     Http,
+    Webdav,
 }
 
 #[derive(Clone, Copy)]
@@ -28,7 +29,14 @@ pub struct Field {
 }
 
 impl ProviderKind {
-    pub const ALL: [Self; 5] = [Self::S3, Self::R2, Self::Oss, Self::Github, Self::Http];
+    pub const ALL: [Self; 6] = [
+        Self::S3,
+        Self::R2,
+        Self::Oss,
+        Self::Github,
+        Self::Http,
+        Self::Webdav,
+    ];
     pub fn label(self) -> &'static str {
         match self {
             Self::S3 => "Amazon S3 / 兼容 S3",
@@ -36,6 +44,7 @@ impl ProviderKind {
             Self::Oss => "阿里云 OSS（S3 兼容）",
             Self::Github => "GitHub",
             Self::Http => "自定义 HTTP",
+            Self::Webdav => "WebDAV",
         }
     }
     pub fn id(self) -> &'static str {
@@ -45,6 +54,7 @@ impl ProviderKind {
             Self::Oss => "oss",
             Self::Github => "github",
             Self::Http => "http",
+            Self::Webdav => "webdav",
         }
     }
     fn engine_type(self) -> &'static str {
@@ -52,6 +62,7 @@ impl ProviderKind {
             Self::S3 | Self::R2 | Self::Oss => "s3",
             Self::Github => "github",
             Self::Http => "http",
+            Self::Webdav => "webdav",
         }
     }
     pub fn fields(self) -> Vec<Field> {
@@ -70,6 +81,25 @@ impl ProviderKind {
             required,
         };
         let mut fields = match self {
+            Self::Webdav => vec![
+                text(
+                    "endpoint",
+                    "WebDAV 目录地址",
+                    "https://dav.example.com/images/",
+                    true,
+                ),
+                text(
+                    "public_url",
+                    "公开访问地址",
+                    "https://img.example.com",
+                    true,
+                ),
+                secret(
+                    "authorization",
+                    "Authorization 请求头（Basic 或 Bearer）",
+                    false,
+                ),
+            ],
             Self::S3 | Self::R2 | Self::Oss => vec![
                 text(
                     "endpoint",
@@ -255,6 +285,7 @@ pub fn edit_provider(name: &str) -> Result<ProviderDraft> {
         "s3" => ProviderKind::S3,
         "github" => ProviderKind::Github,
         "http" => ProviderKind::Http,
+        "webdav" => ProviderKind::Webdav,
         _ => anyhow::bail!("暂不支持编辑此存储源类型"),
     };
     Ok(ProviderDraft {

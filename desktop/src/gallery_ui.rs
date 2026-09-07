@@ -4,7 +4,7 @@ impl ImgDesktop {
     fn library_checkbox(&self, item: &Item, cx: &mut Context<Self>) -> AnyElement {
         let id = item.id.clone();
         gpui_kit::component::checkbox::Checkbox::new(SharedString::from(format!("select-{}", id)))
-            .accessibility_label(format!("选择 {}", item.name))
+            .accessibility_label(crate::i18n::text(format!("选择 {}", item.name)))
             .checked(self.selection.contains(&id))
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.selection.toggle(id.clone());
@@ -75,7 +75,7 @@ impl ImgDesktop {
                         Button::new("select-results")
                             .ghost()
                             .small()
-                            .label("全选当前结果")
+                            .label(crate::i18n::text("全选当前结果"))
                             .disabled(rows.is_empty())
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.selection.extend(&rows);
@@ -86,7 +86,7 @@ impl ImgDesktop {
                         Button::new("deselect-all")
                             .ghost()
                             .small()
-                            .label("取消全部")
+                            .label(crate::i18n::text("取消全部"))
                             .disabled(empty)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.selection.clear();
@@ -106,8 +106,8 @@ impl ImgDesktop {
                             .outline()
                             .small()
                             .min_w(px(136.))
-                            .label(format.label())
-                            .tooltip("选择格式并复制所选图片")
+                            .label(crate::i18n::text(format.label()))
+                            .tooltip(crate::i18n::text("选择格式并复制所选图片"))
                             .disabled(empty)
                             .dropdown_menu({
                                 let entity = cx.entity();
@@ -115,7 +115,7 @@ impl ImgDesktop {
                                     for value in CopyFormat::ALL {
                                         let entity = entity.clone();
                                         menu = menu.item(
-                                            PopupMenuItem::new(value.label())
+                                            PopupMenuItem::new(crate::i18n::text(value.label()))
                                                 .checked(value == format)
                                                 .on_click(move |_, _, cx| {
                                                     entity.update(cx, |this, cx| {
@@ -135,7 +135,7 @@ impl ImgDesktop {
                         Button::new("copy-selection")
                             .primary()
                             .small()
-                            .label("复制所选")
+                            .label(crate::i18n::text("复制所选"))
                             .disabled(empty)
                             .on_click(cx.listener(|this, _, _, cx| this.copy_selection(cx))),
                     )
@@ -143,7 +143,7 @@ impl ImgDesktop {
                         Button::new("clean-selection")
                             .outline()
                             .small()
-                            .label("清理所选")
+                            .label(crate::i18n::text("清理所选"))
                             .disabled(empty)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 let ids = this.selection.snapshot(&this.queue.items);
@@ -226,7 +226,7 @@ impl ImgDesktop {
                     Button::new(SharedString::from(format!("error-{}", failure_item.id)))
                         .ghost()
                         .xsmall()
-                        .label("详情 / 处理")
+                        .label(crate::i18n::text("详情 / 处理"))
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.failure_details(failure_item.clone(), window, cx)
                         })),
@@ -237,7 +237,7 @@ impl ImgDesktop {
                     Button::new(SharedString::from(format!("pause-{pause_id}")))
                         .ghost()
                         .xsmall()
-                        .label("暂停")
+                        .label(crate::i18n::text("暂停"))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.stop_item(&pause_id, engine::PAUSE, cx)
                         })),
@@ -246,7 +246,7 @@ impl ImgDesktop {
                     Button::new(SharedString::from(format!("cancel-{cancel_id}")))
                         .ghost()
                         .xsmall()
-                        .label("取消")
+                        .label(crate::i18n::text("取消"))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.stop_item(&cancel_id, engine::CANCEL, cx)
                         })),
@@ -257,7 +257,7 @@ impl ImgDesktop {
                     Button::new(SharedString::from(format!("remove-{remove_id}")))
                         .ghost()
                         .xsmall()
-                        .label("清理")
+                        .label(crate::i18n::text("清理"))
                         .disabled(
                             self.queue
                                 .batch
@@ -283,11 +283,11 @@ impl ImgDesktop {
                             .text_color(crate::theme::color(ORANGE))
                             .text_size(px(11.))
                             .disabled(self.queue.batch.is_some())
-                            .label(if item.status == Status::Ready {
+                            .label(crate::i18n::text(if item.status == Status::Ready {
                                 "开始上传"
                             } else {
                                 "重试"
-                            })
+                            }))
                             .on_click(
                                 cx.listener(move |this, _, _, cx| this.start_upload(&id, cx)),
                             ),
@@ -309,14 +309,14 @@ impl ImgDesktop {
             .gap(px(14.))
             .child(
                 Button::new(SharedString::from(format!("preview-{}", item.id)))
-                    .accessibility_label(format!("预览 {}", item.name))
+                    .accessibility_label(crate::i18n::text(format!("预览 {}", item.name)))
                     .ghost()
                     .p_0()
                     .size(px(48.))
                     .rounded(px(10.))
                     .overflow_hidden()
                     .child(thumbnail(&item, &self.thumbnails))
-                    .tooltip(format!("预览 {}", item.name))
+                    .tooltip(crate::i18n::text(format!("预览 {}", item.name)))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.open_preview(preview_item.clone(), window, cx);
                     })),
@@ -375,7 +375,7 @@ impl ImgDesktop {
             let selected = self.preferences.library_view == view;
             switch = switch.child(
                 Button::new(SharedString::from(format!("library-view-{title}")))
-                    .accessibility_label(format!("{title}展示"))
+                    .accessibility_label(crate::i18n::text(format!("{title}展示")))
                     .selected(selected)
                     .ghost()
                     .small()
@@ -385,7 +385,7 @@ impl ImgDesktop {
                     .text_size(px(12.))
                     .bg(crate::theme::color(if selected { TEXT } else { CANVAS }))
                     .text_color(crate::theme::color(if selected { CARD } else { MUTED }))
-                    .label(title)
+                    .label(crate::i18n::text(title))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if this.preferences.library_view != view {
                             this.content_revision = this.content_revision.wrapping_add(1);
@@ -430,7 +430,7 @@ impl ImgDesktop {
             .gap(px(10.))
             .child(
                 Button::new(SharedString::from(format!("grid-preview-{}", item.id)))
-                    .accessibility_label(format!("预览 {}", item.name))
+                    .accessibility_label(crate::i18n::text(format!("预览 {}", item.name)))
                     .ghost()
                     .p_0()
                     .w_full()
@@ -479,7 +479,7 @@ impl ImgDesktop {
             })
             .child(
                 Button::new(SharedString::from(format!("list-preview-{}", item.id)))
-                    .accessibility_label(format!("预览 {}", item.name))
+                    .accessibility_label(crate::i18n::text(format!("预览 {}", item.name)))
                     .ghost()
                     .p_0()
                     .size(px(48.))

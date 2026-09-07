@@ -63,7 +63,7 @@ impl Native {
             let menu_item = unsafe {
                 NSMenuItem::initWithTitle_action_keyEquivalent(
                     NSMenuItem::alloc(mtm),
-                    &NSString::from_str(title),
+                    &NSString::from_str(&crate::i18n::text(title.to_owned())),
                     (tag > 0).then(|| sel!(performMenuAction:)),
                     &NSString::new(),
                 )
@@ -147,12 +147,14 @@ impl Native {
         })
     }
     pub fn status(&self, text: &str, paused: bool) {
-        self.status.setTitle(&NSString::from_str(text));
-        self.pause.setTitle(&NSString::from_str(if paused {
-            "继续上传"
-        } else {
-            "暂停上传"
-        }));
+        self.status
+            .setTitle(&NSString::from_str(&crate::i18n::text(text.to_owned())));
+        self.pause
+            .setTitle(&NSString::from_str(&crate::i18n::text(if paused {
+                "继续上传"
+            } else {
+                "暂停上传"
+            })));
     }
 }
 impl Drop for Native {

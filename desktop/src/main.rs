@@ -1,8 +1,10 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 mod assets;
+mod backup;
 mod desktop_runtime;
 mod diagnostics;
 mod engine;
+mod i18n;
 mod inbox;
 mod installer;
 mod model;
@@ -43,6 +45,8 @@ fn main() -> anyhow::Result<()> {
         model::data_dir()?
     };
     std::fs::create_dir_all(&root)?;
+    backup::apply_pending(&root)?;
+    let restart_root = root.clone();
     let lock = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -60,6 +64,11 @@ fn main() -> anyhow::Result<()> {
     let application = gpui_kit::application().with_assets(assets::Assets);
     application.on_reopen(|cx| desktop_runtime::DesktopRuntime::open(cx, None));
     application.run(move |cx| {
+        i18n::set_english(
+            preferences::Preferences::load(&root)
+                .unwrap_or_default()
+                .english,
+        );
         gpui_kit::init(cx);
         cx.text_system()
             .add_fonts(vec![
@@ -147,7 +156,10 @@ fn main() -> anyhow::Result<()> {
                 });
                 let view = cx
                     .new(|cx| ImgDesktop::new(root.clone(), engine.clone(), reference, window, cx));
-                view.update(cx, |view, cx| view.startup_update_check(cx));
+                view.update(cx, |view, cx| {
+                    view.show_restore_result(cx);
+                    view.startup_update_check(cx);
+                });
                 if std::env::args().any(|arg| arg == "--smoke-test") {
                     cx.spawn(async move |cx| {
                         cx.background_executor()
@@ -203,5 +215,10 @@ fn main() -> anyhow::Result<()> {
         })
         .detach();
     });
+    if backup::pending(&restart_root) {
+        std::process::Command::new(std::env::current_exe()?)
+            .args(std::env::args_os().skip(1))
+            .spawn()?;
+    }
     Ok(())
 }

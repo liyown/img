@@ -2,6 +2,71 @@ use super::*;
 use std::io::Write;
 
 impl ImgDesktop {
+    pub(crate) fn show_restore_result(&mut self, cx: &mut Context<Self>) {
+        let path = self.root.join("restore-result.json");
+        if let Ok(bytes) = std::fs::read(&path)
+            && let Ok((message, error)) = serde_json::from_slice::<(String, bool)>(&bytes)
+        {
+            self.message(message, error, cx);
+            let _ = std::fs::remove_file(path);
+        }
+    }
+    fn choose_backup(&mut self, restore: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.workflow_busy || self.shutting_down {
+            return;
+        }
+        self.workflow_busy = true;
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some(crate::i18n::text(if restore {
+                "选择备份目录"
+            } else {
+                "选择备份保存位置"
+            })),
+        });
+        cx.spawn_in(window,async move |this,cx| {
+            let path=match paths.await {Ok(Ok(Some(paths)))=>paths.into_iter().next(),_=>None};
+            let Some(path)=path else {let _=this.update(cx,|this,cx|{this.workflow_busy=false;cx.notify();});return;};
+            let inspected=if restore {
+                let source=path.clone();
+                cx.background_executor().spawn(async move{img_records::backup::inspect(&source).map(|m|m.files.len())}).await
+            }else{Ok(0)};
+            let prompt=this.update_in(cx,|this,window,cx|match inspected {
+                Err(e)=>{this.workflow_busy=false;this.message(e.to_string(),true,cx);None},
+                Ok(count)=>Some(crate::i18n::prompt(window, PromptLevel::Info,
+                    if restore{"恢复备份并重启？"}else{"选择备份内容"},
+                    Some(&if restore{format!("已校验 {count} 个文件。应用会安全退出，替换备份中的设置与记录，并保留恢复前的数据副本。远端图片与原文件不受影响。凭据可单独选择。")}else{"默认包含设置和记录。可加入图片缓存；包含凭据时备份不加密，请存放在私人目录。".into()}),
+                    if restore{&["取消","恢复，不导入凭据","恢复并导入凭据"][..]}else{&["取消","设置与记录","包含缓存","包含缓存与凭据"][..]},cx))
+            }).ok().flatten();
+            let Some(prompt)=prompt else{return;};
+            let choice=prompt.await.unwrap_or(0);
+            if choice==0 {let _=this.update(cx,|this,cx|{this.workflow_busy=false;cx.notify();});return;}
+            if restore {
+                let _=this.update(cx,|this,cx|{
+                    this.workflow_busy=false;
+                    match crate::backup::schedule(&this.root,&path,choice==2) {
+                        Ok(())=>this.begin_shutdown(cx),
+                        Err(e)=>this.message(e.to_string(),true,cx),
+                    }
+                });
+            }else{
+                let settings=this.update(cx,|this,_|(this.root.clone(),crate::storage::config_path())).ok();
+                if let Some((root,config))=settings {
+                    let result=cx.background_executor().spawn(async move{
+                        let destination=path.join(format!("img-backup-{}",uuid::Uuid::new_v4()));
+                        img_records::backup::export(&root,&config?,&destination,img_records::backup::Options{config:true,records:true,cache:choice>=2,credentials:choice==3})?;
+                        Ok::<_,anyhow::Error>(destination)
+                    }).await;
+                    let _=this.update(cx,|this,cx|{this.workflow_busy=false;match result{
+                        Ok(path)=>this.message(format!("备份已保存到 {}",path.display()),false,cx),
+                        Err(e)=>this.message(format!("备份未完成：{e}"),true,cx),
+                    }});
+                }
+            }
+        }).detach();
+    }
     pub(super) fn workflow_controls(&self, cx: &mut Context<Self>) -> AnyElement {
         div()
             .flex()
@@ -45,6 +110,25 @@ impl ImgDesktop {
                         })),
                     ),
             )
+            .child(
+                div()
+                    .flex()
+                    .gap(px(10.))
+                    .child(
+                        action("backup-data", "备份设置与图库")
+                            .disabled(self.workflow_busy)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.choose_backup(false, window, cx)
+                            })),
+                    )
+                    .child(
+                        action("restore-data", "恢复备份")
+                            .disabled(self.workflow_busy)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.choose_backup(true, window, cx)
+                            })),
+                    ),
+            )
             .into_any_element()
     }
     fn choose_workflow(&mut self, watch: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -60,14 +144,11 @@ impl ImgDesktop {
             files: !watch,
             directories: watch,
             multiple: false,
-            prompt: Some(
-                if watch {
-                    "选择自动上传目录"
-                } else {
-                    "选择 Markdown 文件"
-                }
-                .into(),
-            ),
+            prompt: Some(crate::i18n::text(if watch {
+                "选择自动上传目录"
+            } else {
+                "选择 Markdown 文件"
+            })),
         });
         let binary = self.engine.clone();
         cx.spawn_in(window, async move |this,cx| {
@@ -96,7 +177,7 @@ impl ImgDesktop {
             }).await;
             let prompt = this.update_in(cx,|this,window,cx| {
                 match preview {
-                    Ok((summary,before)) => Some((window.prompt(PromptLevel::Info,
+                    Ok((summary,before)) => Some((crate::i18n::prompt(window, PromptLevel::Info,
                         if watch {"开始监听此目录？"} else {"转存文章图片？"},Some(&summary), &["取消","开始"],cx),before)),
                     Err(error) => {this.workflow_busy=false;this.message(error.to_string(),true,cx);None}
                 }

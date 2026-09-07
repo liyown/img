@@ -120,7 +120,7 @@ fn create_tray(sender: async_channel::Sender<DesktopEvent>) -> anyhow::Result<tr
         ("暂停 / 继续", DesktopEvent::TogglePause),
         ("退出", DesktopEvent::Quit),
     ] {
-        let item = MenuItem::new(title, true, None);
+        let item = MenuItem::new(crate::i18n::text(title).to_string(), true, None);
         events.push((item.id().clone(), event));
         menu.append(&item)?;
     }
@@ -169,7 +169,7 @@ impl ksni::Tray for LinuxTray {
         .into_iter()
         .map(|(label, event)| {
             ksni::menu::StandardItem {
-                label: label.into(),
+                label: crate::i18n::text(label).to_string(),
                 activate: Box::new(move |tray: &mut Self| {
                     let _ = tray.sender.try_send(event.clone());
                 }),

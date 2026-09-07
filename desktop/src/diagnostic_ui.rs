@@ -77,7 +77,8 @@ impl ImgDesktop {
         .detach();
     }
     fn recover_queue(&mut self, empty: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let prompt = window.prompt(
+        let prompt = crate::i18n::prompt(
+            window,
             PromptLevel::Warning,
             if empty {
                 "保留当前队列文件并重建空队列？"
@@ -153,7 +154,8 @@ impl ImgDesktop {
                 .map(|s| format!(" · HTTP {s}"))
                 .unwrap_or_default()
         );
-        let prompt = window.prompt(
+        let prompt = crate::i18n::prompt(
+            window,
             PromptLevel::Warning,
             "上传未完成",
             Some(&detail),
@@ -184,7 +186,7 @@ impl ImgDesktop {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some("选择原文件".into()),
+            prompt: Some(crate::i18n::text("选择原文件")),
         });
         let root = self.root.clone();
         let max_bytes = self.upload_options.max_bytes();
