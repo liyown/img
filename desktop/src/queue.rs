@@ -636,6 +636,14 @@ impl ImgDesktop {
             .await;
             let _ = this.update(cx, |this, cx| match result {
                 Ok(()) => {
+                    if this.pending_restore
+                        && let Err(error) = crate::backup::commit(&this.root)
+                    {
+                        this.pending_restore = false;
+                        this.shutting_down = false;
+                        this.message(error.to_string(), true, cx);
+                        return;
+                    }
                     if let Some(install) = this.pending_install.take()
                         && let Err(error) = install.launch()
                     {
@@ -652,6 +660,7 @@ impl ImgDesktop {
                     cx.quit();
                 }
                 Err(error) => {
+                    this.pending_restore = false;
                     this.pending_install = None;
                     this.shutting_down = false;
                     this.persistence_failed(error, cx);

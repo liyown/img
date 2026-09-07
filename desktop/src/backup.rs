@@ -28,14 +28,21 @@ pub fn schedule(root: &Path, source: &Path, credentials: bool) -> Result<()> {
     Ok(())
 }
 pub fn pending(root: &Path) -> bool {
-    root.join("restore-request.json").is_file()
+    root.join("restore-ready.json").is_file()
+}
+pub fn commit(root: &Path) -> Result<()> {
+    std::fs::rename(
+        root.join("restore-request.json"),
+        root.join("restore-ready.json"),
+    )?;
+    Ok(())
 }
 pub fn apply_pending(root: &Path) -> Result<()> {
     if !pending(root) {
         return Ok(());
     }
     let request: Request =
-        serde_json::from_slice(&std::fs::read(root.join("restore-request.json"))?)?;
+        serde_json::from_slice(&std::fs::read(root.join("restore-ready.json"))?)?;
     // A restart can reach this point before the previous process releases its lock.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
     loop {
@@ -71,7 +78,7 @@ pub fn apply_pending(root: &Path) -> Result<()> {
         root.join("restore-result.json"),
         serde_json::to_vec(&(message, error))?,
     )?;
-    std::fs::remove_file(root.join("restore-request.json")).context("无法清除恢复请求")?;
+    std::fs::remove_file(root.join("restore-ready.json")).context("无法清除恢复请求")?;
     Ok(())
 }
 #[cfg(test)]
@@ -98,6 +105,8 @@ mod tests {
             serde_json::to_vec(&request).unwrap(),
         )
         .unwrap();
+        assert!(!pending(&root));
+        commit(&root).unwrap();
         apply_pending(&root).unwrap();
         assert_eq!(std::fs::read(config).unwrap(), b"version=1");
         assert!(!pending(&root));

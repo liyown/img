@@ -112,7 +112,11 @@ impl ImgDesktop {
         }
     }
     fn choose_backup(&mut self, restore: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if self.workflow_busy || self.shutting_down {
+        if self.workflow_busy
+            || self.shutting_down
+            || self.install_preparing
+            || self.pending_install.is_some()
+        {
             return;
         }
         self.workflow_busy = true;
@@ -147,7 +151,7 @@ impl ImgDesktop {
                 let _=this.update(cx,|this,cx|{
                     this.workflow_busy=false;
                     match crate::backup::schedule(&this.root,&path,choice==2) {
-                        Ok(())=>this.begin_shutdown(cx),
+                        Ok(())=>{this.pending_restore=true;this.begin_shutdown(cx);},
                         Err(e)=>this.message(e.to_string(),true,cx),
                     }
                 });

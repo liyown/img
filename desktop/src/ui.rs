@@ -79,6 +79,7 @@ enum Filter {
 pub struct ImgDesktop {
     shutting_down: bool,
     shutdown_saved: bool,
+    pending_restore: bool,
     visible: bool,
     quick_capture: bool,
     notification_batches: HashMap<String, Vec<String>>,
@@ -403,6 +404,7 @@ impl ImgDesktop {
         Self {
             shutting_down: false,
             shutdown_saved: false,
+            pending_restore: false,
             visible: true,
             quick_capture: false,
             notification_batches: HashMap::new(),
@@ -1713,7 +1715,7 @@ impl ImgDesktop {
         cx.notify();
     }
     fn install_application(&mut self, update: Option<(PathBuf, String)>, cx: &mut Context<Self>) {
-        if self.install_preparing || self.shutting_down {
+        if self.install_preparing || self.shutting_down || self.workflow_busy {
             return;
         }
         if self.queue.batch.is_some()
