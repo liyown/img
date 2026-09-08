@@ -32,6 +32,16 @@ pub fn installed() -> bool {
             })
     })
 }
+/// Development and isolated QA bundles must not offer installation as the public app.
+/// Cache metadata once; this is queried while rendering settings.
+pub fn can_install_current() -> bool {
+    static AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *AVAILABLE.get_or_init(|| {
+        running_app().is_some_and(|app| {
+            plist(&app, "CFBundleIdentifier").is_ok_and(|id| id == "dev.img.desktop")
+        })
+    })
+}
 fn destination() -> Result<PathBuf> {
     if installed() {
         return running_app().context("找不到当前应用");

@@ -114,7 +114,7 @@ Install the CLI and configure a default storage provider first. Credentials come
 
 Add your existing provider settings to img, verify an upload and its public URL, then update your editor's upload command. Changing the client does not affect links in existing articles.
 
-Automatic imports of other clients' configuration and history are not supported. The gallery manages local records; clearing them preserves original files and remote images. Remote file management and PicGo plugin compatibility are outside the current scope.
+The stable release uses manual configuration. The main branch adds PicGo / PicList configuration import and remote management, currently under release verification. Importing client history and running PicGo plugins are outside the supported scope. See the [migration and management guide](docs/workflows.en.md).
 
 ## Storage and formats
 

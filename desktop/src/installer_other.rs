@@ -6,6 +6,9 @@ use std::{
 pub struct PreparedInstall {
     package: PathBuf,
 }
+pub fn can_install_current() -> bool {
+    false
+}
 pub fn installed() -> bool {
     true
 }

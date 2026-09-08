@@ -665,5 +665,6 @@
   "终端命令已添加：{}。可在终端运行 img --help。": "Command added: {}. Run img --help in your terminal.",
   "终端命令已添加：{}。若终端提示找不到 img，请将所在目录加入 PATH 后重新打开终端。": "Command added: {}. If your terminal cannot find img, add its directory to PATH and reopen the terminal.",
   "目标位置已有其他 img 命令，未覆盖。可继续使用已有版本，或运行内置 CLI 的 install-cli --dir 指定其他目录。": "Another img command already exists at this location. It was not overwritten. Keep using it, or run the bundled CLI with install-cli --dir to choose another directory.",
-  "无法写入终端命令目录，请检查目录权限和磁盘空间后重试。": "Cannot write to the command directory. Check its permissions and available disk space, then retry."
+  "无法写入终端命令目录，请检查目录权限和磁盘空间后重试。": "Cannot write to the command directory. Check its permissions and available disk space, then retry.",
+  "当前为开发或验收应用，请从版本页面下载正式安装包。": "This is a development or test app. Download an official package from the releases page."
 }

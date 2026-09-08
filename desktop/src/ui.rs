@@ -1871,16 +1871,31 @@ impl ImgDesktop {
                 12.,
                 MUTED,
             ))
-            .when(!crate::installer::installed(), |body| {
-                body.child(
-                    Button::new("install-application")
-                        .label(crate::i18n::text("安装到应用程序并重新打开"))
-                        .primary()
-                        .small()
-                        .disabled(self.install_preparing || self.shutting_down)
-                        .on_click(cx.listener(|this, _, _, cx| this.install_application(None, cx))),
-                )
-            })
+            .when(
+                !crate::installer::installed() && crate::installer::can_install_current(),
+                |body| {
+                    body.child(
+                        Button::new("install-application")
+                            .label(crate::i18n::text("安装到应用程序并重新打开"))
+                            .primary()
+                            .small()
+                            .disabled(self.install_preparing || self.shutting_down)
+                            .on_click(
+                                cx.listener(|this, _, _, cx| this.install_application(None, cx)),
+                            ),
+                    )
+                },
+            )
+            .when(
+                !crate::installer::installed() && !crate::installer::can_install_current(),
+                |body| {
+                    body.child(label(
+                        "当前为开发或验收应用，请从版本页面下载正式安装包。",
+                        12.,
+                        MUTED,
+                    ))
+                },
+            )
             .child(
                 div()
                     .flex()
