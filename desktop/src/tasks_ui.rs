@@ -24,6 +24,7 @@ pub(super) struct TaskPanel {
     notice: Option<String>,
     uploads: usize,
     stopping: bool,
+    references: Option<Entity<super::references_ui::References>>,
 }
 impl TaskPanel {
     pub fn new(root: PathBuf, engine: PathBuf, cx: &mut Context<Self>) -> Self {
@@ -47,15 +48,47 @@ impl TaskPanel {
             notice: None,
             uploads: 0,
             stopping: false,
+            references: None,
         }
     }
-    pub fn stop(&mut self) -> Option<Control> {
+    pub fn stop(&mut self, cx: &mut Context<Self>) -> Vec<Control> {
         self.stopping = true;
         let control = self.control.take();
         if let Some(control) = &control {
             control.stop(engine::CANCEL);
         }
-        control
+        let mut controls = control.into_iter().collect::<Vec<_>>();
+        if let Some(panel) = &self.references {
+            controls.extend(panel.update(cx, |panel, _| panel.stop()));
+        }
+        controls
+    }
+    pub fn open_references(
+        &mut self,
+        migration: Option<String>,
+        task: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let panel = cx.new(|cx| {
+            super::references_ui::References::new(
+                self.root.clone(),
+                self.engine.clone(),
+                migration,
+                task,
+                cx,
+            )
+        });
+        self.references = Some(panel.clone());
+        window.open_dialog(cx, move |dialog, window, _| {
+            dialog
+                .title(crate::i18n::text("文章链接"))
+                .w(px(
+                    (f32::from(window.viewport_size().width) - 70.).clamp(280., 920.)
+                ))
+                .margin_top(px(20.))
+                .child(panel.clone())
+        });
     }
     fn refresh(&mut self, cx: &mut Context<Self>) {
         if self.loading || self.stopping {
@@ -102,6 +135,7 @@ impl TaskPanel {
                         "publish" => "publishing-task",
                         "migrate" => "migration-task",
                         "index" => "index-scope",
+                        "references" => "references-task",
                         _ => "",
                     };
                     let active = !namespace.is_empty()
@@ -147,6 +181,67 @@ impl TaskPanel {
         })
         .detach();
     }
+    fn recover_source(&mut self, task_id: String, input_id: String, cx: &mut Context<Self>) {
+        if self.busy {
+            return;
+        }
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some(crate::i18n::text("选择本地原图")),
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = paths.await
+                && let Some(path) = paths.first()
+            {
+                let path = path.clone();
+                let prepared = this.update(cx, |this, cx| {
+                    this.busy = true;
+                    let control = Control::default();
+                    this.control = Some(control.clone());
+                    cx.notify();
+                    (this.engine.clone(), this.root.clone(), control)
+                });
+                let Ok((engine, root, control)) = prepared else {
+                    return;
+                };
+                let job = cx.background_executor().spawn(async move {
+                    let _completion = control.completion();
+                    (|| -> anyhow::Result<()> {
+                        let mut command = std::process::Command::new(engine);
+                        command
+                            .arg("--config")
+                            .arg(storage::config_path()?)
+                            .args(["migrate", "source", &task_id, &input_id])
+                            .arg(path)
+                            .env("IMG_DATA_DIR", root);
+                        let output = engine::run_json(command, &control.child())?;
+                        anyhow::ensure!(output.stopped == 0, "已取消选择本地原图");
+                        let value: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+                        anyhow::ensure!(
+                            output.success,
+                            "{}",
+                            value["error"].as_str().unwrap_or("无法关联本地原图")
+                        );
+                        Ok(())
+                    })()
+                });
+                let result = job.await;
+                let _ = this.update(cx, |this, cx| {
+                    this.busy = false;
+                    this.control = None;
+                    this.notice = Some(match result {
+                        Ok(()) => "本地原图已关联，点击继续以重试迁移。".into(),
+                        Err(error) => error.to_string(),
+                    });
+                    this.refresh(cx);
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+    }
     fn retry(&mut self, id: String, cx: &mut Context<Self>) {
         if self.busy {
             return;
@@ -166,7 +261,7 @@ impl TaskPanel {
                     .arg(storage::config_path()?)
                     .args(["tasks", "retry", &id])
                     .env("IMG_DATA_DIR", root);
-                let output = engine::run(command, &control.child())?;
+                let output = engine::run_json(command, &control.child())?;
                 if output.stopped != 0 {
                     return Ok("任务已暂停，进度已保留".into());
                 }
@@ -257,6 +352,14 @@ impl Render for TaskPanel {
                             }),
                         )),
                 )
+                .child(
+                    action("task-references", "文章链接")
+                        .ghost()
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            window.close_dialog(cx);
+                            this.open_references(None, None, window, cx);
+                        })),
+                )
                 .when(self.busy, |view| {
                     view.child(action("task-stop", "暂停当前任务").on_click(cx.listener(
                         |this, _, _, _| {
@@ -282,6 +385,7 @@ impl Render for TaskPanel {
                             "migrate" => "跨图床复制",
                             "index" => "远端索引",
                             "delete" => "远端删除",
+                            "references" => "文章链接",
                             _ => "任务",
                         };
                         let resumable = matches!(
@@ -404,6 +508,26 @@ impl Render for TaskPanel {
                             MUTED
                         },
                     ));
+                    if row.kind == "migrate"
+                        && file["success"] != true
+                        && let Some(input_id) = file["input_id"].as_str()
+                    {
+                        let input_id = input_id.to_owned();
+                        let task_id = row.id.trim_start_matches("migrate:").to_owned();
+                        detail = detail.child(
+                            action(
+                                SharedString::from(format!("recover-source-{index}")),
+                                "选择本地原图",
+                            )
+                            .ghost()
+                            .disabled(self.busy || row.active)
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    this.recover_source(task_id.clone(), input_id.clone(), cx)
+                                },
+                            )),
+                        );
+                    }
                 }
             }
             let id = row.id.clone();
@@ -432,6 +556,20 @@ impl Render for TaskPanel {
                             if !text.is_empty() {
                                 cx.write_to_clipboard(ClipboardItem::new_string(text));
                             }
+                        })),
+                );
+            }
+            if row.kind == "references" || row.kind == "migrate" {
+                let migration = (row.kind == "migrate")
+                    .then(|| row.id.trim_start_matches("migrate:").to_owned());
+                let task = (row.kind == "references")
+                    .then(|| row.id.trim_start_matches("references:").to_owned());
+                actions = actions.child(
+                    action("task-reference-preview", "查看文章修改")
+                        .ghost()
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            window.close_dialog(cx);
+                            this.open_references(migration.clone(), task.clone(), window, cx);
                         })),
                 );
             }

@@ -14,6 +14,48 @@ pub(super) struct PublishDialog {
     control: Option<Control>,
 }
 impl Tools {
+    pub(super) fn reset_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy {
+            return;
+        }
+        self.drag = None;
+        self.crop_ratio = None;
+        for (key, value) in [
+            ("quality", "85"),
+            ("target", "200"),
+            ("jpeg_bg", "#ffffff"),
+            ("width", "1200"),
+            ("height", "0"),
+            ("edge", "1600"),
+        ] {
+            self.fields[key].update(cx, |field, cx| field.set_value(value, window, cx));
+        }
+        self.apply_preset(ProcessingPlan::default(), window, cx);
+    }
+    pub(super) fn publish_current(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy || self.importing || self.crop_editing || self.input.is_none() {
+            return;
+        }
+        if self.task_id.is_some() && self.result.is_some() {
+            self.publish(window, cx);
+            return;
+        }
+        match self.recipe(false, cx) {
+            Ok(plan) => self.run_export(
+                self.root
+                    .join("tool-results")
+                    .join(uuid::Uuid::new_v4().to_string()),
+                plan,
+                self.manifest(),
+                Some(window.window_handle()),
+                cx,
+            ),
+            Err(error) => {
+                self.error = Some(error.to_string());
+                cx.notify();
+            }
+        }
+    }
     pub(super) fn publish(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(task) = self.task_id.clone() else {
             return;
@@ -119,7 +161,7 @@ impl PublishDialog {
                         &prefix,
                     ]);
                 }
-                let output = engine::run(command, &control.child())?;
+                let output = engine::run_json(command, &control.child())?;
                 anyhow::ensure!(output.stopped == 0, "上传已暂停，可在任务面板继续");
                 let result: serde_json::Value = serde_json::from_slice(&output.stdout)
                     .map_err(|_| anyhow::anyhow!("上传失败，请检查存储源和连接"))?;
@@ -158,7 +200,7 @@ impl Render for PublishDialog {
         if self.report.is_none() {
             body = body
                 .child(label(
-                    "图片已按当前参数处理。上传将保留这些像素，使用新的远端路径。",
+                    "处理结果将上传为新图片，原文件保持不变。",
                     12.,
                     MUTED,
                 ))
@@ -324,6 +366,7 @@ impl PresetDialog {
                         state.fields.get("name").and_then(|value| value.as_str()),
                         state.fields.get("plan"),
                     ) && let Ok(plan) = serde_json::from_value::<ProcessingPlan>(plan.clone())
+                        && supports_recipe(&plan)
                     {
                         rows.push((entity, name.to_owned(), plan));
                     }
@@ -379,7 +422,7 @@ impl Render for PresetDialog {
         }
         body = body
             .child(list)
-            .child(label("保存通用参数；每张图片的标注单独保留。", 12., MUTED))
+            .child(label("保存格式、压缩和尺寸设置，供下次使用。", 12., MUTED))
             .child(Input::new(&self.name));
         if let Some(error) = &self.error {
             body = body.child(label(error.clone(), 12., RED));
@@ -440,6 +483,11 @@ impl Render for PresetDialog {
 }
 impl Tools {
     fn apply_preset(&mut self, plan: ProcessingPlan, window: &mut Window, cx: &mut Context<Self>) {
+        if !supports_recipe(&plan) {
+            self.error = Some("此预设包含当前工具不支持的操作".into());
+            cx.notify();
+            return;
+        }
         let set = |this: &mut Self,
                    key: &str,
                    value: String,
@@ -478,63 +526,6 @@ impl Tools {
         } else {
             0
         };
-        self.split_mode = match &plan.split {
-            Some(plan::Split::Height { height }) => {
-                set(self, "split_height", height.to_string(), window, cx);
-                1
-            }
-            Some(plan::Split::Grid { rows, columns }) => {
-                set(self, "rows", rows.to_string(), window, cx);
-                set(self, "cols", columns.to_string(), window, cx);
-                2
-            }
-            None => 0,
-        };
-        if let Some(stitch) = &plan.stitch {
-            set(
-                self,
-                "stitch_bg",
-                format!(
-                    "#{:02x}{:02x}{:02x}",
-                    stitch.background[0], stitch.background[1], stitch.background[2]
-                ),
-                window,
-                cx,
-            );
-            set(self, "spacing", stitch.spacing.to_string(), window, cx);
-            set(
-                self,
-                "cross_size",
-                stitch.cross_size.unwrap_or(0).to_string(),
-                window,
-                cx,
-            );
-        }
-        if let Some(mark) = &plan.watermark {
-            set(self, "margin", mark.margin.to_string(), window, cx);
-            set(
-                self,
-                "watermark_scale",
-                format!("{}", (mark.scale * 100.).round()),
-                window,
-                cx,
-            );
-            set(
-                self,
-                "opacity",
-                format!("{}", (mark.opacity * 100.).round()),
-                window,
-                cx,
-            );
-            if self
-                .watermark
-                .as_ref()
-                .is_none_or(|(_, hash)| hash != &mark.resource)
-            {
-                self.watermark = None;
-                self.error = Some("此预设需要水印图片，请在本机选择同一张图片。".into());
-            }
-        }
         self.plan = plan;
         self.crop_editing = false;
         self.schedule_preview(cx);

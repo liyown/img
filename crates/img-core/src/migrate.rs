@@ -50,6 +50,51 @@ pub struct ItemResult {
 pub struct Report {
     pub plan: MigrationPlan,
     pub files: Vec<ItemResult>,
+    #[serde(default)]
+    pub local_sources: std::collections::BTreeMap<String, crate::processing::batch::Input>,
+}
+/// Attach a user-selected recovery source without starting any remote operation.
+pub fn set_local_source(
+    catalog: &Catalog,
+    task_id: &str,
+    input_id: &str,
+    path: &std::path::Path,
+    limit: u64,
+) -> Result<Report> {
+    ensure!(
+        uuid::Uuid::parse_str(task_id).is_ok(),
+        "invalid migration task ID"
+    );
+    let _lock = img_records::remote_lock::acquire(&catalog.root, "migration-task", task_id, true)?;
+    let mut report: Report = serde_json::from_str(&catalog.task(&format!("migrate:{task_id}"))?)?;
+    report.plan.validate()?;
+    let source = report
+        .plan
+        .source
+        .targets
+        .iter()
+        .find(|target| target.input_id == input_id)
+        .context("image is not in this migration")?;
+    let result = report
+        .files
+        .iter()
+        .find(|file| file.input_id == input_id)
+        .context("migration result missing")?;
+    ensure!(!result.success, "this migration item is already complete");
+    let snapshot = crate::processing::batch::Input::snapshot(path, limit)?;
+    if let Some(hash) = result
+        .content_hash
+        .as_ref()
+        .or(source.content_hash.as_ref())
+    {
+        ensure!(
+            hash == &snapshot.content_hash,
+            "selected image does not match the known original hash"
+        );
+    }
+    report.local_sources.insert(input_id.into(), snapshot);
+    store(catalog, &report)?;
+    Ok(report)
 }
 impl Report {
     pub fn mapping(&self) -> Vec<serde_json::Value> {
@@ -262,6 +307,7 @@ pub fn apply(
     } else {
         Report {
             plan: plan.clone(),
+            local_sources: Default::default(),
             files: plan
                 .source
                 .targets
@@ -338,7 +384,22 @@ pub fn apply(
                 );
                 bytes
             } else {
-                source_bytes(catalog, cfg, source, cfg.upload.max_size, control)?
+                if let Some(local) = report.local_sources.get(&source.input_id) {
+                    let bytes = media::read_image(&local.path, cfg.upload.max_size)?;
+                    ensure!(
+                        digest(&bytes) == local.content_hash,
+                        "selected local original changed; choose it again"
+                    );
+                    if let Some(hash) = &source.content_hash {
+                        ensure!(
+                            hash == &local.content_hash,
+                            "local original does not match the known image hash"
+                        );
+                    }
+                    bytes
+                } else {
+                    source_bytes(catalog, cfg, source, cfg.upload.max_size, control)?
+                }
             };
             let content_type = media::inspect(&bytes, cfg.upload.max_size)?.to_owned();
             let hash = digest(&bytes);
@@ -625,6 +686,34 @@ mod tests {
             self.running.store(false, Ordering::SeqCst);
             self.thread.take().unwrap().join().unwrap();
         }
+    }
+    #[test]
+    fn local_recovery_requires_known_hash_and_preserves_the_chosen_file() {
+        let storage = Storage::new();
+        let root = tempfile::tempdir().unwrap();
+        let mut catalog = Catalog::open(root.path()).unwrap();
+        let id = storage.source(&mut catalog, "missing.png");
+        let mut plan = storage.plan(&catalog, std::slice::from_ref(&id));
+        let bytes = storage.files.lock().unwrap().remove("missing.png").unwrap();
+        plan.source.targets[0].content_hash = Some(digest(&bytes));
+        let failed = apply(&mut catalog, &storage.config, &plan, &Control::default()).unwrap();
+        assert!(!failed.files[0].success);
+        assert_eq!(storage.puts(), 0);
+        let file = root.path().join("reselected.png");
+        std::fs::write(&file, b"\x89PNG\r\n\x1a\nwrong").unwrap();
+        assert!(set_local_source(&catalog, &plan.task_id, &id, &file, 1 << 20).is_err());
+        std::fs::write(&file, &bytes).unwrap();
+        set_local_source(&catalog, &plan.task_id, &id, &file, 1 << 20).unwrap();
+        assert_eq!(storage.puts(), 0);
+        let done = apply(&mut catalog, &storage.config, &plan, &Control::default()).unwrap();
+        assert!(done.files[0].success);
+        assert_eq!(storage.puts(), 1);
+        assert_eq!(std::fs::read(&file).unwrap(), bytes);
+        assert!(catalog.sync_events(None).unwrap().iter().all(|event| {
+            !serde_json::to_string(event)
+                .unwrap()
+                .contains(file.to_str().unwrap())
+        }));
     }
     #[test]
     fn uncertain_upload_retry_reads_back_without_duplicate_and_preserves_new_source_version() {

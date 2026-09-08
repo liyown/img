@@ -9,6 +9,10 @@ publish = false
 webp = { version = "0.3.1", default-features = false }
 ab_glyph = "0.2"
 tiny-skia = "0.11"
+pulldown-cmark = { version = "0.13", default-features = false }
+html-escape = "0.2"
+# Use the optimized Rust DEFLATE backend for PNG, including the shared image decoder.
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 img-records = { path = "../img-records" }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }

@@ -153,7 +153,9 @@ fn encode(image: &RgbaImage, encoding: &Encoding, quality: u8) -> Result<Vec<u8>
             let mut output = vec![];
             image::codecs::png::PngEncoder::new_with_quality(
                 &mut output,
-                image::codecs::png::CompressionType::Best,
+                // Balanced lossless encoding keeps interactive previews practical. Exports
+                // use these same bytes; PNG target size never trades away pixels or dimensions.
+                image::codecs::png::CompressionType::Default,
                 image::codecs::png::FilterType::Adaptive,
             )
             .write_image(

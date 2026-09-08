@@ -19,11 +19,11 @@ mod shortcut_settings;
 mod storage;
 mod theme;
 mod thumbnails;
-mod tool_editor;
 mod ui;
 mod updates;
 mod upload_options;
 mod upload_settings;
+mod window_chrome;
 
 use gpui_kit::{
     component::{Root, TitleBar},
@@ -127,14 +127,25 @@ fn main() -> anyhow::Result<()> {
                 MenuItem::action("退出 img", Quit),
             ],
         }]);
+        let display_size = cx.primary_display().map(|display| display.bounds().size);
         let size = size(
-            px(if compact { 960. } else { 1280. }),
+            px(if compact {
+                960.
+            } else if tall {
+                1280.
+            } else {
+                display_size.map_or(1360., |size| {
+                    (f32::from(size.width) - 80.).clamp(960., 1360.)
+                })
+            }),
             px(if compact {
                 700.
             } else if tall {
                 1800.
             } else {
-                900.
+                display_size.map_or(900., |size| {
+                    (f32::from(size.height) - 100.).clamp(700., 900.)
+                })
             }),
         );
         cx.open_window(

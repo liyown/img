@@ -38,37 +38,13 @@ impl Tools {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.preview_busy
-            || self.result_selected.is_some()
-            || (!self.crop_editing && self.tool != Tool::Annotate)
-        {
+        if self.busy || self.preview_busy || !self.crop_editing {
             return;
         }
         let Some(point) = self.point_on_image(event.position, false) else {
             return;
         };
         self.focus.focus(window, cx);
-        if !self.crop_editing && self.mark_tool == MarkTool::Select {
-            self.selected_annotation = self.edits().and_then(|edits| {
-                edits
-                    .annotations
-                    .iter()
-                    .rev()
-                    .find(|annotation| {
-                        let (x, y, right, bottom) = crate::tool_editor::bounds(annotation);
-                        point.x >= x - 6.
-                            && point.x <= right + 6.
-                            && point.y >= y - 6.
-                            && point.y <= bottom + 6.
-                    })
-                    .map(|annotation| annotation.id.clone())
-            });
-            if self.selected_annotation.is_none() {
-                self.drag = None;
-                cx.notify();
-                return;
-            }
-        }
         self.drag = Some((point, point));
         cx.notify();
     }
@@ -124,65 +100,7 @@ impl Tools {
             } else {
                 cx.notify();
             }
-            return;
         }
-        if self.mark_tool == MarkTool::Select {
-            if let Some(id) = self.selected_annotation.clone()
-                && let Some(edits) = self.edits_mut()
-            {
-                edits.move_annotation(&id, to.x - from.x, to.y - from.y);
-            }
-            self.schedule_preview(cx);
-            return;
-        }
-        let shape = match self.mark_tool {
-            MarkTool::Arrow => Shape::Arrow { from, to },
-            MarkTool::Rectangle => Shape::Rectangle { from, to },
-            MarkTool::Redact => Shape::Redact { from, to },
-            MarkTool::Text => Shape::Text {
-                at: from,
-                text: self.value("text", cx),
-                size: self.number("font_size", "字号", cx).unwrap_or(32) as f32,
-            },
-            MarkTool::Step => Shape::Step {
-                at: from,
-                number: self
-                    .edits()
-                    .map(|edits| {
-                        edits
-                            .annotations
-                            .iter()
-                            .filter(|a| matches!(a.shape, Shape::Step { .. }))
-                            .count()
-                            + 1
-                    })
-                    .unwrap_or(1)
-                    .min(9999) as u16,
-                radius: 18.,
-            },
-            MarkTool::Select => return,
-        };
-        let color = match self.color("color", cx) {
-            Ok(color) => color,
-            Err(error) => {
-                self.error = Some(error.to_string());
-                cx.notify();
-                return;
-            }
-        };
-        let annotation = Annotation {
-            id: uuid::Uuid::new_v4().to_string(),
-            shape,
-            color,
-            stroke_width: self.number("stroke", "线宽", cx).unwrap_or(4) as f32,
-        };
-        self.selected_annotation = Some(annotation.id.clone());
-        if let Some(edits) = self.edits_mut() {
-            let mut annotations = edits.annotations.clone();
-            annotations.push(annotation);
-            edits.replace(annotations);
-        }
-        self.schedule_preview(cx);
     }
     pub(super) fn canvas(&self, cx: &Context<Self>) -> AnyElement {
         let bounds = self.bounds.clone();
@@ -197,58 +115,17 @@ impl Tools {
                     return;
                 };
                 let this = this.read(cx);
-                let Some((x, y, width, height, scale)) = this.image_geometry() else {
+                let Some((x, y, _, _, scale)) = this.image_geometry() else {
                     return;
                 };
-                if this.tool == Tool::Split
-                    && this.result_selected.is_none()
-                    && !this.crop_editing
-                    && let Ok(plan) = this.recipe(true, cx)
-                {
-                    let mut lines = Vec::new();
-                    match plan.split {
-                        Some(plan::Split::Height { height: tile }) => {
-                            for y in (tile..height as u32).step_by(tile as usize) {
-                                lines.push((0., y as f32, width, y as f32));
-                            }
-                        }
-                        Some(plan::Split::Grid { rows, columns }) => {
-                            for row in 1..rows {
-                                let y = (height as u32 * row / rows) as f32;
-                                lines.push((0., y, width, y));
-                            }
-                            for col in 1..columns {
-                                let x = (width as u32 * col / columns) as f32;
-                                lines.push((x, 0., x, height));
-                            }
-                        }
-                        None => {}
-                    }
-                    for (left, top, right, bottom) in lines {
-                        let mut path = PathBuilder::stroke(px(1.5));
-                        path.move_to(point(px(x + left * scale), px(y + top * scale)));
-                        path.line_to(point(px(x + right * scale), px(y + bottom * scale)));
-                        if let Ok(path) = path.build() {
-                            window.paint_path(path, rgb(0x3b82f6));
-                        }
-                    }
-                }
-                let rect = if let Some((from, to)) = this.drag {
-                    Some((
+                let rect = this.drag.map(|(from, to)| {
+                    (
                         from.x.min(to.x),
                         from.y.min(to.y),
                         from.x.max(to.x),
                         from.y.max(to.y),
-                    ))
-                } else {
-                    this.selected_annotation.as_ref().and_then(|id| {
-                        this.edits()?
-                            .annotations
-                            .iter()
-                            .find(|a| &a.id == id)
-                            .map(crate::tool_editor::bounds)
-                    })
-                };
+                    )
+                });
                 if let Some((left, top, right, bottom)) = rect {
                     let mut path = PathBuilder::stroke(px(1.5));
                     path.move_to(point(px(x + left * scale), px(y + top * scale)));
@@ -269,12 +146,9 @@ impl Tools {
             .id("tool-preview-canvas")
             .relative()
             .flex_1()
-            .min_h(px(180.))
+            .min_h_0()
             .w_full()
             .overflow_hidden()
-            .rounded(px(9.))
-            .border_1()
-            .border_color(crate::theme::color(BORDER))
             .bg(crate::theme::color(CANVAS))
             .track_focus(&self.focus)
             .when_some(self.preview.as_ref(), |view, preview| {
@@ -315,42 +189,9 @@ impl Tools {
                 cx.listener(|this, _, _, cx| this.pointer_up(cx)),
             )
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                let key = event.keystroke.key.as_str();
-                let modifiers = event.keystroke.modifiers;
-                if (modifiers.platform || modifiers.control) && key == "z" {
-                    if let Some(edits) = this.edits_mut() {
-                        if modifiers.shift {
-                            edits.redo();
-                        } else {
-                            edits.undo();
-                        }
-                    }
-                    this.schedule_preview(cx);
-                    cx.stop_propagation();
-                } else if let Some(id) = this.selected_annotation.clone() {
-                    let step = if modifiers.shift { 10. } else { 1. };
-                    let offset = match key {
-                        "left" => Some((-step, 0.)),
-                        "right" => Some((step, 0.)),
-                        "up" => Some((0., -step)),
-                        "down" => Some((0., step)),
-                        _ => None,
-                    };
-                    if let Some(edits) = this.edits_mut() {
-                        if let Some((dx, dy)) = offset {
-                            edits.move_annotation(&id, dx, dy);
-                        } else if matches!(key, "backspace" | "delete") {
-                            let annotations = edits
-                                .annotations
-                                .iter()
-                                .filter(|a| a.id != id)
-                                .cloned()
-                                .collect();
-                            edits.replace(annotations);
-                        } else {
-                            return;
-                        }
-                    }
+                if event.keystroke.key == "escape" && this.crop_editing {
+                    this.crop_editing = false;
+                    this.drag = None;
                     this.schedule_preview(cx);
                     cx.stop_propagation();
                 }

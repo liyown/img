@@ -13,6 +13,8 @@ mod performance;
 mod queue;
 #[path = "quick_upload.rs"]
 mod quick_upload;
+#[path = "references_ui.rs"]
+mod references_ui;
 #[path = "remote_ui.rs"]
 mod remote_ui;
 #[path = "sync_ui.rs"]
@@ -77,7 +79,8 @@ enum Page {
     Library,
     History,
     Sources,
-    Tools,
+    Convert,
+    Geometry,
     Settings,
 }
 #[derive(Clone, Copy, PartialEq)]
@@ -426,11 +429,29 @@ impl ImgDesktop {
             window,
             |this, _, event: &catalog_ui::PreferenceChanged, window, cx| {
                 match event {
-                    catalog_ui::PreferenceChanged::Tools { paths, sources } => {
+                    catalog_ui::PreferenceChanged::References(id) => {
+                        this.tasks.update(cx, |tasks, cx| {
+                            tasks.open_references(Some(id.clone()), None, window, cx)
+                        });
+                        return;
+                    }
+                    catalog_ui::PreferenceChanged::Tools {
+                        paths,
+                        sources,
+                        geometry,
+                    } => {
                         this.tools.update(cx, |tools, cx| {
                             tools.add_paths(paths.clone(), sources.clone(), cx)
                         });
-                        this.navigate(Page::Tools, window, cx);
+                        this.navigate(
+                            if *geometry {
+                                Page::Geometry
+                            } else {
+                                Page::Convert
+                            },
+                            window,
+                            cx,
+                        );
                         return;
                     }
                     catalog_ui::PreferenceChanged::Format(format) => {
@@ -663,6 +684,10 @@ impl ImgDesktop {
             self.catalog.update(cx, |catalog, cx| catalog.leave(cx));
             self.selection.finish();
         }
+        if matches!(page, Page::Convert | Page::Geometry) {
+            self.tools
+                .update(cx, |tools, cx| tools.set_tool(page == Page::Geometry, cx));
+        }
         self.page = page;
         self.filter = Filter::All;
         self.search.update(cx, |s, cx| s.set_value("", window, cx));
@@ -670,7 +695,7 @@ impl ImgDesktop {
         cx.notify();
     }
     fn pick_files(&mut self, _: &ChooseFiles, _: &mut Window, cx: &mut Context<Self>) {
-        if self.page == Page::Tools {
+        if matches!(self.page, Page::Convert | Page::Geometry) {
             self.tools.update(cx, |tools, cx| tools.choose(cx));
             return;
         }
@@ -767,7 +792,7 @@ impl ImgDesktop {
         cx.notify();
     }
     fn paste_image(&mut self, _: &PasteImage, _: &mut Window, cx: &mut Context<Self>) {
-        if self.page == Page::Tools {
+        if matches!(self.page, Page::Convert | Page::Geometry) {
             self.tools.update(cx, |tools, cx| tools.paste(cx));
             return;
         }
@@ -1159,7 +1184,8 @@ impl ImgDesktop {
                 "upload-simple",
                 Some(self.queue.items.len()),
             ),
-            (Page::Tools, "图片工具", "sliders-horizontal", None),
+            (Page::Convert, "转换与压缩", "sliders-horizontal", None),
+            (Page::Geometry, "尺寸与裁剪", "scissors", None),
             (Page::Sources, "存储源", "folder-open", None),
             (Page::Settings, "设置", "gear", None),
         ] {
@@ -1399,7 +1425,8 @@ impl ImgDesktop {
             Page::Library => ("图库", "image"),
             Page::History => ("历史记录", "clock-counter-clockwise"),
             Page::Sources => ("存储源", "folder-open"),
-            Page::Tools => ("图片工具", "sliders-horizontal"),
+            Page::Convert => ("转换与压缩", "sliders-horizontal"),
+            Page::Geometry => ("尺寸与裁剪", "scissors"),
             Page::Settings => ("设置", "gear"),
         };
         let chrome_button = |id, label: &str, symbol| {
@@ -1505,13 +1532,8 @@ impl ImgDesktop {
                         |row| row.child(provider),
                     )
                     .child(
-                        Button::new("open-tasks")
-                            .ghost()
-                            .small()
-                            .child(icon("clock-counter-clockwise", 16.))
-                            .accessibility_label(crate::i18n::text("任务"))
-                            .tooltip(crate::i18n::text("任务"))
-                            .on_click(cx.listener(|this, _, window, cx| {
+                        chrome_button("open-tasks", "任务", "clock-counter-clockwise").on_click(
+                            cx.listener(|this, _, window, cx| {
                                 let panel = this.tasks.clone();
                                 window.open_dialog(cx, move |dialog, window, _| {
                                     dialog
@@ -1520,7 +1542,8 @@ impl ImgDesktop {
                                             .clamp(280., 700.)))
                                         .child(panel.clone())
                                 });
-                            })),
+                            }),
+                        ),
                     ),
             )
             .into_any_element()
@@ -2337,7 +2360,7 @@ impl ImgDesktop {
         if self.page == Page::Library && !self.reference {
             return self.catalog.clone().into_any_element();
         }
-        if self.page == Page::Tools {
+        if matches!(self.page, Page::Convert | Page::Geometry) {
             return self.tools.clone().into_any_element();
         }
         if self.page == Page::Sources {
@@ -2571,6 +2594,8 @@ impl ImgDesktop {
                 .child(label(
                     if self.preparing {
                         "正在读取图片…".into()
+                    } else if matches!(self.page, Page::Convert | Page::Geometry) {
+                        self.tools.read(cx).status()
                     } else if self.page == Page::Library && !self.reference {
                         format!(
                             "已索引 {} 张图片 · 当前结果 {} 项",
@@ -2683,9 +2708,10 @@ impl Render for ImgDesktop {
                     Page::Library => 0.,
                     Page::Queue => 1.,
                     Page::History => 1.,
-                    Page::Tools => 2.,
-                    Page::Sources => 3.,
-                    Page::Settings => 4.,
+                    Page::Convert => 2.,
+                    Page::Geometry => 3.,
+                    Page::Sources => 4.,
+                    Page::Settings => 5.,
                 });
         let active_y = gpui_kit::base::spring(
             "sidebar-selection",
@@ -2778,6 +2804,7 @@ impl Render for ImgDesktop {
                     })
                     .child(main),
             )
+            .children(crate::window_chrome::resize_cursors(window))
             .into_any_element()
     }
 }

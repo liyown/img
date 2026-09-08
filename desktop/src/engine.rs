@@ -80,6 +80,13 @@ pub struct ProcessOutput {
 // Own and reap the child even when its UI task is dropped. Never pipe credentials
 // to the terminal; stderr is consumed only as bounded structured progress data.
 pub fn run(mut command: Command, control: &Control) -> Result<ProcessOutput> {
+    run_bounded(&mut command, control, 2 << 20)
+}
+/// Structured batch reports may include thousands of results; keep a separate explicit bound.
+pub fn run_json(mut command: Command, control: &Control) -> Result<ProcessOutput> {
+    run_bounded(&mut command, control, 64 << 20)
+}
+fn run_bounded(command: &mut Command, control: &Control, limit: u64) -> Result<ProcessOutput> {
     struct Finish(Arc<AtomicBool>);
     impl Drop for Finish {
         fn drop(&mut self) {
@@ -111,7 +118,7 @@ pub fn run(mut command: Command, control: &Control) -> Result<ProcessOutput> {
     let mut stderr = child.stderr.take().unwrap();
     let reader = std::thread::spawn(move || {
         let mut bytes = vec![];
-        let _ = (&mut stdout).take(2 * 1024 * 1024).read_to_end(&mut bytes);
+        let _ = (&mut stdout).take(limit + 1).read_to_end(&mut bytes);
         let _ = std::io::copy(&mut stdout, &mut std::io::sink());
         bytes
     });
@@ -148,6 +155,10 @@ pub fn run(mut command: Command, control: &Control) -> Result<ProcessOutput> {
         std::thread::sleep(Duration::from_millis(25));
     };
     let stdout = reader.join().unwrap_or_default();
+    anyhow::ensure!(
+        stdout.len() as u64 <= limit,
+        "任务报告超过显示限制，请使用 CLI 导出完整报告"
+    );
     let _ = events.join();
     Ok(ProcessOutput {
         success: status.success(),

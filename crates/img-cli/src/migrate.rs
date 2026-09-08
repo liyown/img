@@ -9,6 +9,21 @@ pub fn run(config_path: &Path, command: MigrateCommand, control: &Control) -> Re
         let mut catalog = Catalog::open(&img_records::data_dir()?)?;
         catalog.import_legacy()?;
         match command {
+            MigrateCommand::Source {
+                task_id,
+                input_id,
+                file,
+            } => {
+                let report = migrate::set_local_source(
+                    &catalog,
+                    &task_id,
+                    &input_id,
+                    &file,
+                    config.upload.max_size,
+                )?;
+                println!("{}", serde_json::to_string(&report)?);
+                Ok(0)
+            }
             MigrateCommand::Plan {
                 ids,
                 selection,

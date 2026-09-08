@@ -2,6 +2,7 @@ mod args;
 mod library;
 mod migrate;
 mod process;
+mod references;
 mod sync;
 mod tasks;
 use args::RemoteCommand;
@@ -65,6 +66,7 @@ fn normalized_args(mut args: Vec<OsString>) -> Vec<OsString> {
         if ![
             "library",
             "migrate",
+            "references",
             "tasks",
             "presets",
             "sync",
@@ -135,6 +137,7 @@ fn report(
 fn run(cli: Cli, control: &Control) -> Result<i32> {
     let path = cli.config.unwrap_or(config::global_path()?);
     match cli.command {
+        Command::References { command } => return references::run(command, control),
         Command::Migrate { command } => return migrate::run(&path, command, control),
         Command::Sync { command } => return sync::run(&path, command, control),
         Command::Library { command } => return library::run(&path, command, control),

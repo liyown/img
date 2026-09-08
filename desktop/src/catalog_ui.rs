@@ -9,9 +9,11 @@ use img_records::catalog::{Asset, Catalog, CatalogQuery};
 use std::collections::HashSet;
 
 pub(super) enum PreferenceChanged {
+    References(String),
     Tools {
         paths: Vec<PathBuf>,
         sources: HashMap<PathBuf, String>,
+        geometry: bool,
     },
     Format(CopyFormat),
     View(bool),
@@ -600,10 +602,11 @@ impl Library {
         .detach();
         cx.notify();
     }
-    fn tools_from(&mut self, ids: Vec<String>, cx: &mut Context<Self>) {
-        if self.busy || ids.is_empty() {
+    fn tools_from(&mut self, id: String, geometry: bool, cx: &mut Context<Self>) {
+        if self.busy {
             return;
         }
+        let ids = vec![id];
         self.busy = true;
         let root = self.root.clone();
         let engine = self.engine.clone();
@@ -663,7 +666,11 @@ impl Library {
                 this.busy = false;
                 this.control = None;
                 match result {
-                    Ok((paths, sources)) => cx.emit(PreferenceChanged::Tools { paths, sources }),
+                    Ok((paths, sources)) => cx.emit(PreferenceChanged::Tools {
+                        paths,
+                        sources,
+                        geometry,
+                    }),
                     Err(error) => this.notice = Some(error.to_string()),
                 }
                 cx.notify();
@@ -872,14 +879,22 @@ impl Library {
                         .flex()
                         .items_center()
                         .gap(px(8.))
-                        .child(action("detail-tools", "在图片工具中打开").on_click(
-                            move |_, window, cx| {
-                                window.close_dialog(cx);
-                                let _ = parent.update(cx, |this, cx| {
-                                    this.tools_from(vec![asset_id.clone()], cx)
-                                });
-                            },
-                        ))
+                        .children(
+                            [
+                                (false, "detail-convert", "转换与压缩"),
+                                (true, "detail-geometry", "尺寸与裁剪"),
+                            ]
+                            .map(|(geometry, id, title)| {
+                                let parent = parent.clone();
+                                let asset_id = asset_id.clone();
+                                action(id, title).on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    let _ = parent.update(cx, |this, cx| {
+                                        this.tools_from(asset_id.clone(), geometry, cx)
+                                    });
+                                })
+                            }),
+                        )
                         .child(div().flex_1())
                         .child(
                             action("detail-close", "关闭预览")
@@ -1242,28 +1257,11 @@ impl Render for Library {
                                         let weak = cx.weak_entity();
                                         move |menu, _, _| {
                                             let download = weak.clone();
-                                            let tools = weak.clone();
                                             let check = weak.clone();
                                             let copy = weak.clone();
                                             let hide = weak.clone();
                                             let delete = weak.clone();
                                             menu.item(
-                                                PopupMenuItem::new(crate::i18n::text(
-                                                    "在图片工具中打开",
-                                                ))
-                                                .on_click(move |_, _, cx| {
-                                                    let _ = tools.update(cx, |this, cx| {
-                                                        this.tools_from(
-                                                            this.selected
-                                                                .snapshot()
-                                                                .into_iter()
-                                                                .collect(),
-                                                            cx,
-                                                        )
-                                                    });
-                                                }),
-                                            )
-                                            .item(
                                                 PopupMenuItem::new(crate::i18n::text("下载所选"))
                                                     .on_click(move |_, window, cx| {
                                                         let _ = download.update(cx, |this, cx| {

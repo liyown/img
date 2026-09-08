@@ -633,9 +633,9 @@ impl ImgDesktop {
         self.queue
             .auxiliary
             .extend(self.catalog.update(cx, |library, _| library.stop()));
-        if let Some(control) = self.tasks.update(cx, |panel, _| panel.stop()) {
-            self.queue.auxiliary.push(control);
-        }
+        self.queue
+            .auxiliary
+            .extend(self.tasks.update(cx, |panel, cx| panel.stop(cx)));
         if let Some(control) = self.sync_panel.update(cx, |panel, _| panel.stop()) {
             self.queue.auxiliary.push(control);
         }

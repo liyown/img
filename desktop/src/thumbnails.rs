@@ -186,6 +186,11 @@ fn prepare_side(root: &Path, preview: &Path, side: u32) -> anyhow::Result<PathBu
             u64::from(w) * u64::from(h) <= 40_000_000,
             "图片超过 40 MP 预览限制"
         );
+        if side > 512 && w <= side && h <= side {
+            // Tool results are already oriented and encoded by the processing engine.
+            // Avoid decoding and encoding a second PNG merely to display the same pixels.
+            return Ok(original.path.clone());
+        }
         let orientation = decoder.orientation()?;
         let mut image = image::DynamicImage::from_decoder(decoder)?;
         image.apply_orientation(orientation);
@@ -239,6 +244,37 @@ fn prepare_side(root: &Path, preview: &Path, side: u32) -> anyhow::Result<PathBu
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn tool_preview_reuses_encoded_result_and_large_images_still_get_bounded_thumbnails() {
+        let root = tempfile::tempdir().unwrap();
+        let cache = img_records::cache::Cache::open(root.path()).unwrap();
+        for (width, height) in [(1254, 1254), (2000, 1500)] {
+            let mut encoded = std::io::Cursor::new(Vec::new());
+            image::RgbaImage::from_pixel(width, height, image::Rgba([120, 45, 12, 128]))
+                .write_to(&mut encoded, image::ImageFormat::Png)
+                .unwrap();
+            let bytes = encoded.into_inner();
+            let key = cache.put(&bytes).unwrap();
+            let lease = cache.lease(&key).unwrap();
+            let preview = prepare_side(root.path(), &lease.path, 1440).unwrap();
+            if width <= 1440 {
+                assert_eq!(preview, lease.path);
+                assert_eq!(std::fs::read(preview).unwrap(), bytes);
+            } else {
+                assert_ne!(preview, lease.path);
+                assert_eq!(
+                    image::ImageReader::open(preview)
+                        .unwrap()
+                        .with_guessed_format()
+                        .unwrap()
+                        .into_dimensions()
+                        .unwrap(),
+                    (1440, 1080)
+                );
+            }
+            assert_eq!(std::fs::read(&lease.path).unwrap(), bytes);
+        }
+    }
     #[test]
     fn lru_evicts_old_entries_and_never_exceeds_budget() {
         let mut budget = Budget::default();

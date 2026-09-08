@@ -3788,6 +3788,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "html-escape"
+version = "0.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c9356095b4b41197bba32173600e1582792cda618f65d12f68e2e77d273413c5"
+
+[[package]]
 name = "html5ever"
 version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4130,7 +4136,7 @@ checksum = "09e54e57b4c48b40f7aec75635392b12b3421fa26fe8b4332e63138ed278459c"
 
 [[package]]
 name = "img-cli"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -4156,7 +4162,7 @@ dependencies = [
 
 [[package]]
 name = "img-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "ab_glyph",
  "anyhow",
@@ -4166,10 +4172,13 @@ dependencies = [
  "base64",
  "chrono",
  "directories",
+ "flate2",
+ "html-escape",
  "image",
  "img-records",
  "keyring",
  "percent-encoding",
+ "pulldown-cmark",
  "quick-xml",
  "regex",
  "reqwest",
@@ -4190,7 +4199,7 @@ dependencies = [
 
 [[package]]
 name = "img-desktop"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -4228,7 +4237,7 @@ dependencies = [
 
 [[package]]
 name = "img-records"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "directories",
@@ -6166,6 +6175,17 @@ checksum = "4488a4a36b9a4ba6b9334a32a39971f77c1436ec82c38707bce707699cc3bbcb"
 dependencies = [
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "pulldown-cmark"
+version = "0.13.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9f068eba8e7071c5f9511831b44f32c740d5adf574e990f946ddb53db2f314e"
+dependencies = [
+ "bitflags 2.13.1",
+ "memchr",
+ "unicase",
 ]
 
 [[package]]

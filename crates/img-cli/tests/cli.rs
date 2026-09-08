@@ -957,3 +957,47 @@ fn processing_recipe_preview_export_resume_and_presets_keep_originals() {
             .contains("with --recipe")
     );
 }
+
+#[test]
+fn reference_scan_is_read_only_and_apply_requires_explicit_confirmation() {
+    let f = Fixture::new("https://unused.invalid");
+    let articles = f.dir.path().join("articles");
+    std::fs::create_dir(&articles).unwrap();
+    let document = "![pic][id]\n\n[id]: https://old.test/picture.png\n\n```md\n![](https://code.test/p.png)\n```\n";
+    let path = articles.join("article.markdown");
+    std::fs::write(&path, document).unwrap();
+    let plan = parsed(
+        &f.command()
+            .args(["references", "scan"])
+            .arg(&articles)
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(plan["outside_scope"], "unknown");
+    assert_eq!(plan["files"][0]["references"], 1);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), document);
+    let id = plan["task_id"].as_str().unwrap();
+    let denied = f.run(&["references", "apply", id]);
+    assert!(!denied.status.success());
+    assert!(
+        serde_json::from_slice::<serde_json::Value>(&denied.stdout).unwrap()["error"]
+            .as_str()
+            .unwrap()
+            .contains("--yes")
+    );
+    assert_eq!(std::fs::read_dir(&articles).unwrap().count(), 1);
+    let shown = parsed(&f.run(&["references", "show", id]));
+    assert_eq!(shown["plan"], plan);
+    let exported = f.dir.path().join("exported-report");
+    let export = parsed(
+        &f.command()
+            .args(["references", "export", id])
+            .arg(&exported)
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(export["exported"], true);
+    assert!(exported.join("report.json").exists());
+    let c = img_records::catalog::Catalog::open(&f.dir.path().join("data")).unwrap();
+    assert!(c.sync_events(None).unwrap().is_empty());
+}

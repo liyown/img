@@ -1,6 +1,5 @@
 use super::*;
-use crate::tool_editor::Edits;
-use img_records::processing::{self as plan, Annotation, ProcessingPlan, Shape};
+use img_records::processing::{self as plan, ProcessingPlan};
 use std::{cell::Cell, rc::Rc, sync::Arc, time::Instant};
 #[path = "tools_actions.rs"]
 mod actions;
@@ -8,23 +7,17 @@ mod actions;
 mod controls;
 #[path = "tools_canvas.rs"]
 mod editing;
+fn supports_recipe(plan: &ProcessingPlan) -> bool {
+    plan.annotations.is_empty()
+        && plan.split.is_none()
+        && plan.stitch.is_none()
+        && plan.watermark.is_none()
+        && plan.validate().is_ok()
+}
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tool {
     Convert,
     Geometry,
-    Annotate,
-    Split,
-    Stitch,
-    Watermark,
-}
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum MarkTool {
-    Select,
-    Arrow,
-    Rectangle,
-    Text,
-    Step,
-    Redact,
 }
 #[derive(Clone)]
 struct ToolInput {
@@ -32,7 +25,6 @@ struct ToolInput {
     path: PathBuf,
     hash: String,
     source_asset: Option<String>,
-    edits: Edits,
 }
 #[derive(Clone)]
 struct Preview {
@@ -42,19 +34,17 @@ struct Preview {
 pub(super) struct Tools {
     root: PathBuf,
     engine: PathBuf,
-    inputs: Vec<ToolInput>,
-    selected: usize,
+    input: Option<ToolInput>,
     fields: HashMap<&'static str, Entity<InputState>>,
     _subscriptions: Vec<Subscription>,
     plan: ProcessingPlan,
     tool: Tool,
-    mark_tool: MarkTool,
-    selected_annotation: Option<String>,
-    stitch_edits: Edits,
     preview: Option<Preview>,
-    results: Vec<serde_json::Value>,
-    result_selected: Option<usize>,
+    preview_cache: VecDeque<(String, Preview)>,
+    active_preview_key: Option<String>,
+    result: Option<serde_json::Value>,
     task_id: Option<String>,
+    saved_to_user: bool,
     busy: bool,
     preview_busy: bool,
     importing: bool,
@@ -62,7 +52,6 @@ pub(super) struct Tools {
     error: Option<String>,
     control: Option<Control>,
     preview_control: Option<Control>,
-    watermark: Option<(PathBuf, String)>,
     thumbnails: Entity<crate::thumbnails::ThumbnailCache>,
     bounds: Rc<Cell<Bounds<Pixels>>>,
     drag: Option<(plan::Point, plan::Point)>,
@@ -70,12 +59,51 @@ pub(super) struct Tools {
     crop_ratio: Option<f32>,
     resize_mode: u8,
     compression_mode: u8,
-    split_mode: u8,
     focus: FocusHandle,
+    inspector_scroll: ScrollHandle,
     stopping: bool,
     copied_until: Option<Instant>,
 }
 impl Tools {
+    pub fn set_tool(&mut self, geometry: bool, cx: &mut Context<Self>) {
+        let tool = if geometry {
+            Tool::Geometry
+        } else {
+            Tool::Convert
+        };
+        if self.tool != tool {
+            self.inspector_scroll.set_offset(point(px(0.), px(0.)));
+            self.tool = tool;
+            self.crop_editing = false;
+            self.drag = None;
+            self.schedule_preview(cx);
+        }
+    }
+    pub fn status(&self) -> String {
+        if self.busy {
+            "处理中…"
+        } else if self.importing {
+            "正在读取…"
+        } else if self.input.is_some() {
+            "保留原文件"
+        } else {
+            "请选择一张图片"
+        }
+        .into()
+    }
+    fn clear_input(&mut self, cx: &mut Context<Self>) {
+        if self.busy || self.importing {
+            return;
+        }
+        self.input = None;
+        self.result = None;
+        self.task_id = None;
+        self.preview_cache.clear();
+        self.crop_editing = false;
+        self.drag = None;
+        self.plan.geometry.crop = None;
+        self.schedule_preview(cx);
+    }
     pub fn new(
         root: PathBuf,
         engine: PathBuf,
@@ -91,31 +119,8 @@ impl Tools {
             ("width", "1200"),
             ("height", "0"),
             ("edge", "1600"),
-            ("crop_x", "0"),
-            ("crop_y", "0"),
-            ("crop_w", "100"),
-            ("crop_h", "100"),
-            ("text", "文字"),
-            ("font_size", "32"),
-            ("color", "#ef4444"),
-            ("stroke", "4"),
-            ("split_height", "1200"),
-            ("rows", "2"),
-            ("cols", "2"),
-            ("spacing", "12"),
-            ("cross_size", "0"),
-            ("stitch_bg", "#ffffff"),
-            ("margin", "16"),
-            ("watermark_scale", "20"),
-            ("opacity", "60"),
         ] {
-            let field = cx.new(|cx| {
-                InputState::new(window, cx).default_value(if key == "text" {
-                    crate::i18n::text(value)
-                } else {
-                    value.into()
-                })
-            });
+            let field = cx.new(|cx| InputState::new(window, cx).default_value(value));
             subscriptions.push(cx.subscribe(&field, |this, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
                     this.schedule_preview(cx);
@@ -127,19 +132,17 @@ impl Tools {
             thumbnails: crate::thumbnails::ThumbnailCache::preview(root.clone(), cx),
             root,
             engine,
-            inputs: vec![],
-            selected: 0,
+            input: None,
             fields,
             _subscriptions: subscriptions,
             plan: ProcessingPlan::default(),
             tool: Tool::Convert,
-            mark_tool: MarkTool::Arrow,
-            selected_annotation: None,
-            stitch_edits: Edits::default(),
             preview: None,
-            results: vec![],
-            result_selected: None,
+            preview_cache: VecDeque::new(),
+            active_preview_key: None,
+            result: None,
             task_id: None,
+            saved_to_user: false,
             busy: false,
             preview_busy: false,
             importing: false,
@@ -147,15 +150,14 @@ impl Tools {
             error: None,
             control: None,
             preview_control: None,
-            watermark: None,
             bounds: Rc::new(Cell::new(Bounds::default())),
             drag: None,
             crop_editing: false,
             crop_ratio: None,
             resize_mode: 0,
             compression_mode: 0,
-            split_mode: 0,
             focus: cx.focus_handle(),
+            inspector_scroll: ScrollHandle::new(),
             stopping: false,
             copied_until: None,
         }
@@ -179,30 +181,28 @@ impl Tools {
         source_assets: HashMap<PathBuf, String>,
         cx: &mut Context<Self>,
     ) {
-        if self.importing || self.stopping {
+        if self.importing || self.stopping || self.busy {
+            return;
+        }
+        if paths.len() != 1 {
+            self.error = Some("每次处理一张图片，请只选择一个图片文件".into());
+            cx.notify();
             return;
         }
         self.importing = true;
-        let current = self.inputs.len();
+        let path = paths.into_iter().next().unwrap();
         let task = cx.background_executor().spawn(async move {
-            (|| -> anyhow::Result<Vec<ToolInput>> {
-                let files = img_records::files::collect(&paths, true, 1000)?;
-                anyhow::ensure!(current + files.len() <= 1000, "一次最多处理 1000 张图片");
-                files
-                    .into_iter()
-                    .map(|path| {
-                        let metadata = path.metadata()?;
-                        anyhow::ensure!(metadata.len() <= 256 << 20, "图片文件超过 256 MiB");
-                        let bytes = std::fs::read(&path)?;
-                        Ok(ToolInput {
-                            id: uuid::Uuid::new_v4().to_string(),
-                            source_asset: source_assets.get(&path).cloned(),
-                            path,
-                            hash: img_records::catalog::digest(&bytes),
-                            edits: Edits::default(),
-                        })
-                    })
-                    .collect()
+            (|| -> anyhow::Result<ToolInput> {
+                let metadata = path.metadata()?;
+                anyhow::ensure!(metadata.is_file(), "请选择图片文件，不支持导入文件夹");
+                anyhow::ensure!(metadata.len() <= 256 << 20, "图片文件超过 256 MiB");
+                let bytes = std::fs::read(&path)?;
+                Ok(ToolInput {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    source_asset: source_assets.get(&path).cloned(),
+                    path,
+                    hash: img_records::catalog::digest(&bytes),
+                })
             })()
         });
         cx.spawn(async move |this, cx| {
@@ -210,12 +210,18 @@ impl Tools {
             let _ = this.update(cx, |this, cx| {
                 this.importing = false;
                 match result {
-                    Ok(inputs) => {
-                        for input in inputs {
-                            if !this.inputs.iter().any(|i| i.path == input.path) {
-                                this.inputs.push(input);
-                            }
-                        }
+                    Ok(input) => {
+                        this.input = Some(input);
+                        this.result = None;
+                        this.task_id = None;
+                        this.preview = None;
+                        this.preview_cache.clear();
+                        this.crop_editing = false;
+                        this.drag = None;
+                        this.plan.geometry.crop = None;
+                        this.plan.geometry.quarter_turns = 0;
+                        this.plan.geometry.flip_horizontal = false;
+                        this.plan.geometry.flip_vertical = false;
                         this.schedule_preview(cx);
                     }
                     Err(error) => this.error = Some(error.to_string()),
@@ -227,11 +233,14 @@ impl Tools {
         cx.notify();
     }
     pub fn choose(&mut self, cx: &mut Context<Self>) {
+        if self.busy || self.importing || self.stopping {
+            return;
+        }
         let task = cx.prompt_for_paths(PathPromptOptions {
             files: true,
-            directories: true,
-            multiple: true,
-            prompt: Some(crate::i18n::text("选择图片或文件夹")),
+            directories: false,
+            multiple: false,
+            prompt: Some(crate::i18n::text("选择图片")),
         });
         cx.spawn(async move |this, cx| {
             if let Ok(Ok(Some(paths))) = task.await {
@@ -241,6 +250,9 @@ impl Tools {
         .detach();
     }
     pub fn paste(&mut self, cx: &mut Context<Self>) {
+        if self.importing || self.busy || self.stopping {
+            return;
+        }
         if let Some(item) = cx.read_from_clipboard() {
             for entry in item.entries() {
                 match entry {
@@ -249,6 +261,7 @@ impl Tools {
                         return;
                     }
                     ClipboardEntry::Image(image) => {
+                        self.importing = true;
                         let bytes = image.bytes().to_vec();
                         let root = self.root.clone();
                         let task = cx.background_executor().spawn(async move {
@@ -262,11 +275,14 @@ impl Tools {
                         });
                         cx.spawn(async move |this, cx| {
                             let result = task.await;
-                            let _ = this.update(cx, |this, cx| match result {
-                                Ok(path) => this.add_paths(vec![path], HashMap::new(), cx),
-                                Err(error) => {
-                                    this.error = Some(error.to_string());
-                                    cx.notify();
+                            let _ = this.update(cx, |this, cx| {
+                                this.importing = false;
+                                match result {
+                                    Ok(path) => this.add_paths(vec![path], HashMap::new(), cx),
+                                    Err(error) => {
+                                        this.error = Some(error.to_string());
+                                        cx.notify();
+                                    }
                                 }
                             });
                         })
@@ -298,35 +314,26 @@ impl Tools {
         let number = u32::from_str_radix(text, 16)?;
         Ok([(number >> 16) as u8, (number >> 8) as u8, number as u8, 255])
     }
-    fn edits(&self) -> Option<&Edits> {
-        if self.plan.stitch.is_some() {
-            Some(&self.stitch_edits)
-        } else {
-            self.inputs.get(self.selected).map(|input| &input.edits)
-        }
-    }
-    fn edits_mut(&mut self) -> Option<&mut Edits> {
-        if self.plan.stitch.is_some() {
-            Some(&mut self.stitch_edits)
-        } else {
-            self.inputs
-                .get_mut(self.selected)
-                .map(|input| &mut input.edits)
-        }
-    }
     fn recipe(&self, preview: bool, cx: &App) -> anyhow::Result<ProcessingPlan> {
+        anyhow::ensure!(
+            supports_recipe(&self.plan),
+            "此预设包含当前工具不支持的操作"
+        );
         let mut plan = self.plan.clone();
         plan.encoding.compression = match self.compression_mode {
             1 => plan::Compression::Target {
                 bytes: u64::from(self.number("target", "目标体积", cx)?) * 1024,
             },
             2 => plan::Compression::Lossless,
+            _ if plan.encoding.format == plan::Format::Png => plan::Compression::Lossless,
             _ => plan::Compression::Quality {
                 quality: u8::try_from(self.number("quality", "质量", cx)?)?,
             },
         };
-        let color = self.color("jpeg_bg", cx)?;
-        plan.encoding.jpeg_background = [color[0], color[1], color[2]];
+        if plan.encoding.format == plan::Format::Jpeg {
+            let color = self.color("jpeg_bg", cx)?;
+            plan.encoding.jpeg_background = [color[0], color[1], color[2]];
+        }
         plan.geometry.resize = match self.resize_mode {
             1 => Some(plan::Resize {
                 max_edge: self.number("edge", "最长边", cx)?,
@@ -362,59 +369,66 @@ impl Tools {
             plan.geometry.quarter_turns = 0;
             plan.geometry.flip_horizontal = false;
             plan.geometry.flip_vertical = false;
-            plan.annotations.clear();
-        } else {
-            plan.annotations = self
-                .edits()
-                .map(|edits| edits.annotations.clone())
-                .unwrap_or_default();
-        }
-        plan.split = match self.split_mode {
-            1 => Some(plan::Split::Height {
-                height: self.number("split_height", "切分高度", cx)?,
-            }),
-            2 => Some(plan::Split::Grid {
-                rows: self.number("rows", "行数", cx)?,
-                columns: self.number("cols", "列数", cx)?,
-            }),
-            _ => None,
-        };
-        if let Some(stitch) = &mut plan.stitch {
-            stitch.spacing = self.number("spacing", "间距", cx)?;
-            let size = self.number("cross_size", "统一尺寸", cx)?;
-            stitch.cross_size = (size > 0).then_some(size);
-            if stitch.background[3] != 0 {
-                stitch.background = self.color("stitch_bg", cx)?;
-            }
-        }
-        if let Some(mark) = &mut plan.watermark {
-            mark.margin = self.number("margin", "边距", cx)?;
-            mark.scale = self.number("watermark_scale", "水印比例", cx)? as f32 / 100.;
-            mark.opacity = self.number("opacity", "透明度", cx)? as f32 / 100.;
-            let (_, hash) = self
-                .watermark
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("此预设需要水印图片，请在本机选择同一张图片。"))?;
-            anyhow::ensure!(
-                mark.resource.is_empty() || &mark.resource == hash,
-                "水印图片与预设不一致，请选择原水印或移除水印后重新设置"
-            );
-            mark.resource = hash.clone();
         }
         plan.validate()?;
         Ok(plan)
     }
-    fn manifest(&self, preview: bool) -> Vec<serde_json::Value> {
-        self.inputs.iter().enumerate().filter(|(i,_)|!preview || self.plan.stitch.is_some() || *i==self.selected).map(|(_,input)|serde_json::json!({"input_id":input.id,"path":input.path,"content_hash":input.hash,"source_asset":input.source_asset,"annotations":if self.plan.stitch.is_none() && !self.crop_editing{Some(input.edits.annotations.clone())}else{None}})).collect()
+    fn manifest(&self) -> Vec<serde_json::Value> {
+        self.input
+            .iter()
+            .map(|input| {
+                serde_json::json!({
+                    "input_id": input.id, "path": input.path,
+                    "content_hash": input.hash, "source_asset": input.source_asset
+                })
+            })
+            .collect()
     }
     fn schedule_preview(&mut self, cx: &mut Context<Self>) {
+        let key = self
+            .recipe(true, cx)
+            .ok()
+            .and_then(|plan| self.preview_key(&plan).ok());
+        if key.is_some() && key == self.active_preview_key {
+            cx.notify();
+            return;
+        }
         self.revision += 1;
         self.copied_until = None;
-        self.result_selected = None;
+        if let Some(control) = self.preview_control.take() {
+            control.stop(engine::CANCEL);
+        }
+        self.active_preview_key = None;
+        self.result = None;
+        self.task_id = None;
+        self.saved_to_user = false;
+        if self.input.is_none() {
+            self.preview = None;
+            self.preview_busy = false;
+            self.error = None;
+            cx.notify();
+            return;
+        }
+        if let Some(key) = &key
+            && let Some(index) = self
+                .preview_cache
+                .iter()
+                .position(|(cached, _)| cached == key)
+        {
+            let entry = self.preview_cache.remove(index).unwrap();
+            self.preview = Some(entry.1.clone());
+            self.preview_cache.push_back(entry);
+            self.preview_busy = false;
+            self.error = None;
+            self.active_preview_key = Some(key.clone());
+            cx.notify();
+            return;
+        }
+        self.preview_busy = self.input.is_some();
         let revision = self.revision;
         cx.spawn(async move |this, cx| {
             cx.background_executor()
-                .timer(Duration::from_millis(400))
+                .timer(Duration::from_millis(150))
                 .await;
             let _ = this.update(cx, |this, cx| {
                 if this.revision == revision && !this.stopping {
@@ -425,8 +439,14 @@ impl Tools {
         .detach();
         cx.notify();
     }
+    fn preview_key(&self, plan: &ProcessingPlan) -> anyhow::Result<String> {
+        Ok(img_records::catalog::digest(&serde_json::to_vec(&(
+            plan,
+            self.manifest(),
+        ))?))
+    }
     fn render_preview(&mut self, cx: &mut Context<Self>) {
-        if self.inputs.is_empty() {
+        if self.input.is_none() {
             self.preview = None;
             return;
         }
@@ -442,6 +462,10 @@ impl Tools {
                 return;
             }
         };
+        let key = self
+            .preview_key(&plan)
+            .expect("validated processing plan is serializable");
+        self.active_preview_key = Some(key.clone());
         if let Some(control) = self.preview_control.take() {
             control.stop(engine::CANCEL);
         }
@@ -452,8 +476,7 @@ impl Tools {
         let revision = self.revision;
         let root = self.root.clone();
         let engine = self.engine.clone();
-        let inputs = self.manifest(true);
-        let watermark = self.watermark.as_ref().map(|(path, _)| path.clone());
+        let inputs = self.manifest();
         let task = cx.background_executor().spawn(async move {
             let _completion = control.completion();
             (|| -> anyhow::Result<Preview> {
@@ -472,10 +495,7 @@ impl Tools {
                     .arg(scratch.path())
                     .arg("--preview")
                     .env("IMG_DATA_DIR", &root);
-                if let Some(watermark) = watermark {
-                    command.arg("--watermark").arg(watermark);
-                }
-                let output = engine::run(command, &control.child())?;
+                let output = engine::run_json(command, &control.child())?;
                 anyhow::ensure!(output.stopped == 0, "预览已取消");
                 let result: serde_json::Value = serde_json::from_slice(&output.stdout)
                     .map_err(|_| anyhow::anyhow!("无法生成预览，请检查图片和参数"))?;
@@ -506,6 +526,13 @@ impl Tools {
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
+                if let Ok(preview) = &result {
+                    this.preview_cache.retain(|(cached, _)| cached != &key);
+                    this.preview_cache.push_back((key, preview.clone()));
+                    while this.preview_cache.len() > 8 {
+                        this.preview_cache.pop_front();
+                    }
+                }
                 if this.revision != revision {
                     return;
                 }
@@ -513,7 +540,10 @@ impl Tools {
                 this.preview_control = None;
                 match result {
                     Ok(preview) => this.preview = Some(preview),
-                    Err(error) => this.error = Some(error.to_string()),
+                    Err(error) => {
+                        this.active_preview_key = None;
+                        this.error = Some(error.to_string());
+                    }
                 }
                 cx.notify();
             });
@@ -522,7 +552,7 @@ impl Tools {
         cx.notify();
     }
     fn export(&mut self, cx: &mut Context<Self>) {
-        if self.busy || self.inputs.is_empty() {
+        if self.busy || self.input.is_none() {
             return;
         }
         let plan = match self.recipe(false, cx) {
@@ -533,8 +563,7 @@ impl Tools {
                 return;
             }
         };
-        let inputs = self.manifest(false);
-        let watermark = self.watermark.as_ref().map(|(path, _)| path.clone());
+        let inputs = self.manifest();
         let task = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
@@ -546,7 +575,7 @@ impl Tools {
                 && let Some(path) = paths.first()
             {
                 let _ = this.update(cx, |this, cx| {
-                    this.run_export(path.clone(), plan, inputs, watermark, cx)
+                    this.run_export(path.clone(), plan, inputs, None, cx)
                 });
             }
         })
@@ -557,7 +586,7 @@ impl Tools {
         directory: PathBuf,
         plan: ProcessingPlan,
         inputs: Vec<serde_json::Value>,
-        watermark: Option<PathBuf>,
+        publish_window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) {
         if self.busy || self.stopping {
@@ -565,6 +594,9 @@ impl Tools {
         }
         self.busy = true;
         self.error = None;
+        let export_key = img_records::catalog::digest(
+            &serde_json::to_vec(&(&plan, &inputs)).expect("validated processing plan"),
+        );
         let root = self.root.clone();
         let engine = self.engine.clone();
         let control = Control::default();
@@ -587,10 +619,7 @@ impl Tools {
                     .arg("--output-dir")
                     .arg(directory)
                     .env("IMG_DATA_DIR", root);
-                if let Some(watermark) = watermark {
-                    command.arg("--watermark").arg(watermark);
-                }
-                let output = engine::run(command, &control.child())?;
+                let output = engine::run_json(command, &control.child())?;
                 anyhow::ensure!(output.stopped == 0, "处理已取消，可在任务面板继续");
                 serde_json::from_slice(&output.stdout)
                     .map_err(|_| anyhow::anyhow!("处理失败，请检查文件和参数"))
@@ -598,14 +627,28 @@ impl Tools {
         });
         cx.spawn(async move |this, cx| {
             let result = task.await;
-            let _ = this.update(cx, |this, cx| {
+            let publish = this.update(cx, |this, cx| {
                 this.busy = false;
                 this.control = None;
+                let mut publish = false;
                 match result {
                     Ok(result) => {
-                        this.task_id = result["task_id"].as_str().map(str::to_owned);
-                        this.results = result["outputs"].as_array().cloned().unwrap_or_default();
-                        this.result_selected = None;
+                        if this
+                            .recipe(false, cx)
+                            .and_then(|plan| this.preview_key(&plan))
+                            .is_ok_and(|key| key == export_key)
+                        {
+                            this.task_id = result["task_id"].as_str().map(str::to_owned);
+                            this.result = result["outputs"]
+                                .as_array()
+                                .and_then(|outputs| outputs.first())
+                                .cloned();
+                            this.saved_to_user = publish_window.is_none() && this.result.is_some();
+                            publish = result["complete"] == true
+                                && this.task_id.is_some()
+                                && this.result.is_some()
+                                && !this.stopping;
+                        }
                         if result["complete"] != true {
                             this.error = Some(
                                 result["files"]
@@ -614,7 +657,7 @@ impl Tools {
                                         files.iter().find_map(|file| file["error"].as_str())
                                     })
                                     .or(result["error"].as_str())
-                                    .unwrap_or("部分图片未完成，可在任务面板重试")
+                                    .unwrap_or("图片处理未完成，可在任务面板重试")
                                     .into(),
                             );
                         }
@@ -622,58 +665,18 @@ impl Tools {
                     Err(error) => this.error = Some(error.to_string()),
                 }
                 cx.notify();
+                publish
             });
+            if publish.unwrap_or(false)
+                && let Some(window) = publish_window
+            {
+                let _ = window.update(cx, |_, window, cx| {
+                    let _ = this.update(cx, |this, cx| this.publish(window, cx));
+                });
+            }
         })
         .detach();
         cx.notify();
-    }
-    fn select_result(&mut self, index: usize, cx: &mut Context<Self>) {
-        let Some(metadata) = self.results.get(index).cloned() else {
-            return;
-        };
-        let Some(path) = metadata["path"].as_str().map(PathBuf::from) else {
-            return;
-        };
-        self.result_selected = Some(index);
-        self.revision += 1;
-        let revision = self.revision;
-        self.preview_busy = false;
-        self.copied_until = None;
-        if let Some(control) = self.preview_control.take() {
-            control.stop(engine::CANCEL);
-        }
-        let root = self.root.clone();
-        let selected = metadata.clone();
-        let task = cx.background_executor().spawn(async move {
-            (|| -> anyhow::Result<Preview> {
-                let bytes = std::fs::read(path)?;
-                anyhow::ensure!(
-                    img_records::catalog::digest(&bytes)
-                        == selected["image"]["content_hash"].as_str().unwrap_or(""),
-                    "结果文件已经变化"
-                );
-                let cache = img_records::cache::Cache::open(&root)?;
-                let key = cache.put(&bytes)?;
-                Ok(Preview {
-                    lease: Arc::new(cache.lease(&key)?),
-                    metadata: selected,
-                })
-            })()
-        });
-        cx.spawn(async move |this, cx| {
-            let result = task.await;
-            let _ = this.update(cx, |this, cx| {
-                if this.result_selected != Some(index) || this.revision != revision {
-                    return;
-                }
-                match result {
-                    Ok(preview) => this.preview = Some(preview),
-                    Err(error) => this.error = Some(error.to_string()),
-                }
-                cx.notify();
-            });
-        })
-        .detach();
     }
     fn copy_image(&mut self, cx: &mut Context<Self>) {
         let Some(preview) = self.preview.clone() else {

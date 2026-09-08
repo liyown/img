@@ -317,6 +317,24 @@ impl Render for CopyDialog {
                 })
                 .when(self.report.is_some(), |row| {
                     row.child(
+                        action("copy-fix-references", "维护文章链接")
+                            .ghost()
+                            .disabled(self.busy)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                if let Some(id) = this
+                                    .report
+                                    .as_ref()
+                                    .and_then(|r| r["plan"]["task_id"].as_str())
+                                    .map(str::to_owned)
+                                {
+                                    window.close_dialog(cx);
+                                    let _ = this.parent.update(cx, |_, cx| {
+                                        cx.emit(PreferenceChanged::References(id))
+                                    });
+                                }
+                            })),
+                    )
+                    .child(
                         action("copy-mapping", "复制链接映射")
                             .ghost()
                             .on_click(cx.listener(|this, _, _, cx| {

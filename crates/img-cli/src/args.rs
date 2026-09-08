@@ -17,6 +17,11 @@ pub struct Cli {
 }
 #[derive(Subcommand)]
 pub enum Command {
+    /// Preview and repair Markdown image references with backups
+    References {
+        #[command(subcommand)]
+        command: ReferenceCommand,
+    },
     /// Plan and apply recoverable copies; preserve source files
     Migrate {
         #[command(subcommand)]
@@ -143,6 +148,45 @@ pub enum Command {
         json: bool,
         #[arg(long)]
         dir: Option<PathBuf>,
+    },
+}
+#[derive(Subcommand)]
+pub enum ReferenceCommand {
+    /// Scan only the selected directory; no document writes
+    Scan {
+        directory: PathBuf,
+        #[arg(
+            long,
+            conflicts_with = "migration",
+            help = "JSON array of old/new URL pairs; new images are verified"
+        )]
+        mapping: Option<PathBuf>,
+        #[arg(
+            long,
+            conflicts_with = "mapping",
+            help = "Use verified results from a saved migration task"
+        )]
+        migration: Option<String>,
+        #[arg(long, help = "Export a reviewable plan to a new JSON file")]
+        output: Option<PathBuf>,
+    },
+    Show {
+        task_id: String,
+    },
+    /// Apply the saved preview; recheck destination images and original documents
+    Apply {
+        task_id: String,
+        #[arg(long, help = "Explicitly confirm the previewed document writes")]
+        yes: bool,
+    },
+    /// Preview restoration; apply the returned task with references apply --yes
+    Restore {
+        task_id: String,
+    },
+    /// Export the report and document backups into a new directory
+    Export {
+        task_id: String,
+        directory: PathBuf,
     },
 }
 #[derive(Subcommand)]
@@ -540,6 +584,12 @@ pub enum SyncCommand {
 
 #[derive(Subcommand)]
 pub enum MigrateCommand {
+    /// Attach a local original to a failed item, without uploading; then retry the task
+    Source {
+        task_id: String,
+        input_id: String,
+        file: PathBuf,
+    },
     /// Inspect destinations without uploading; save a fixed plan for review
     Plan {
         #[arg(required_unless_present = "selection", conflicts_with = "selection")]
