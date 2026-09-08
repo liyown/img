@@ -17,6 +17,10 @@ mod quick_upload;
 mod remote_ui;
 #[path = "sync_ui.rs"]
 mod sync_ui;
+#[path = "tasks_ui.rs"]
+mod tasks_ui;
+#[path = "tools_ui.rs"]
+mod tools_ui;
 #[path = "workflows.rs"]
 mod workflows;
 
@@ -73,6 +77,7 @@ enum Page {
     Library,
     History,
     Sources,
+    Tools,
     Settings,
 }
 #[derive(Clone, Copy, PartialEq)]
@@ -85,6 +90,8 @@ enum Filter {
 
 pub struct ImgDesktop {
     catalog: Entity<catalog_ui::Library>,
+    tools: Entity<tools_ui::Tools>,
+    tasks: Entity<tasks_ui::TaskPanel>,
     sync_panel: Entity<sync_ui::SyncPanel>,
     cache_settings: Entity<cache_settings::CacheSettings>,
     shutting_down: bool,
@@ -295,6 +302,13 @@ impl ImgDesktop {
         });
         let catalog =
             cx.new(|cx| catalog_ui::Library::new(root.clone(), engine.clone(), window, cx));
+        let tools = cx.new(|cx| tools_ui::Tools::new(root.clone(), engine.clone(), window, cx));
+        let tasks = cx.new(|cx| tasks_ui::TaskPanel::new(root.clone(), engine.clone(), cx));
+        let task_subscription = cx.subscribe_in(
+            &tasks,
+            window,
+            |this, _, _: &tasks_ui::TaskEvent, window, cx| this.navigate(Page::Queue, window, cx),
+        );
         let cache_settings = cx.new(|cx| cache_settings::CacheSettings::new(root.clone(), cx));
         let sync_panel =
             cx.new(|cx| sync_ui::SyncPanel::new(root.clone(), engine.clone(), window, cx));
@@ -407,10 +421,18 @@ impl ImgDesktop {
                 }
                 cx.notify();
             });
-        let catalog_preferences = cx.subscribe(
+        let catalog_preferences = cx.subscribe_in(
             &catalog,
-            |this, _, event: &catalog_ui::PreferenceChanged, cx| {
+            window,
+            |this, _, event: &catalog_ui::PreferenceChanged, window, cx| {
                 match event {
+                    catalog_ui::PreferenceChanged::Tools { paths, sources } => {
+                        this.tools.update(cx, |tools, cx| {
+                            tools.add_paths(paths.clone(), sources.clone(), cx)
+                        });
+                        this.navigate(Page::Tools, window, cx);
+                        return;
+                    }
                     catalog_ui::PreferenceChanged::Format(format) => {
                         this.preferences.copy_format = *format
                     }
@@ -450,8 +472,12 @@ impl ImgDesktop {
                 eprintln!("window-bounds {:?}", window.window_bounds());
             }));
         }
+        let mut subscriptions = subscriptions;
+        subscriptions.push(task_subscription);
         Self {
             catalog,
+            tools,
+            tasks,
             sync_panel,
             cache_settings,
             shutting_down: false,
@@ -644,6 +670,10 @@ impl ImgDesktop {
         cx.notify();
     }
     fn pick_files(&mut self, _: &ChooseFiles, _: &mut Window, cx: &mut Context<Self>) {
+        if self.page == Page::Tools {
+            self.tools.update(cx, |tools, cx| tools.choose(cx));
+            return;
+        }
         if self.preparing {
             return;
         }
@@ -737,6 +767,10 @@ impl ImgDesktop {
         cx.notify();
     }
     fn paste_image(&mut self, _: &PasteImage, _: &mut Window, cx: &mut Context<Self>) {
+        if self.page == Page::Tools {
+            self.tools.update(cx, |tools, cx| tools.paste(cx));
+            return;
+        }
         if self.preparing {
             return;
         }
@@ -1125,6 +1159,7 @@ impl ImgDesktop {
                 "upload-simple",
                 Some(self.queue.items.len()),
             ),
+            (Page::Tools, "图片工具", "sliders-horizontal", None),
             (Page::Sources, "存储源", "folder-open", None),
             (Page::Settings, "设置", "gear", None),
         ] {
@@ -1364,6 +1399,7 @@ impl ImgDesktop {
             Page::Library => ("图库", "image"),
             Page::History => ("历史记录", "clock-counter-clockwise"),
             Page::Sources => ("存储源", "folder-open"),
+            Page::Tools => ("图片工具", "sliders-horizontal"),
             Page::Settings => ("设置", "gear"),
         };
         let chrome_button = |id, label: &str, symbol| {
@@ -1464,7 +1500,28 @@ impl ImgDesktop {
                             )
                         },
                     )
-                    .child(provider),
+                    .when(
+                        matches!(self.page, Page::Library | Page::Queue | Page::History),
+                        |row| row.child(provider),
+                    )
+                    .child(
+                        Button::new("open-tasks")
+                            .ghost()
+                            .small()
+                            .child(icon("clock-counter-clockwise", 16.))
+                            .accessibility_label(crate::i18n::text("任务"))
+                            .tooltip(crate::i18n::text("任务"))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                let panel = this.tasks.clone();
+                                window.open_dialog(cx, move |dialog, window, _| {
+                                    dialog
+                                        .title(crate::i18n::text("任务"))
+                                        .w(px((f32::from(window.viewport_size().width) - 80.)
+                                            .clamp(280., 700.)))
+                                        .child(panel.clone())
+                                });
+                            })),
+                    ),
             )
             .into_any_element()
     }
@@ -2280,6 +2337,9 @@ impl ImgDesktop {
         if self.page == Page::Library && !self.reference {
             return self.catalog.clone().into_any_element();
         }
+        if self.page == Page::Tools {
+            return self.tools.clone().into_any_element();
+        }
         if self.page == Page::Sources {
             return div()
                 .id("storage-page")
@@ -2623,8 +2683,9 @@ impl Render for ImgDesktop {
                     Page::Library => 0.,
                     Page::Queue => 1.,
                     Page::History => 1.,
-                    Page::Sources => 2.,
-                    Page::Settings => 3.,
+                    Page::Tools => 2.,
+                    Page::Sources => 3.,
+                    Page::Settings => 4.,
                 });
         let active_y = gpui_kit::base::spring(
             "sidebar-selection",

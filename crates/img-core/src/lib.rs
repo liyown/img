@@ -21,3 +21,5 @@ pub mod sync_providers;
 pub mod library_ops;
 
 pub mod migrate;
+
+pub mod processing;

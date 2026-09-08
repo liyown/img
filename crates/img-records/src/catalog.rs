@@ -538,6 +538,21 @@ impl Catalog {
         self.db.execute("INSERT INTO tasks(id,kind,body) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body",params![id,kind,body])?;
         Ok(())
     }
+    pub fn tasks(&self, kind: &str) -> Result<Vec<(String, String, String)>> {
+        let mut statement = self.db.prepare(
+            "SELECT id,kind,body FROM tasks WHERE ?1='' OR kind=?1 ORDER BY rowid DESC LIMIT 100",
+        )?;
+        Ok(statement
+            .query_map([kind], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+    pub fn sync_entities(&self, prefix: &str) -> Result<Vec<String>> {
+        self.sync_init()?;
+        let mut statement=self.db.prepare("SELECT DISTINCT entity FROM sync_events WHERE substr(entity,1,length(?1))=?1 ORDER BY entity")?;
+        Ok(statement
+            .query_map([prefix], |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?)
+    }
     pub fn task_optional(&self, id: &str) -> Result<Option<String>> {
         Ok(self
             .db

@@ -1,7 +1,9 @@
 mod args;
 mod library;
 mod migrate;
+mod process;
 mod sync;
+mod tasks;
 use args::RemoteCommand;
 mod management;
 mod markdown;
@@ -63,6 +65,8 @@ fn normalized_args(mut args: Vec<OsString>) -> Vec<OsString> {
         if ![
             "library",
             "migrate",
+            "tasks",
+            "presets",
             "sync",
             "backup",
             "restore",
@@ -196,43 +200,9 @@ fn run(cli: Cli, control: &Control) -> Result<i32> {
                 println!("{}", serde_json::to_string_pretty(&manifest)?);
             }
         }
-        Command::Process {
-            file,
-            output,
-            processing,
-        } => {
-            ensure!(!output.exists(), "output already exists; choose a new file");
-            let cfg = config::read_global(&path)?;
-            let options = processing.options();
-            let bytes = media::read_image(&file, cfg.upload.max_size)?;
-            let ct = media::detect(&bytes)?;
-            let original_size = bytes.len();
-            let result = media::process_recipe(
-                bytes,
-                ct,
-                options.strip_exif || cfg.upload.strip_exif,
-                if options.max_width > 0 {
-                    options.max_width
-                } else {
-                    cfg.upload.max_width
-                },
-                options.optimize,
-                options.recipe.as_ref().unwrap_or(&cfg.upload.recipe),
-            )?;
-            let parent = output
-                .parent()
-                .filter(|p| !p.as_os_str().is_empty())
-                .unwrap_or(Path::new("."));
-            let mut saved = tempfile::NamedTempFile::new_in(parent)?;
-            saved.write_all(&result.data)?;
-            saved.as_file().sync_all()?;
-            saved.persist_noclobber(&output).map_err(|e| e.error)?;
-            let info = media::info(&output);
-            println!(
-                "{}",
-                serde_json::json!({"original_size":original_size,"size":result.data.len(),"content_type":result.content_type,"output":output,"info":info})
-            );
-        }
+        Command::Process(args) => return process::run(&path, args, control),
+        Command::Tasks { command } => return tasks::run(&path, command, control),
+        Command::Presets { command } => return tasks::presets(command),
         Command::RestoreDocument { backup, target } => {
             ensure!(backup != target, "backup and target must differ");
             let original = std::fs::read(&target)?;

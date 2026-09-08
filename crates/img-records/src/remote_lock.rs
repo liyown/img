@@ -21,6 +21,19 @@ pub fn acquire(root: &Path, namespace: &str, path: &str, exclusive: bool) -> Res
     })?;
     Ok(file)
 }
+/// Read-only activity indicator used by the task panel. The execution path still acquires its lock.
+pub fn is_active(root: &Path, namespace: &str, path: &str) -> Result<bool> {
+    let path = root
+        .join("remote-locks")
+        .join(crate::catalog::identity(&[namespace, path]));
+    let file = match File::options().read(true).write(true).open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    Ok(file.try_lock().is_err())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

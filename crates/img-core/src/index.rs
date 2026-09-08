@@ -66,11 +66,12 @@ pub fn run(
         provider.namespace() == scope.namespace,
         "storage identity changed; select the scope again"
     );
+    let _scope_lock =
+        img_records::remote_lock::acquire(&catalog.root, "index-scope", &scope.id, true)?;
     let task = format!("index:{}", scope.id);
     let mut scan = if resume {
         catalog
-            .task(&task)
-            .ok()
+            .task_optional(&task)?
             .and_then(|s| serde_json::from_str::<Scan>(&s).ok())
             .filter(|s| {
                 !s.complete

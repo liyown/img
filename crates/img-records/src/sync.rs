@@ -233,6 +233,24 @@ impl Catalog {
         self.sync_ingest(std::slice::from_ref(&event))?;
         Ok(event)
     }
+    /// Publish related field edits atomically while preserving per-field conflict semantics.
+    pub fn sync_set_fields(&mut self, entity: &str, fields: &[(&str, Value)]) -> Result<()> {
+        let device = self.sync_init()?;
+        let parents = self.sync_heads(entity)?;
+        let events = fields
+            .iter()
+            .map(|(field, value)| Event {
+                id: uuid::Uuid::new_v4().to_string(),
+                device: device.clone(),
+                entity: entity.into(),
+                field: (*field).into(),
+                parents: parents.clone(),
+                value: Some(value.clone()),
+            })
+            .collect::<Vec<_>>();
+        self.sync_ingest(&events)?;
+        Ok(())
+    }
     /// Validate the whole causal batch before writing any event, including duplicate-ID tampering.
     pub fn sync_ingest(&mut self, incoming: &[Event]) -> Result<usize> {
         self.sync_init()?;

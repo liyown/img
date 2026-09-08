@@ -66,12 +66,16 @@ pub enum Command {
         include_credentials: bool,
     },
     /// Preview processing locally without uploading or modifying the source
-    Process {
-        file: PathBuf,
-        #[arg(long)]
-        output: PathBuf,
-        #[command(flatten)]
-        processing: Processing,
+    Process(Process),
+    /// Inspect and resume local tasks
+    Tasks {
+        #[command(subcommand)]
+        command: TaskCommand,
+    },
+    /// Share processing presets through configured metadata sync
+    Presets {
+        #[command(subcommand)]
+        command: PresetCommand,
     },
     /// Restore a Markdown document from a backup created by img rewrite
     RestoreDocument { backup: PathBuf, target: PathBuf },
@@ -559,4 +563,67 @@ pub enum MigrateCommand {
     },
     /// Inspect locally saved migration progress
     Show { task_id: String },
+}
+
+#[derive(Args)]
+pub struct Process {
+    #[arg(required_unless_present_any=["resume","inputs_manifest"])]
+    pub files: Vec<PathBuf>,
+    #[arg(long, conflicts_with="output_dir", required_unless_present_any=["output_dir","resume"])]
+    pub output: Option<PathBuf>,
+    #[arg(long, conflicts_with = "output")]
+    pub output_dir: Option<PathBuf>,
+    #[arg(long, help = "A versioned ProcessingPlan JSON file")]
+    pub recipe: Option<PathBuf>,
+    #[arg(long, help="Resume a saved processing task", conflicts_with_all=["files","recipe","inputs_manifest","output","output_dir","preview"])]
+    pub resume: Option<String>,
+    #[arg(
+        long,
+        help = "Render without adding a persistent task; uses the export renderer"
+    )]
+    pub preview: bool,
+    #[arg(long, conflicts_with_all=["preview","resume","output"], help="Save the task without running it")]
+    pub prepare: bool,
+    #[arg(
+        long,
+        help = "Input snapshots with per-image annotations and optional source asset IDs",
+        conflicts_with = "files"
+    )]
+    pub inputs_manifest: Option<PathBuf>,
+    #[command(flatten)]
+    pub processing: Processing,
+}
+#[derive(Subcommand)]
+pub enum TaskCommand {
+    /// Upload saved processing outputs without reprocessing their pixels
+    Upload {
+        id: String,
+        #[arg(long)]
+        provider: String,
+        #[arg(long, default_value = "")]
+        prefix: String,
+    },
+    List {
+        #[arg(long, default_value = "")]
+        kind: String,
+    },
+    Show {
+        id: String,
+    },
+    Retry {
+        id: String,
+    },
+}
+#[derive(Subcommand)]
+pub enum PresetCommand {
+    List,
+    Save {
+        name: String,
+        recipe: PathBuf,
+        #[arg(long)]
+        id: Option<String>,
+    },
+    Remove {
+        id: String,
+    },
 }

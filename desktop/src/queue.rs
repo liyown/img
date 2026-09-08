@@ -112,7 +112,7 @@ impl ImgDesktop {
             return;
         }
         if !self.providers.iter().any(|(p, _)| p == &self.provider) {
-            self.message("请在设置中添加并选择存储源，再开始上传", true, cx);
+            self.message("请在存储源页面添加并选择图床，再开始上传", true, cx);
             return;
         }
         self.queue.batch = Some(UploadBatch {
@@ -629,7 +629,13 @@ impl ImgDesktop {
         }
         self.queue
             .auxiliary
+            .extend(self.tools.update(cx, |tools, _| tools.stop()));
+        self.queue
+            .auxiliary
             .extend(self.catalog.update(cx, |library, _| library.stop()));
+        if let Some(control) = self.tasks.update(cx, |panel, _| panel.stop()) {
+            self.queue.auxiliary.push(control);
+        }
         if let Some(control) = self.sync_panel.update(cx, |panel, _| panel.stop()) {
             self.queue.auxiliary.push(control);
         }

@@ -9,6 +9,10 @@ use img_records::catalog::{Asset, Catalog, CatalogQuery};
 use std::collections::HashSet;
 
 pub(super) enum PreferenceChanged {
+    Tools {
+        paths: Vec<PathBuf>,
+        sources: HashMap<PathBuf, String>,
+    },
     Format(CopyFormat),
     View(bool),
 }
@@ -596,6 +600,78 @@ impl Library {
         .detach();
         cx.notify();
     }
+    fn tools_from(&mut self, ids: Vec<String>, cx: &mut Context<Self>) {
+        if self.busy || ids.is_empty() {
+            return;
+        }
+        self.busy = true;
+        let root = self.root.clone();
+        let engine = self.engine.clone();
+        let provider = self.query.provider.clone();
+        let control = Control::default();
+        self.control = Some(control.clone());
+        let task = cx.background_executor().spawn(async move {
+            let _completion = control.completion();
+            (|| -> anyhow::Result<(Vec<PathBuf>, HashMap<PathBuf, String>)> {
+                use std::io::Write;
+                let plan = img_records::targets::TargetPlan::capture(
+                    &Catalog::open(&root)?,
+                    &ids,
+                    &provider,
+                )?;
+                let directory = root
+                    .join("tool-inputs")
+                    .join(uuid::Uuid::new_v4().to_string());
+                std::fs::create_dir_all(&directory)?;
+                let mut file = tempfile::NamedTempFile::new()?;
+                file.write_all(&serde_json::to_vec(&plan)?)?;
+                file.as_file().sync_all()?;
+                let mut command = std::process::Command::new(engine);
+                command
+                    .arg("--config")
+                    .arg(storage::config_path()?)
+                    .args(["library", "download", "--plan"])
+                    .arg(file.path())
+                    .arg("--output-dir")
+                    .arg(&directory)
+                    .env("IMG_DATA_DIR", root);
+                let output = engine::run(command, &control.child())?;
+                anyhow::ensure!(output.stopped == 0, "操作已取消");
+                let result: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+                let mut paths = vec![];
+                let mut sources = HashMap::new();
+                for result in result["files"]
+                    .as_array()
+                    .ok_or_else(|| anyhow::anyhow!("无法读取图库图片"))?
+                {
+                    if result["success"] == true
+                        && let (Some(path), Some(id)) =
+                            (result["output"].as_str(), result["id"].as_str())
+                    {
+                        let path = PathBuf::from(path);
+                        sources.insert(path.clone(), id.to_owned());
+                        paths.push(path);
+                    }
+                }
+                anyhow::ensure!(!paths.is_empty(), "没有可读取的图片，请检查来源是否可用");
+                Ok((paths, sources))
+            })()
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.busy = false;
+                this.control = None;
+                match result {
+                    Ok((paths, sources)) => cx.emit(PreferenceChanged::Tools { paths, sources }),
+                    Err(error) => this.notice = Some(error.to_string()),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
     fn copy_to(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.busy || self.selected.is_empty() {
             return;
@@ -779,7 +855,11 @@ impl Library {
                 cx,
             )
         });
+        let parent = cx.weak_entity();
+        let asset_id = panel.read(cx).asset_id();
         window.open_dialog(cx, move |dialog, window, _| {
+            let parent = parent.clone();
+            let asset_id = asset_id.clone();
             let viewport = window.viewport_size();
             let width = (f32::from(viewport.width) * 0.85).clamp(240., 960.);
             dialog
@@ -788,8 +868,23 @@ impl Library {
                 .title(crate::i18n::text(title.clone()))
                 .child(panel.clone())
                 .footer(
-                    action("detail-close", "关闭预览")
-                        .on_click(|_, window, cx| window.close_dialog(cx)),
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .child(action("detail-tools", "在图片工具中打开").on_click(
+                            move |_, window, cx| {
+                                window.close_dialog(cx);
+                                let _ = parent.update(cx, |this, cx| {
+                                    this.tools_from(vec![asset_id.clone()], cx)
+                                });
+                            },
+                        ))
+                        .child(div().flex_1())
+                        .child(
+                            action("detail-close", "关闭预览")
+                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                        ),
                 )
         });
     }
@@ -1147,11 +1242,28 @@ impl Render for Library {
                                         let weak = cx.weak_entity();
                                         move |menu, _, _| {
                                             let download = weak.clone();
+                                            let tools = weak.clone();
                                             let check = weak.clone();
                                             let copy = weak.clone();
                                             let hide = weak.clone();
                                             let delete = weak.clone();
                                             menu.item(
+                                                PopupMenuItem::new(crate::i18n::text(
+                                                    "在图片工具中打开",
+                                                ))
+                                                .on_click(move |_, _, cx| {
+                                                    let _ = tools.update(cx, |this, cx| {
+                                                        this.tools_from(
+                                                            this.selected
+                                                                .snapshot()
+                                                                .into_iter()
+                                                                .collect(),
+                                                            cx,
+                                                        )
+                                                    });
+                                                }),
+                                            )
+                                            .item(
                                                 PopupMenuItem::new(crate::i18n::text("下载所选"))
                                                     .on_click(move |_, window, cx| {
                                                         let _ = download.update(cx, |this, cx| {

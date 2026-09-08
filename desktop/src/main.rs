@@ -19,6 +19,7 @@ mod shortcut_settings;
 mod storage;
 mod theme;
 mod thumbnails;
+mod tool_editor;
 mod ui;
 mod updates;
 mod upload_options;

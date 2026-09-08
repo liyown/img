@@ -10,6 +10,7 @@ use std::{
 };
 
 pub const BUDGET: usize = 64 * 1024 * 1024;
+#[cfg(test)]
 const RESERVATION: usize = 512 * 512 * 4;
 
 #[derive(Default)]
@@ -43,6 +44,7 @@ impl<K: Clone + Eq + Hash> Budget<K> {
 }
 pub struct ThumbnailCache {
     root: PathBuf,
+    side: u32,
     entity: WeakEntity<Self>,
     inner: Entity<RetainAllImageCache>,
     resolved: HashMap<Resource, Option<Resource>>,
@@ -51,9 +53,16 @@ pub struct ThumbnailCache {
 }
 impl ThumbnailCache {
     pub fn new(root: PathBuf, cx: &mut App) -> Entity<Self> {
+        Self::with_side(root, 512, cx)
+    }
+    pub fn preview(root: PathBuf, cx: &mut App) -> Entity<Self> {
+        Self::with_side(root, 1440, cx)
+    }
+    fn with_side(root: PathBuf, side: u32, cx: &mut App) -> Entity<Self> {
         let inner = RetainAllImageCache::new(cx);
         cx.new(|cx| Self {
             root,
+            side,
             entity: cx.weak_entity(),
             inner,
             resolved: HashMap::new(),
@@ -94,9 +103,10 @@ impl ImageCache for ThumbnailCache {
                     let key = source.clone();
                     let path = path.to_path_buf();
                     let root = self.root.clone();
+                    let side = self.side;
                     let task = cx
                         .background_executor()
-                        .spawn(async move { prepare(&root, &path).map(Resource::from) });
+                        .spawn(async move { prepare_side(&root, &path, side).map(Resource::from) });
                     let weak = self.entity.clone();
                     let view = window.current_view();
                     window
@@ -121,7 +131,7 @@ impl ImageCache for ThumbnailCache {
             .entries
             .get(&mapped)
             .map(|e| e.0)
-            .unwrap_or(RESERVATION);
+            .unwrap_or(self.side as usize * self.side as usize * 4);
         for resource in self.budget.touch(mapped.clone(), current) {
             self.inner
                 .update(cx, |inner, cx| inner.remove(&resource, window, cx));
@@ -144,6 +154,9 @@ impl ImageCache for ThumbnailCache {
 }
 
 pub fn prepare(root: &Path, preview: &Path) -> anyhow::Result<PathBuf> {
+    prepare_side(root, preview, 512)
+}
+fn prepare_side(root: &Path, preview: &Path, side: u32) -> anyhow::Result<PathBuf> {
     use anyhow::{Context, ensure};
     if let Ok(relative) = preview.strip_prefix(root.join("cache")) {
         use image::ImageDecoder;
@@ -151,7 +164,12 @@ pub fn prepare(root: &Path, preview: &Path) -> anyhow::Result<PathBuf> {
         let cache = img_records::cache::Cache::open(root)?;
         let catalog = img_records::catalog::Catalog::open(root)?;
         let original = cache.lease(key)?;
-        if let Some(thumbnail) = catalog.setting(&format!("thumbnail:{key}"))?
+        let setting = if side == 512 {
+            format!("thumbnail:{key}")
+        } else {
+            format!("thumbnail-{side}:{key}")
+        };
+        if let Some(thumbnail) = catalog.setting(&setting)?
             && let Ok(lease) = cache.lease(&thumbnail)
         {
             return Ok(lease.path.clone());
@@ -173,10 +191,10 @@ pub fn prepare(root: &Path, preview: &Path) -> anyhow::Result<PathBuf> {
         image.apply_orientation(orientation);
         let mut bytes = std::io::Cursor::new(Vec::new());
         image
-            .thumbnail(512, 512)
+            .thumbnail(side, side)
             .write_to(&mut bytes, image::ImageFormat::Png)?;
         let thumbnail = cache.put(&bytes.into_inner())?;
-        catalog.set_setting(&format!("thumbnail:{key}"), &thumbnail)?;
+        catalog.set_setting(&setting, &thumbnail)?;
         let protected = cache.lease(&thumbnail)?;
         cache.trim(cache.limit()?)?;
         return Ok(protected.path.clone());

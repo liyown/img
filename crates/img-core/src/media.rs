@@ -66,7 +66,7 @@ pub fn inspect(bytes: &[u8], limit: u64) -> Result<&'static str> {
     );
     detect(bytes)
 }
-fn decoder(data: &[u8]) -> Result<impl ImageDecoder + '_> {
+pub(crate) fn decoder(data: &[u8]) -> Result<impl ImageDecoder + '_> {
     let mut reader = ImageReader::new(Cursor::new(data)).with_guessed_format()?;
     let mut limits = image::Limits::default();
     limits.max_alloc = Some(256 << 20);

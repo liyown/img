@@ -26,6 +26,7 @@ staging=$(mktemp -d "$project_dir/target/img-cli-package.XXXXXX")
 trap 'rm -rf "$staging"' EXIT HUP INT TERM
 cp "target/$target/release/img$ext" "$staging/img$ext"
 cp README.md "$staging/README.md"
+cp crates/img-core/assets/NotoSansCJK-LICENSE.txt "$staging/NotoSansCJK-LICENSE.txt"
 if [ "$os" = darwin ]; then codesign --force --sign - "$staging/img"; fi
 if [ "$os" = windows ]; then
     "$package_python" - "$staging" "$output/img_${os}_${arch}.zip" <<'PY'
@@ -36,7 +37,7 @@ PY
     asset="img_${os}_${arch}.zip"
 else
     asset="img_${os}_${arch}.tar.gz"
-    tar -czf "$output/$asset" -C "$staging" "img$ext" README.md
+    tar -czf "$output/$asset" -C "$staging" "img$ext" README.md NotoSansCJK-LICENSE.txt
 fi
 "$package_python" - "$output" "$asset" "$version" "$target" <<'PY'
 import hashlib, json, pathlib, sys

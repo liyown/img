@@ -24,6 +24,7 @@ ext = '.exe' if windows else ''
 for name in ['img-desktop','img']:
     shutil.copy2(root/'target'/target/'release'/(name+ext),stage/(name+ext))
 shutil.copy2(root/'desktop/INSTALL.html',stage/'INSTALL.html')
+shutil.copy2(root/'crates/img-core/assets/NotoSansCJK-LICENSE.txt',stage/'NotoSansCJK-LICENSE.txt')
 name = f'img-desktop_{version}_{osname}_x86_64'
 if windows:
     with zipfile.ZipFile(output/(name+'.zip'),'w',zipfile.ZIP_DEFLATED) as archive:

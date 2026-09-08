@@ -860,3 +860,100 @@ fn frozen_download_rejects_overwritten_remote_version_after_destination_prompt()
     assert_eq!(std::fs::read_dir(output).unwrap().count(), 0);
     assert_eq!(std::fs::read(&f.image).unwrap(), bytes);
 }
+
+#[test]
+fn processing_recipe_preview_export_resume_and_presets_keep_originals() {
+    let f = Fixture::new("https://unused.invalid");
+    let original = std::fs::read(&f.image).unwrap();
+    let recipe = f.dir.path().join("recipe.json");
+    std::fs::write(&recipe, r#"{"version":1,"split":{"mode":"grid","rows":3,"columns":2},"encoding":{"format":"jpeg","compression":{"mode":"target","bytes":1}}}"#).unwrap();
+    let output = f
+        .command()
+        .arg("process")
+        .arg(&f.image)
+        .arg("--recipe")
+        .arg(&recipe)
+        .arg("--output-dir")
+        .arg(f.dir.path().join("preview"))
+        .arg("--preview")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{} {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let preview = parsed(&output);
+    assert_eq!(preview["outputs"].as_array().unwrap().len(), 6);
+    let tiles = preview["outputs"].as_array().unwrap();
+    assert_eq!(
+        preview["preview"]["image"]["size"].as_u64().unwrap(),
+        tiles
+            .iter()
+            .map(|o| o["image"]["size"].as_u64().unwrap())
+            .sum::<u64>()
+    );
+    assert_eq!(preview["preview"]["image"]["width"], 100);
+    assert_eq!(preview["preview"]["image"]["height"], 50);
+    assert_eq!(preview["preview"]["image"]["target_met"], false);
+    let c = img_records::catalog::Catalog::open(&f.dir.path().join("data")).unwrap();
+    assert!(c.tasks("process").unwrap().is_empty());
+    let output_dir = f.dir.path().join("export");
+    let prepared = parsed(
+        &f.command()
+            .arg("process")
+            .arg(&f.image)
+            .arg("--recipe")
+            .arg(&recipe)
+            .arg("--output-dir")
+            .arg(&output_dir)
+            .arg("--prepare")
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(std::fs::read_dir(&output_dir).unwrap().count(), 0);
+    let id = prepared["task_id"].as_str().unwrap();
+    let result = parsed(&f.run(&["process", "--resume", id]));
+    assert_eq!(result["complete"], true);
+    assert_eq!(result["outputs"].as_array().unwrap().len(), 6);
+    assert_eq!(
+        parsed(&f.run(&["tasks", "retry", &format!("process:{id}")]))["complete"],
+        true
+    );
+    assert_eq!(std::fs::read_dir(&output_dir).unwrap().count(), 6);
+    assert_eq!(std::fs::read(&f.image).unwrap(), original);
+    let saved = parsed(
+        &f.command()
+            .args(["presets", "save", "文章配图"])
+            .arg(&recipe)
+            .output()
+            .unwrap(),
+    );
+    let list = parsed(&f.run(&["presets", "list"]));
+    assert_eq!(list[0]["name"], "文章配图");
+    assert_eq!(list[0]["plan"]["split"]["rows"], 3);
+    let events = serde_json::to_string(&c.sync_events(None).unwrap()).unwrap();
+    assert!(!events.contains(f.dir.path().to_str().unwrap()));
+    assert!(!events.contains("output_dir"));
+    parsed(&f.run(&["presets", "remove", saved["id"].as_str().unwrap()]));
+    assert_eq!(parsed(&f.run(&["presets", "list"])), serde_json::json!([]));
+    let conflicting = f
+        .command()
+        .arg("process")
+        .arg(&f.image)
+        .arg("--recipe")
+        .arg(&recipe)
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .args(["--quality", "70"])
+        .output()
+        .unwrap();
+    assert!(!conflicting.status.success());
+    assert!(
+        serde_json::from_slice::<serde_json::Value>(&conflicting.stdout).unwrap()["error"]
+            .as_str()
+            .unwrap()
+            .contains("with --recipe")
+    );
+}

@@ -6,6 +6,9 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+webp = { version = "0.3.1", default-features = false }
+ab_glyph = "0.2"
+tiny-skia = "0.11"
 img-records = { path = "../img-records" }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }

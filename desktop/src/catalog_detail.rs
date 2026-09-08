@@ -10,6 +10,9 @@ pub(super) struct Detail {
     versions: Vec<(Asset, String, bool)>,
 }
 impl Detail {
+    pub fn asset_id(&self) -> String {
+        self.asset.id.clone()
+    }
     pub fn new(
         asset: Asset,
         root: PathBuf,
