@@ -1037,21 +1037,7 @@ impl Render for Library {
                         });
                     },
                     cx,
-                ))
-                .child(
-                    action(
-                        "catalog-show-hidden",
-                        if self.query.include_hidden {
-                            "不显示隐藏记录"
-                        } else {
-                            "显示隐藏记录"
-                        },
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.query.include_hidden = !this.query.include_hidden;
-                        this.changed(cx);
-                    })),
-                ),
+                )),
         );
         if self.selecting {
             let hidden = self.selected.hidden();
