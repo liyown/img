@@ -613,7 +613,11 @@ impl Library {
     ) {
         let selected = asset.selected_location(provider).cloned();
         let thumbnails = self.thumbnails.clone();
-        window.open_dialog(cx, move |dialog, _, _| {
+        let format = self.format;
+        window.open_dialog(cx, move |dialog, window, _| {
+            let viewport = window.viewport_size();
+            let width = (f32::from(viewport.width) - 48.).max(240.);
+            let image_height = (f32::from(viewport.height) - 240.).max(80.);
             let mut body = div().flex().flex_col().gap(px(10.)).child(label(
                 format!("{} · {}", asset.content_type, model::size_label(asset.size)),
                 12.,
@@ -624,7 +628,8 @@ impl Library {
                     img(image.path.clone())
                         .image_cache(&thumbnails)
                         .w_full()
-                        .h(px(280.))
+                        .h(px(image_height))
+                        .flex_shrink_0()
                         .object_fit(ObjectFit::Contain),
                 );
             } else {
@@ -643,8 +648,12 @@ impl Library {
                     .text_ellipsis(),
                 );
             }
-            let link = selected.clone();
+            let link = selected
+                .as_ref()
+                .map(|link| format.render(&asset.name, &link.url));
             dialog
+                .w(px(width))
+                .margin_top(px(24.))
                 .title(crate::i18n::text(asset.name.clone()))
                 .child(body)
                 .footer(
@@ -658,7 +667,7 @@ impl Library {
                                 .on_click(move |_, _, cx| {
                                     if let Some(link) = &link {
                                         cx.write_to_clipboard(ClipboardItem::new_string(
-                                            link.url.clone(),
+                                            link.clone(),
                                         ));
                                     }
                                 }),
@@ -695,6 +704,8 @@ impl Library {
             });
         if !self.grid {
             let location = asset.selected_location(&self.query.provider);
+            let copy_url = location.map(|location| location.url.clone());
+            let copy_name = asset.name.clone();
             let detail = location
                 .map(|location| location.provider.clone())
                 .unwrap_or_else(|| "没有可用地址".into());
@@ -751,6 +762,22 @@ impl Library {
                     11.,
                     MUTED,
                 ))
+                .child(
+                    action(SharedString::from(format!("copy-{}", asset.id)), "复制链接")
+                        .h(px(28.))
+                        .px(px(10.))
+                        .flex_shrink_0()
+                        .disabled(copy_url.as_ref().is_none_or(|url| url.is_empty()))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if let Some(url) = &copy_url {
+                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                    this.format.render(&copy_name, url),
+                                ));
+                                this.notice = Some("已复制链接".into());
+                                cx.notify();
+                            }
+                        })),
+                )
                 .into_any_element();
         }
         div()
