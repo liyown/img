@@ -225,10 +225,11 @@ impl Provider {
                         continue;
                     }
                     pathgen::validate(path.trim_end_matches('/'))?;
-                    if let Some(p) = row
+                    let p = row
                         .propstat
                         .into_iter()
                         .find(|p| p.status.split_whitespace().nth(1) == Some("200"))
+                        .context("WebDAV could not read an entry; listing is incomplete")?;
                     {
                         items.push(RemoteItem {
                             url: self.public_object(&path),

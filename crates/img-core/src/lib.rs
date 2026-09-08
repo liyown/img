@@ -11,3 +11,9 @@ mod reuse;
 pub mod upload;
 
 pub mod index;
+
+pub mod sync_log;
+
+pub mod sync_settings;
+
+pub mod sync_providers;

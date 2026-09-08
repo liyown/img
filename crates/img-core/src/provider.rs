@@ -4,6 +4,7 @@ use crate::{
     network, pathgen,
 };
 mod remote;
+mod sync_log;
 use anyhow::{Context, Result, bail, ensure};
 use aws_credential_types::{
     Credentials,
@@ -74,10 +75,21 @@ impl Provider {
         } else {
             &c.branch
         };
+        // WebDAV endpoints often expose a different root for each authenticated account.
+        // Password rotation must not change identity, and unknown principals must not be merged.
+        let dav_principal = c
+            .headers
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case("authorization"))
+            .and_then(|(_, value)| value.strip_prefix("Basic "))
+            .and_then(|value| base64::engine::general_purpose::STANDARD.decode(value).ok())
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .and_then(|value| value.split_once(':').map(|(user, _)| user.to_owned()))
+            .unwrap_or_else(|| self.name.clone());
         let parts: Vec<&str> = match c.kind.as_str() {
             "s3" => vec!["s3", endpoint, &c.bucket],
             "github" => vec!["github", &self.github_api, &c.owner, &c.repo, branch],
-            "webdav" => vec!["webdav", endpoint],
+            "webdav" => vec!["webdav", endpoint, &dav_principal],
             _ => vec!["http", &c.url, &self.name],
         };
         img_records::catalog::identity(&parts)
@@ -186,6 +198,17 @@ impl Provider {
     }
     fn response(&self, r: Response, action: &str) -> Result<Vec<u8>> {
         let status = r.status();
+        let retry_after = r
+            .headers()
+            .get("Retry-After")
+            .and_then(|h| h.to_str().ok())
+            .and_then(|s| {
+                s.parse::<u64>().ok().or_else(|| {
+                    chrono::DateTime::parse_from_rfc2822(s).ok().map(|date| {
+                        (date.timestamp() - chrono::Utc::now().timestamp()).max(0) as u64
+                    })
+                })
+            });
         let bytes = network::bounded(r, 1 << 20)?;
         if !status.is_success() {
             return Err(UploadError {
@@ -197,7 +220,10 @@ impl Provider {
                 retryable: status.is_server_error()
                     || status == StatusCode::TOO_MANY_REQUESTS
                     || status == StatusCode::REQUEST_TIMEOUT,
-                failure: crate::failure::Failure::http(status.as_u16()),
+                failure: crate::failure::Failure {
+                    retry_after_seconds: retry_after,
+                    ..crate::failure::Failure::http(status.as_u16())
+                },
             }
             .into());
         }

@@ -255,6 +255,18 @@ pub fn inspect(source: &Path) -> Result<Manifest> {
             "backup checksum mismatch"
         );
     }
+    if manifest.files.contains_key("catalog.sqlite3") {
+        let staging = tempfile::tempdir()?;
+        std::fs::copy(
+            source.join("catalog.sqlite3"),
+            staging.path().join("catalog.sqlite3"),
+        )?;
+        let catalog = crate::catalog::Catalog::open(staging.path())?;
+        let integrity: String = catalog
+            .db
+            .query_row("PRAGMA integrity_check", [], |r| r.get(0))?;
+        ensure!(integrity == "ok", "backup library database is damaged");
+    }
     Ok(manifest)
 }
 pub fn restore(
@@ -394,6 +406,19 @@ pub fn restore(
                     }
                 }
                 bytes = serde_json::to_vec(&rows)?;
+            }
+            if name == "catalog.sqlite3" {
+                let staged = transaction.path().join("restored-catalog.sqlite3");
+                write(&staged, &bytes)?;
+                {
+                    let db = rusqlite::Connection::open(&staged)?;
+                    db.execute(
+                        "UPDATE settings SET value=? WHERE key='sync-device'",
+                        [uuid::Uuid::new_v4().to_string()],
+                    )?;
+                    db.execute("DELETE FROM settings WHERE key='sync-applying'", [])?;
+                }
+                bytes = std::fs::read(staged)?;
             }
             write(&target, &bytes)?;
         }

@@ -17,6 +17,11 @@ pub struct Cli {
 }
 #[derive(Subcommand)]
 pub enum Command {
+    /// Synchronize metadata through your own WebDAV or S3 storage
+    Sync {
+        #[command(subcommand)]
+        command: SyncCommand,
+    },
     /// Query the shared remote image library
     Library {
         #[command(subcommand)]
@@ -402,6 +407,12 @@ pub enum ConfigCommand {
 
 #[derive(Subcommand)]
 pub enum LibraryCommand {
+    Scopes {
+        #[arg(long)]
+        id: Option<String>,
+        #[arg(long, action=clap::ArgAction::Set)]
+        enabled: Option<bool>,
+    },
     Index {
         #[arg(long)]
         provider: String,
@@ -409,6 +420,8 @@ pub enum LibraryCommand {
         prefix: String,
         #[arg(long)]
         resume: bool,
+        #[arg(long)]
+        scope_id: Option<String>,
     },
     List {
         #[arg(long, default_value = "")]
@@ -458,5 +471,27 @@ pub enum LibraryCommand {
     Cache {
         #[arg(long)]
         clear: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum SyncCommand {
+    /// Store a dedicated sync connection in this device's system keychain
+    Configure {
+        #[arg(long)]
+        file: PathBuf,
+        #[arg(long, default_value = ".img-sync/")]
+        prefix: String,
+    },
+    Status,
+    Run,
+    Pause,
+    Resume,
+    Conflicts,
+    /// Resolve one conflict using the explicitly selected event
+    Resolve {
+        entity: String,
+        field: String,
+        event: String,
     },
 }

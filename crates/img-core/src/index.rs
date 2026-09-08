@@ -92,6 +92,14 @@ pub fn run(
         &format!("scope:{}", scope.id),
         &serde_json::to_string(&scope)?,
     )?;
+    let scope_entity = format!("scope:{}", scope.id);
+    let previous = catalog.sync_entity(&scope_entity)?;
+    let value = serde_json::to_value(&scope)?;
+    for field in ["provider", "namespace", "prefix", "enabled"] {
+        if previous.fields.get(field) != Some(&value[field]) {
+            catalog.sync_set(&scope_entity, field, Some(value[field].clone()))?;
+        }
+    }
     while let Some((prefix, cursor)) = scan.pending.front().cloned() {
         if control.is_cancelled() {
             catalog.save_task(&task, "index", &serde_json::to_string(&scan)?)?;

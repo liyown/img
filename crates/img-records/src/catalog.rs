@@ -141,11 +141,13 @@ impl Catalog {
             "#)?;
             tx.commit()?;
         }
-        Ok(Self {
+        let catalog = Self {
             db,
             root: root.to_owned(),
             _restore_guard: restore_guard,
-        })
+        };
+        catalog.sync_install_capture()?;
+        Ok(catalog)
     }
     pub fn upsert(&mut self, record: &RemoteRecord) -> Result<String> {
         ensure!(
@@ -399,6 +401,14 @@ impl Catalog {
                 r.get(0)
             })
             .optional()?)
+    }
+    pub fn settings_prefix(&self, prefix: &str) -> Result<Vec<(String, String)>> {
+        let mut statement = self.db.prepare(
+            "SELECT key,value FROM settings WHERE substr(key,1,length(?1))=?1 ORDER BY key",
+        )?;
+        Ok(statement
+            .query_map([prefix], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
     }
     pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
         self.db.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![key,value])?;

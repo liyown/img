@@ -1,5 +1,6 @@
 mod args;
 mod library;
+mod sync;
 use args::RemoteCommand;
 mod management;
 mod markdown;
@@ -60,6 +61,7 @@ fn normalized_args(mut args: Vec<OsString>) -> Vec<OsString> {
         let command = args[i].to_string_lossy();
         if ![
             "library",
+            "sync",
             "backup",
             "restore",
             "remote",
@@ -127,6 +129,7 @@ fn report(
 fn run(cli: Cli, control: &Control) -> Result<i32> {
     let path = cli.config.unwrap_or(config::global_path()?);
     match cli.command {
+        Command::Sync { command } => return sync::run(&path, command, control),
         Command::Library { command } => return library::run(&path, command, control),
         Command::Remote {
             provider: name,

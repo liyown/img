@@ -34,15 +34,49 @@ fn execute(config_path: &Path, command: LibraryCommand, control: &Control) -> Re
     c.import_legacy()?;
     let mut failed = false;
     match command {
+        LibraryCommand::Scopes { id, enabled } => {
+            if let Some(enabled) = enabled {
+                let id = id.context("--enabled requires --id")?;
+                let key = format!("scope:{id}");
+                let mut scope: img_core::index::Scope =
+                    serde_json::from_str(&c.setting(&key)?.context("index scope not found")?)?;
+                scope.enabled = enabled;
+                c.sync_set(&key, "enabled", Some(enabled.into()))?;
+                c.set_setting(&key, &serde_json::to_string(&scope)?)?;
+            }
+            let scopes = c
+                .settings_prefix("scope:")?
+                .into_iter()
+                .map(|(_, s)| serde_json::from_str::<serde_json::Value>(&s))
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            println!("{}", serde_json::to_string(&scopes)?);
+        }
         LibraryCommand::Index {
             provider,
             prefix,
             resume,
+            scope_id,
         } => {
             let cfg = config::read_global(config_path)?;
             let provider = crate::provider(&cfg, &provider)?;
             let scope = img_core::index::Scope::new(&provider, &prefix)?;
-            let scan = img_core::index::run(&mut c, &provider, scope, resume, &[], control)?;
+            if let Some(expected) = scope_id {
+                ensure!(
+                    scope.id == expected,
+                    "storage identity changed; choose the indexing scope again"
+                );
+                let saved: img_core::index::Scope = serde_json::from_str(
+                    &c.setting(&format!("scope:{expected}"))?
+                        .context("index scope no longer exists")?,
+                )?;
+                ensure!(saved.enabled, "index scope is paused");
+            }
+            let excluded = img_core::sync_settings::SyncSettings::read(&root)
+                .ok()
+                .filter(|s| s.namespace == scope.namespace)
+                .map(|s| vec![s.prefix])
+                .unwrap_or_default();
+            let scan = img_core::index::run(&mut c, &provider, scope, resume, &excluded, control)?;
             failed = !scan.complete;
             println!("{}", serde_json::to_string(&scan)?);
         }

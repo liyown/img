@@ -26,12 +26,14 @@ pub struct Failure {
     pub code: ErrorCode,
     pub http_status: Option<u16>,
     pub retryable: bool,
+    pub retry_after_seconds: Option<u64>,
 }
 impl Failure {
     pub fn new(code: ErrorCode) -> Self {
         Self {
             code,
             http_status: None,
+            retry_after_seconds: None,
             retryable: matches!(
                 code,
                 ErrorCode::Network

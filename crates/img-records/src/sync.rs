@@ -110,6 +110,25 @@ impl Event {
             self.field == "$deleted" || allowed.contains(&self.field.as_str()),
             "field is not portable"
         );
+        if kind == "provider"
+            && matches!(
+                self.field.as_str(),
+                "token" | "access_key" | "secret_key" | "session_token" | "headers" | "fields"
+            )
+        {
+            fn reference_only(value: &Value) -> bool {
+                match value {
+                    Value::Null => true,
+                    Value::String(s) => s.is_empty() || s.contains("${"),
+                    Value::Object(m) => m.values().all(reference_only),
+                    _ => false,
+                }
+            }
+            ensure!(
+                self.value.as_ref().is_none_or(reference_only),
+                "provider secrets must use portable credential references"
+            );
+        }
         if self.field == "$deleted" {
             ensure!(
                 self.value == Some(Value::Bool(true)),
@@ -169,6 +188,15 @@ impl Catalog {
         )?;
         self.setting("sync-device")?
             .context("device identity missing")
+    }
+    pub fn sync_revision(&self) -> Result<u64> {
+        self.sync_init()?;
+        let revision: i64 =
+            self.db
+                .query_row("SELECT COALESCE(max(rowid),0) FROM sync_events", [], |r| {
+                    r.get(0)
+                })?;
+        Ok(revision as u64)
     }
     pub fn sync_events(&self, entity: Option<&str>) -> Result<Vec<Event>> {
         self.sync_init()?;
@@ -268,80 +296,7 @@ impl Catalog {
     }
     pub fn sync_entity(&self, entity: &str) -> Result<Entity> {
         let events = self.sync_events(Some(entity))?;
-        let by_id: HashMap<_, _> = events.iter().map(|e| (e.id.as_str(), e)).collect();
-        let ancestor = |earlier: &str, later: &Event| -> bool {
-            let mut queue = later.parents.clone();
-            let mut visited = HashSet::new();
-            while let Some(id) = queue.pop() {
-                if id == earlier {
-                    return true;
-                }
-                if visited.insert(id.clone())
-                    && let Some(e) = by_id.get(id.as_str())
-                {
-                    queue.extend(e.parents.clone());
-                }
-            }
-            false
-        };
-        let fields: BTreeSet<_> = events.iter().map(|e| e.field.as_str()).collect();
-        let mut result = Entity::default();
-        let live_deletes = events
-            .iter()
-            .filter(|e| {
-                e.field == "$deleted"
-                    && !events
-                        .iter()
-                        .any(|later| later.id != e.id && ancestor(&e.id, later))
-            })
-            .collect::<Vec<_>>();
-        if !live_deletes.is_empty() {
-            let edits = events
-                .iter()
-                .filter(|e| {
-                    e.field != "$deleted" && live_deletes.iter().any(|d| !ancestor(&e.id, d))
-                })
-                .cloned()
-                .collect::<Vec<_>>();
-            if edits.is_empty() {
-                result.deleted = true;
-                return Ok(result);
-            }
-            result.conflicts.push(Conflict {
-                entity: entity.into(),
-                field: "$deleted".into(),
-                candidates: live_deletes.into_iter().cloned().chain(edits).collect(),
-            });
-        }
-        for field in fields.into_iter().filter(|f| *f != "$deleted") {
-            let heads = events
-                .iter()
-                .filter(|e| {
-                    e.field == field
-                        && !events.iter().any(|later| {
-                            (later.field == field || later.field == "$deleted")
-                                && later.id != e.id
-                                && ancestor(&e.id, later)
-                        })
-                })
-                .cloned()
-                .collect::<Vec<_>>();
-            if heads.is_empty() {
-                continue;
-            }
-            if heads.iter().all(|h| h.value == heads[0].value) {
-                if let Some(value) = &heads[0].value {
-                    result.fields.insert(field.into(), value.clone());
-                }
-            } else {
-                result.conflicts.push(Conflict {
-                    entity: entity.into(),
-                    field: field.into(),
-                    candidates: heads,
-                });
-            }
-        }
-        Ok(result)
+        entity_state(entity, &events)
     }
     pub fn sync_conflicts(&self) -> Result<Vec<Conflict>> {
         let entities: BTreeSet<_> = self
@@ -358,10 +313,10 @@ impl Catalog {
             .collect())
     }
     pub fn sync_outbox(&self, destination: &str) -> Result<Vec<Event>> {
-        let device = self.sync_init()?;
-        let mut stmt=self.db.prepare("SELECT body FROM sync_events WHERE device=?1 AND id NOT IN(SELECT event FROM sync_sent WHERE destination=?2) ORDER BY rowid LIMIT 200")?;
+        self.sync_init()?;
+        let mut stmt=self.db.prepare("SELECT body FROM sync_events WHERE id NOT IN(SELECT event FROM sync_sent WHERE destination=?1) ORDER BY rowid LIMIT 200")?;
         let rows = stmt
-            .query_map(params![device, destination], |r| r.get::<_, String>(0))?
+            .query_map(params![destination], |r| r.get::<_, String>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         rows.iter().map(|s| Ok(serde_json::from_str(s)?)).collect()
     }
@@ -376,6 +331,79 @@ impl Catalog {
         tx.commit()?;
         Ok(())
     }
+}
+
+pub(crate) fn entity_state(entity: &str, events: &[Event]) -> Result<Entity> {
+    let by_id: HashMap<_, _> = events.iter().map(|e| (e.id.as_str(), e)).collect();
+    let ancestor = |earlier: &str, later: &Event| -> bool {
+        let mut queue = later.parents.clone();
+        let mut visited = HashSet::new();
+        while let Some(id) = queue.pop() {
+            if id == earlier {
+                return true;
+            }
+            if visited.insert(id.clone())
+                && let Some(e) = by_id.get(id.as_str())
+            {
+                queue.extend(e.parents.clone());
+            }
+        }
+        false
+    };
+    let fields: BTreeSet<_> = events.iter().map(|e| e.field.as_str()).collect();
+    let mut result = Entity::default();
+    let live_deletes = events
+        .iter()
+        .filter(|e| {
+            e.field == "$deleted"
+                && !events
+                    .iter()
+                    .any(|later| later.id != e.id && ancestor(&e.id, later))
+        })
+        .collect::<Vec<_>>();
+    if !live_deletes.is_empty() {
+        let edits = events
+            .iter()
+            .filter(|e| e.field != "$deleted" && live_deletes.iter().any(|d| !ancestor(&e.id, d)))
+            .cloned()
+            .collect::<Vec<_>>();
+        if edits.is_empty() {
+            result.deleted = true;
+            return Ok(result);
+        }
+        result.conflicts.push(Conflict {
+            entity: entity.into(),
+            field: "$deleted".into(),
+            candidates: live_deletes.into_iter().cloned().chain(edits).collect(),
+        });
+    }
+    for field in fields.into_iter().filter(|f| *f != "$deleted") {
+        let heads = events
+            .iter()
+            .filter(|e| {
+                e.field == field
+                    && !events.iter().any(|later| {
+                        later.field == field && later.id != e.id && ancestor(&e.id, later)
+                    })
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if heads.is_empty() {
+            continue;
+        }
+        if heads.iter().all(|h| h.value == heads[0].value) {
+            if let Some(value) = &heads[0].value {
+                result.fields.insert(field.into(), value.clone());
+            }
+        } else {
+            result.conflicts.push(Conflict {
+                entity: entity.into(),
+                field: field.into(),
+                candidates: heads,
+            });
+        }
+    }
+    Ok(result)
 }
 
 #[cfg(test)]

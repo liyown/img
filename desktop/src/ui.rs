@@ -13,6 +13,8 @@ mod queue;
 mod quick_upload;
 #[path = "remote_ui.rs"]
 mod remote_ui;
+#[path = "sync_ui.rs"]
+mod sync_ui;
 #[path = "workflows.rs"]
 mod workflows;
 
@@ -80,6 +82,7 @@ enum Filter {
 
 pub struct ImgDesktop {
     catalog: Entity<catalog_ui::Library>,
+    sync_panel: Entity<sync_ui::SyncPanel>,
     shutting_down: bool,
     shutdown_saved: bool,
     pending_restore: bool,
@@ -286,6 +289,8 @@ impl ImgDesktop {
         });
         let catalog =
             cx.new(|cx| catalog_ui::Library::new(root.clone(), engine.clone(), window, cx));
+        let sync_panel =
+            cx.new(|cx| sync_ui::SyncPanel::new(root.clone(), engine.clone(), window, cx));
         let loaded = model::load(&root);
         let persistence_ok = loaded.is_ok();
         let mut notice = loaded.as_ref().err().map(|e| (e.to_string(), true));
@@ -411,6 +416,7 @@ impl ImgDesktop {
         }
         Self {
             catalog,
+            sync_panel,
             shutting_down: false,
             shutdown_saved: false,
             pending_restore: false,
@@ -1984,6 +1990,7 @@ impl ImgDesktop {
             .flex_col()
             .gap(px(20.))
             .child(label("设置", 20., TEXT).font_weight(FontWeight::SEMIBOLD))
+            .child(card().child(self.sync_panel.clone()))
             .child(card().child(self.recovery_controls(cx)))
             .child(card().child(self.storage_settings.clone()))
             .child(card().child(self.upload_settings.clone()))

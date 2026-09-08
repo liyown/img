@@ -140,3 +140,5 @@ mod tests {
         assert!(acknowledge(root.path(), "../outside").is_err());
     }
 }
+
+mod sync_catalog;

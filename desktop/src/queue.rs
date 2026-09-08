@@ -630,6 +630,9 @@ impl ImgDesktop {
         if let Some(control) = self.catalog.update(cx, |library, _| library.stop()) {
             self.queue.auxiliary.push(control);
         }
+        if let Some(control) = self.sync_panel.update(cx, |panel, _| panel.stop()) {
+            self.queue.auxiliary.push(control);
+        }
         self.shutting_down = true;
         let (controls, saved) = self.prepare_shutdown();
         self.message("正在保存队列并结束后台进程…", false, cx);
