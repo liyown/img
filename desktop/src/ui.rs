@@ -121,6 +121,8 @@ pub struct ImgDesktop {
     storage_settings: Entity<StorageSettings>,
     upload_options: UploadOptions,
     upload_settings: Entity<UploadSettings>,
+    cli_installing: bool,
+    cli_notice: Option<(String, bool)>,
     update_checking: bool,
     update_downloading: bool,
     available_update: Option<crate::updates::Update>,
@@ -488,6 +490,8 @@ impl ImgDesktop {
             storage_settings,
             upload_options,
             upload_settings,
+            cli_installing: false,
+            cli_notice: None,
             update_checking: false,
             update_downloading: false,
             available_update: None,
@@ -1688,11 +1692,13 @@ impl ImgDesktop {
         }
     }
     fn check_updates(&mut self, cx: &mut Context<Self>) {
-        if self.update_checking || self.update_downloading {
+        if self.update_checking || self.update_downloading || self.install_preparing {
             return;
         }
         self.update_checking = true;
         self.update_notice = None;
+        self.available_update = None;
+        self.update_file = None;
         let task = cx
             .background_executor()
             .spawn(async { crate::updates::check() });
@@ -1707,7 +1713,7 @@ impl ImgDesktop {
                             update
                                 .as_ref()
                                 .map(|u| format!("发现新版本 {}", u.version))
-                                .unwrap_or("未发现可安装的新版本".into()),
+                                .unwrap_or("当前没有适用于此设备的新版本".into()),
                             false,
                         ));
                         this.available_update = update;
@@ -1812,24 +1818,32 @@ impl ImgDesktop {
         cx.notify();
     }
     fn install_cli(&mut self, cx: &mut Context<Self>) {
+        if self.cli_installing || self.install_preparing || self.shutting_down {
+            return;
+        }
+        self.cli_installing = true;
+        self.cli_notice = None;
         let binary = self.engine.clone();
         let task = cx.background_executor().spawn(async move {
             std::process::Command::new(binary)
-                .arg("install-cli")
+                .args(["install-cli", "--json"])
                 .output()
         });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
-                this.update_notice = Some(match result {
-                    Ok(output) if output.status.success() => (
-                        String::from_utf8_lossy(&output.stdout).trim().to_owned(), false),
-                    Ok(_) => ("命令入口已存在或目录不可写。可直接使用应用内的 Contents/MacOS/img，或选择其他 CLI 安装目录。".into(), true),
+                this.cli_installing = false;
+                this.cli_notice = Some(match result {
+                    Ok(output) => {
+                        crate::updates::cli_install_notice(output.status.success(), &output.stdout)
+                    }
                     Err(_) => ("无法启动内置 CLI，请重新安装应用。".into(), true),
                 });
                 cx.notify();
             });
-        }).detach();
+        })
+        .detach();
+        cx.notify();
     }
     fn update_controls(&self, cx: &mut Context<Self>) -> AnyElement {
         let mut body = div()
@@ -1875,12 +1889,27 @@ impl ImgDesktop {
                     .child(label("已内置 Rust CLI · 可独立在终端使用", 13., TEXT))
                     .child(
                         Button::new("install-cli")
-                            .label(crate::i18n::text("添加终端命令"))
+                            .label(crate::i18n::text(if self.cli_installing {
+                                "正在添加…"
+                            } else {
+                                "添加终端命令"
+                            }))
+                            .loading(self.cli_installing)
+                            .disabled(
+                                self.cli_installing || self.install_preparing || self.shutting_down,
+                            )
                             .outline()
                             .small()
                             .on_click(cx.listener(|this, _, _, cx| this.install_cli(cx))),
                     ),
             )
+            .when_some(self.cli_notice.as_ref(), |body, (message, error)| {
+                body.child(label(
+                    message.clone(),
+                    12.,
+                    if *error { RED } else { MUTED },
+                ))
+            })
             .child(
                 div()
                     .flex()
@@ -1914,7 +1943,12 @@ impl ImgDesktop {
                             }))
                             .outline()
                             .small()
-                            .disabled(self.update_checking || self.update_downloading)
+                            .loading(self.update_checking)
+                            .disabled(
+                                self.update_checking
+                                    || self.update_downloading
+                                    || self.install_preparing,
+                            )
                             .on_click(cx.listener(|this, _, _, cx| this.check_updates(cx))),
                     )
                     .child(

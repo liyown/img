@@ -311,7 +311,7 @@
   "无法保存诊断文件，请检查目录权限": "Could not save diagnostics. Check directory permissions.",
   "无法准备新应用，旧版未改变": "Could not prepare the new application. The previous version is unchanged.",
   "无法创建菜单栏按钮": "Could not create the menu bar button",
-  "无法启动内置 CLI，请重新安装应用。": "Could not start the bundled CLI. Reinstall img.",
+  "无法启动内置 CLI，请重新安装应用。": "Cannot start the bundled CLI. Reinstall the app.",
   "无法启动安装程序，旧版未改变": "Could not start the installer. The previous version is unchanged.",
   "无法打开安装包": "Could not open the installer",
   "无法打开文件选择器": "Could not open the file picker",
@@ -658,5 +658,12 @@
   "更多同步操作": "More sync actions",
   "暂停同步": "Pause sync",
   "查看冲突": "View conflicts",
-  "使用设备 {} 的值：{}": "Use the value from device {}: {}"
+  "使用设备 {} 的值：{}": "Use the value from device {}: {}",
+  "正在添加…": "Adding…",
+  "当前没有适用于此设备的新版本": "No newer version is available for this device",
+  "无法确认终端命令是否添加成功，请重新安装应用后重试。": "Could not confirm command installation. Reinstall the app and try again.",
+  "终端命令已添加：{}。可在终端运行 img --help。": "Command added: {}. Run img --help in your terminal.",
+  "终端命令已添加：{}。若终端提示找不到 img，请将所在目录加入 PATH 后重新打开终端。": "Command added: {}. If your terminal cannot find img, add its directory to PATH and reopen the terminal.",
+  "目标位置已有其他 img 命令，未覆盖。可继续使用已有版本，或运行内置 CLI 的 install-cli --dir 指定其他目录。": "Another img command already exists at this location. It was not overwritten. Keep using it, or run the bundled CLI with install-cli --dir to choose another directory.",
+  "无法写入终端命令目录，请检查目录权限和磁盘空间后重试。": "Cannot write to the command directory. Check its permissions and available disk space, then retry."
 }

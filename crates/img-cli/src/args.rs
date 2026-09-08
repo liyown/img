@@ -129,6 +129,9 @@ pub enum Command {
     Version,
     /// Add the bundled CLI to a directory on PATH (no GUI required to run it)
     InstallCli {
+        /// Return a structured installation result
+        #[arg(long)]
+        json: bool,
         #[arg(long)]
         dir: Option<PathBuf>,
     },

@@ -285,8 +285,27 @@ fn run(cli: Cli, control: &Control) -> Result<i32> {
         Command::Completion { shell } => {
             clap_complete::generate(shell, &mut Cli::command(), "img", &mut std::io::stdout());
         }
-        Command::InstallCli { dir } => {
-            let (path, on_path) = platform::install_cli(dir.as_deref())?;
+        Command::InstallCli { dir, json } => {
+            let result = platform::install_cli(dir.as_deref());
+            if json {
+                match result {
+                    Ok((path, on_path)) => println!(
+                        "{}",
+                        serde_json::json!({"success": true, "path": path, "on_path": on_path})
+                    ),
+                    Err(error) => {
+                        let code = if error.to_string().contains("already exists") {
+                            "already_exists"
+                        } else {
+                            "io"
+                        };
+                        println!("{}", serde_json::json!({"success": false, "code": code}));
+                        return Ok(1);
+                    }
+                }
+                return Ok(0);
+            }
+            let (path, on_path) = result?;
             println!("Installed CLI: {}", path.display());
             if !on_path {
                 println!(

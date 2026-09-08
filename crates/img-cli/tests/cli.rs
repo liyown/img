@@ -693,6 +693,20 @@ fn installation_produces_a_standalone_rust_cli() {
     assert!(String::from_utf8(version.stdout).unwrap().contains("Rust"));
 }
 #[test]
+fn installation_json_reports_success_and_preserves_conflicting_command() {
+    let f = Fixture::new("https://unused.test");
+    let dir = f.dir.path().join("json-command");
+    let out = f.run(&["install-cli", "--json", "--dir", dir.to_str().unwrap()]);
+    assert!(out.status.success());
+    assert_eq!(parsed(&out)["success"], true);
+    let binary = dir.join(if cfg!(windows) { "img.exe" } else { "img" });
+    std::fs::write(&binary, b"existing command").unwrap();
+    let out = f.run(&["install-cli", "--json", "--dir", dir.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(parsed(&out)["code"], "already_exists");
+    assert_eq!(std::fs::read(binary).unwrap(), b"existing command");
+}
+#[test]
 fn info_flags_after_file_and_url_fetch_limits() {
     let f = Fixture::new("https://unused.test");
     let out = f.run(&["info", f.image.to_str().unwrap(), "--format", "json"]);

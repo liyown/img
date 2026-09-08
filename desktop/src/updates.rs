@@ -346,3 +346,55 @@ mod tests {
         assert!(verify_checksum(file.path(), &format!("{digest}  app.dmg"), "app.dmg").is_err());
     }
 }
+
+/// Decode only the CLI's structured result; never display arbitrary subprocess output.
+pub fn cli_install_notice(success: bool, bytes: &[u8]) -> (String, bool) {
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+        return (
+            "无法确认终端命令是否添加成功，请重新安装应用后重试。".into(),
+            true,
+        );
+    };
+    if success
+        && value["success"] == true
+        && let Some(path) = value["path"].as_str()
+    {
+        return (
+            if value["on_path"] == true {
+                crate::i18n::text(format!(
+                    "终端命令已添加：{}。可在终端运行 img --help。",
+                    path
+                ))
+                .to_string()
+            } else {
+                crate::i18n::text(format!("终端命令已添加：{}。若终端提示找不到 img，请将所在目录加入 PATH 后重新打开终端。", path)).to_string()
+            },
+            false,
+        );
+    }
+    (match value["code"].as_str() {
+        Some("already_exists") => "目标位置已有其他 img 命令，未覆盖。可继续使用已有版本，或运行内置 CLI 的 install-cli --dir 指定其他目录。",
+        Some("io") => "无法写入终端命令目录，请检查目录权限和磁盘空间后重试。",
+        _ => "无法确认终端命令是否添加成功，请重新安装应用后重试。",
+    }.into(), true)
+}
+
+#[cfg(test)]
+mod cli_notice_tests {
+    use super::*;
+    #[test]
+    fn installation_feedback_distinguishes_path_conflict_and_invalid_output() {
+        let (message, error) = cli_install_notice(
+            true,
+            br#"{"success":true,"path":"/tmp/bin/img","on_path":false}"#,
+        );
+        assert!(!error);
+        assert!(message.contains("PATH"));
+        let (message, error) =
+            cli_install_notice(false, br#"{"success":false,"code":"already_exists"}"#);
+        assert!(error);
+        assert!(message.contains("未覆盖"));
+        assert!(cli_install_notice(true, b"unstructured output").1);
+        assert!(cli_install_notice(false, br#"{"success":true,"path":"/tmp/img"}"#).1);
+    }
+}
