@@ -1096,7 +1096,10 @@ impl Render for Library {
         view.child(
             div()
                 .flex()
-                .gap(px(8.))
+                .items_center()
+                .flex_shrink_0()
+                .gap(px(16.))
+                .pt(px(8.))
                 .child(
                     action("catalog-prev", "上一页")
                         .disabled(self.query.offset == 0 || self.busy)
@@ -1107,15 +1110,23 @@ impl Render for Library {
                             this.refresh(cx);
                         })),
                 )
-                .child(label(
-                    format!(
-                        "{} / {}",
-                        self.query.offset / 200 + 1,
-                        self.total.div_ceil(200).max(1)
-                    ),
-                    12.,
-                    MUTED,
-                ))
+                .child(
+                    div()
+                        .min_w(px(56.))
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(label(
+                            format!(
+                                "{} / {}",
+                                self.query.offset / 200 + 1,
+                                self.total.div_ceil(200).max(1)
+                            ),
+                            12.,
+                            MUTED,
+                        )),
+                )
                 .child(
                     action("catalog-next", "下一页")
                         .disabled(self.query.offset + 200 >= self.total || self.busy)
