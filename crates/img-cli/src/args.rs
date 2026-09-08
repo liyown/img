@@ -17,6 +17,11 @@ pub struct Cli {
 }
 #[derive(Subcommand)]
 pub enum Command {
+    /// Plan and apply recoverable copies; preserve source files
+    Migrate {
+        #[command(subcommand)]
+        command: MigrateCommand,
+    },
     /// Synchronize metadata through your own WebDAV or S3 storage
     Sync {
         #[command(subcommand)]
@@ -474,16 +479,20 @@ pub enum LibraryCommand {
         id: String,
     },
     Check {
-        #[arg(required = true)]
+        #[arg(required_unless_present = "plan", conflicts_with = "plan")]
         ids: Vec<String>,
+        #[arg(long)]
+        plan: Option<PathBuf>,
         #[arg(long, default_value = "")]
         provider: String,
         #[arg(long)]
         allow_insecure: bool,
     },
     Download {
-        #[arg(required = true)]
+        #[arg(required_unless_present = "plan", conflicts_with = "plan")]
         ids: Vec<String>,
+        #[arg(long)]
+        plan: Option<PathBuf>,
         #[arg(long)]
         output_dir: PathBuf,
         #[arg(long, default_value = "")]
@@ -523,4 +532,31 @@ pub enum SyncCommand {
         field: String,
         event: String,
     },
+}
+
+#[derive(Subcommand)]
+pub enum MigrateCommand {
+    /// Inspect destinations without uploading; save a fixed plan for review
+    Plan {
+        #[arg(required_unless_present = "selection", conflicts_with = "selection")]
+        ids: Vec<String>,
+        #[arg(long, help = "A frozen library selection JSON file")]
+        selection: Option<PathBuf>,
+        #[arg(long, default_value = "")]
+        from: String,
+        #[arg(long)]
+        to: String,
+        #[arg(long, default_value = "")]
+        prefix: String,
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Apply or retry this exact plan; verified successes are preserved
+    Apply {
+        plan: PathBuf,
+        #[arg(long, help = "Write a report and verified URL mapping to a new file")]
+        report: Option<PathBuf>,
+    },
+    /// Inspect locally saved migration progress
+    Show { task_id: String },
 }

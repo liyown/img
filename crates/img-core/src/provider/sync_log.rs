@@ -74,9 +74,51 @@ impl Provider {
             if response.status() == StatusCode::PRECONDITION_FAILED {
                 return Ok(false);
             }
+            if self.cfg.kind == "s3"
+                && self.is_aliyun_oss()
+                && response.status() == StatusCode::CONFLICT
+            {
+                let body = network::bounded(response, 64 * 1024)?;
+                if oss_existing_object(&body) {
+                    return Ok(false);
+                }
+                return Err(UploadError {
+                    message: "OSS rejected the sync write with a storage conflict".into(),
+                    retryable: false,
+                    failure: crate::failure::Failure::http(409),
+                }
+                .into());
+            }
             self.response(response, "sync conditional write")?;
             Ok(true)
         })()
         .map_err(|e| self.safe_error(e))
+    }
+}
+
+fn oss_existing_object(body: &[u8]) -> bool {
+    #[derive(serde::Deserialize)]
+    struct ErrorBody {
+        #[serde(rename = "Code")]
+        code: String,
+    }
+    quick_xml::de::from_reader::<_, ErrorBody>(body)
+        .is_ok_and(|error| error.code == "FileAlreadyExists")
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn oss_overwrite_rejection_is_distinct_from_other_conflicts() {
+        assert!(oss_existing_object(
+            b"<Error><Code>FileAlreadyExists</Code><Message>Object exists</Message></Error>"
+        ));
+        assert!(!oss_existing_object(
+            b"<Error><Code>FileImmutable</Code></Error>"
+        ));
+        assert!(!oss_existing_object(
+            b"<Error><Message>FileAlreadyExists</Message></Error>"
+        ));
+        assert!(!oss_existing_object(b"not XML"));
     }
 }

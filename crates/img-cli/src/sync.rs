@@ -85,7 +85,7 @@ fn execute(config_path: &std::path::Path, command: SyncCommand, control: &Contro
                 .context("selected event does not belong to this conflict")?;
             catalog.sync_set(&entity, &selected.field, selected.value)?;
             catalog.sync_materialize_catalog()?;
-            json!({"resolved":true})
+            json!({"resolved":true,"entity":entity,"field":selected.field})
         }
         SyncCommand::Run => {
             let settings = SyncSettings::read(&root)?;

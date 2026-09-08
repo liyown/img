@@ -5,8 +5,10 @@ pub mod cache;
 pub mod catalog;
 pub mod credentials;
 pub mod files;
+mod legacy_cache;
 pub mod migration;
 pub mod sync;
+pub mod targets;
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::{

@@ -794,3 +794,69 @@ fn server_supports_picgo_json_and_multipart() {
     child.wait().unwrap();
     h.join().unwrap();
 }
+
+#[test]
+fn frozen_download_rejects_overwritten_remote_version_after_destination_prompt() {
+    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", server.server_addr());
+    let f = Fixture::new(&endpoint);
+    std::fs::write(&f.config, format!("version=1\nallow_plaintext_credentials=true\ndefault_provider='local'\n[providers.local]\ntype='s3'\nendpoint='{endpoint}'\nbucket='images'\nregion='test'\naccess_key='test'\nsecret_key='test'\npublic_url='https://unavailable.invalid'\npath_style=true\nallow_insecure=true\n")).unwrap();
+    let cfg = img_core::config::read_global(&f.config).unwrap();
+    let provider = img_core::provider::Provider::new("local", &cfg.providers["local"]).unwrap();
+    let mut catalog = img_records::catalog::Catalog::open(&f.dir.path().join("data")).unwrap();
+    let bytes = std::fs::read(&f.image).unwrap();
+    let id = catalog
+        .upsert(&img_records::catalog::RemoteRecord {
+            namespace: provider.namespace(),
+            provider: "local".into(),
+            path: Some("picture.png".into()),
+            url: "https://unavailable.invalid/picture.png".into(),
+            version: "\"v1\"".into(),
+            name: "picture.png".into(),
+            content_type: "image/png".into(),
+            size: bytes.len() as u64,
+            added_at: 1,
+            origin: "remote".into(),
+            content_hash: None,
+        })
+        .unwrap();
+    let plan =
+        img_records::targets::TargetPlan::capture(&catalog, std::slice::from_ref(&id), "local")
+            .unwrap();
+    let path = f.dir.path().join("plan.json");
+    std::fs::write(&path, serde_json::to_vec(&plan).unwrap()).unwrap();
+    let output = f.dir.path().join("downloads");
+    std::fs::create_dir(&output).unwrap();
+    let handle = std::thread::spawn(move || {
+        let request = server
+            .recv_timeout(Duration::from_secs(8))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            request
+                .headers()
+                .iter()
+                .find(|h| h.field.equiv("if-match"))
+                .unwrap()
+                .value
+                .as_str(),
+            "\"v1\""
+        );
+        request.respond(tiny_http::Response::empty(412)).unwrap();
+    });
+    let result = f.run(&[
+        "library",
+        "download",
+        "--plan",
+        path.to_str().unwrap(),
+        "--output-dir",
+        output.to_str().unwrap(),
+    ]);
+    handle.join().unwrap();
+    assert!(!result.status.success());
+    let value = parsed(&result);
+    assert_eq!(value["files"][0]["task_id"], plan.task_id);
+    assert_eq!(value["files"][0]["location"]["version"], "\"v1\"");
+    assert_eq!(std::fs::read_dir(output).unwrap().count(), 0);
+    assert_eq!(std::fs::read(&f.image).unwrap(), bytes);
+}

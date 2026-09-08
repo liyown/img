@@ -195,7 +195,11 @@ fn execute(config_path: &Path, command: LibraryCommand, control: &Control) -> Re
                 offset,
             })?)?
         ),
-        LibraryCommand::Show { id } => println!("{}", serde_json::to_string(&c.get(&id)?)?),
+        LibraryCommand::Show { id } => {
+            let mut value = serde_json::to_value(c.get(&id)?)?;
+            value["versions"]=serde_json::to_value(c.related_versions(&id)?.into_iter().map(|(asset,recipe,ancestor)|serde_json::json!({"image":asset,"recipe":recipe,"ancestor":ancestor})).collect::<Vec<_>>())?;
+            println!("{}", value);
+        }
         LibraryCommand::Hide { ids, restore } => {
             c.set_hidden_many(&ids, !restore)?;
             println!("{}", serde_json::json!({"updated":ids.len()}));
@@ -209,25 +213,25 @@ fn execute(config_path: &Path, command: LibraryCommand, control: &Control) -> Re
                         .context("cache limit overflow")?,
                 )?;
             }
+            let removed = cache.trim(if clear { 0 } else { cache.limit()? })?;
+            let (bytes, protected_bytes) = cache.usage()?;
             println!(
                 "{}",
-                serde_json::json!({"removed_bytes":cache.trim(if clear{0}else{cache.limit()?})?})
+                serde_json::json!({"removed_bytes":removed,"bytes":bytes,"protected_bytes":protected_bytes,"limit_bytes":cache.limit()?})
             );
         }
         LibraryCommand::Check {
             ids,
+            plan,
             provider,
             allow_insecure,
         } => {
-            let targets = ids.iter().map(|id| c.get(id)).collect::<Result<Vec<_>>>()?;
+            let plan = read_plan(&c, plan.as_deref(), &ids, &provider)?;
+            let targets = &plan.targets;
             let mut results = vec![];
-            for asset in targets {
+            for (index, asset) in targets.iter().enumerate() {
                 control.check()?;
-                let Some(location) = asset.selected_location(&provider) else {
-                    failed = true;
-                    results.push(serde_json::json!({"id":asset.id,"error":"no matching address"}));
-                    continue;
-                };
+                let location = &asset.location;
                 let result = link_check::check(&location.url, allow_insecure);
                 failed |= !result.accessible;
                 let state = if result.accessible {
@@ -246,26 +250,26 @@ fn execute(config_path: &Path, command: LibraryCommand, control: &Control) -> Re
                     SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
                 )?;
                 results.push(
-                    serde_json::json!({"id":asset.id,"location_id":location.id,"check":result}),
+                    serde_json::json!({"id":asset.input_id,"input_id":asset.input_id,"task_id":plan.task_id,"output_order":index,"success":result.accessible,"location_id":location.id,"location":location,"check":result}),
                 );
             }
             println!("{}", serde_json::json!({"success":!failed,"files":results}));
         }
         LibraryCommand::Download {
             ids,
+            plan,
             output_dir,
             provider,
         } => {
             ensure!(output_dir.is_dir(), "choose an existing output directory");
             let cfg = config::read_global(config_path)?;
-            let targets = ids.iter().map(|id| c.get(id)).collect::<Result<Vec<_>>>()?;
+            let plan = read_plan(&c, plan.as_deref(), &ids, &provider)?;
+            let targets = &plan.targets;
             let mut results = vec![];
             for (index, asset) in targets.iter().enumerate() {
                 control.check()?;
                 let result = (|| -> Result<_> {
-                    let location = asset
-                        .selected_location(&provider)
-                        .context("no matching address")?;
+                    let location = &asset.location;
                     let bytes = if let Some(key) = &location.path {
                         let p = crate::provider(&cfg, &location.provider)?;
                         ensure!(
@@ -277,6 +281,12 @@ fn execute(config_path: &Path, command: LibraryCommand, control: &Control) -> Re
                         network::fetch(&location.url, cfg.upload.max_size, false)?.data
                     };
                     img_core::media::inspect(&bytes, cfg.upload.max_size)?;
+                    if let Some(expected) = &asset.content_hash {
+                        ensure!(
+                            &img_records::catalog::digest(&bytes) == expected,
+                            "remote content no longer matches the selected image"
+                        );
+                    }
                     let name = Path::new(&asset.name)
                         .file_name()
                         .and_then(|v| v.to_str())
@@ -292,10 +302,10 @@ fn execute(config_path: &Path, command: LibraryCommand, control: &Control) -> Re
                 })();
                 match result {
                     Ok(path) => results
-                        .push(serde_json::json!({"id":asset.id,"success":true,"output":path})),
+                        .push(serde_json::json!({"id":asset.input_id,"input_id":asset.input_id,"task_id":plan.task_id,"output_order":index,"success":true,"output":path,"location":asset.location})),
                     Err(e) => {
                         failed = true;
-                        results.push(serde_json::json!({"id":asset.id,"success":false,"error":e.to_string()}));
+                        results.push(serde_json::json!({"id":asset.input_id,"input_id":asset.input_id,"task_id":plan.task_id,"output_order":index,"success":false,"error":e.to_string(),"error_code":img_core::failure::Failure::from_error(&e,img_core::failure::ErrorCode::Unknown).code,"location":asset.location}));
                     }
                 }
             }
@@ -303,4 +313,18 @@ fn execute(config_path: &Path, command: LibraryCommand, control: &Control) -> Re
         }
     }
     Ok(if failed { 1 } else { 0 })
+}
+
+fn read_plan(
+    catalog: &Catalog,
+    path: Option<&Path>,
+    ids: &[String],
+    provider: &str,
+) -> Result<img_records::targets::TargetPlan> {
+    let plan = match path {
+        Some(path) => serde_json::from_slice(&std::fs::read(path)?)?,
+        None => img_records::targets::TargetPlan::capture(catalog, ids, provider)?,
+    };
+    plan.validate()?;
+    Ok(plan)
 }

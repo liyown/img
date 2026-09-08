@@ -68,6 +68,78 @@ struct DavType {
     collection: Option<serde::de::IgnoredAny>,
 }
 impl Provider {
+    /// Inspect one exact object. Only a definitive 404 means it is absent.
+    pub fn stat_remote(&self, path: &str, control: &Control) -> Result<Option<RemoteItem>> {
+        pathgen::validate(path)?;
+        ensure!(!path.ends_with('/'), "select a file, not a directory");
+        control.check()?;
+        let result = (|| -> Result<Option<RemoteItem>> {
+            let response = match self.cfg.kind.as_str() {
+                "s3" => self.s3_request(
+                    Method::HEAD,
+                    &self.s3_url(Some(path))?,
+                    None,
+                    "",
+                    false,
+                    control,
+                )?,
+                "webdav" => self.dav_request(Method::HEAD, path)?.send()?,
+                "github" => self
+                    .github_request(
+                        Method::GET,
+                        &format!(
+                            "{}/contents/{}",
+                            self.repository_endpoint(),
+                            pathgen::escape(path)
+                        ),
+                    )
+                    .query(&[("ref", self.branch())])
+                    .send()?,
+                _ => bail!("this provider cannot inspect remote objects"),
+            };
+            if response.status() == StatusCode::NOT_FOUND {
+                return Ok(None);
+            }
+            if !response.status().is_success() {
+                self.response(response, "remote object lookup")?;
+                unreachable!();
+            }
+            let (size, version) = if self.cfg.kind == "github" {
+                let bytes = network::bounded(response, 2 << 20)?;
+                let value: serde_json::Value = serde_json::from_slice(&bytes)?;
+                ensure!(value["type"] == "file", "remote target is not a file");
+                (
+                    value["size"].as_u64().context("remote size missing")?,
+                    value["sha"]
+                        .as_str()
+                        .context("remote version missing")?
+                        .to_owned(),
+                )
+            } else {
+                let size = response
+                    .headers()
+                    .get("Content-Length")
+                    .and_then(|h| h.to_str().ok())
+                    .and_then(|v| v.parse().ok())
+                    .context("remote size missing")?;
+                let version = response
+                    .headers()
+                    .get("ETag")
+                    .and_then(|h| h.to_str().ok())
+                    .unwrap_or("")
+                    .to_owned();
+                (size, version)
+            };
+            Ok(Some(RemoteItem {
+                path: path.into(),
+                url: self.public_object(path),
+                size,
+                version,
+                directory: false,
+            }))
+        })();
+        result.map_err(|e| self.safe_error(e))
+    }
     fn public_object(&self, path: &str) -> String {
         let base = if self.cfg.public_url.is_empty() && self.cfg.kind == "github" {
             format!(

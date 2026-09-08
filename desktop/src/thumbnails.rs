@@ -196,6 +196,7 @@ pub fn prepare(root: &Path, preview: &Path) -> anyhow::Result<PathBuf> {
         !parent.symlink_metadata()?.file_type().is_symlink(),
         "预览目录不能是符号链接"
     );
+    img_records::cache::Cache::open(root)?.touch_legacy(preview)?;
     let target = parent.join("thumbnail-512.png");
     if target.is_file()
         && !target.symlink_metadata()?.file_type().is_symlink()

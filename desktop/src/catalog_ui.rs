@@ -1,4 +1,10 @@
 use super::*;
+#[path = "copy_dialog.rs"]
+mod copy_dialog;
+#[path = "catalog_detail.rs"]
+mod detail;
+#[path = "scope_dialog.rs"]
+mod scope_dialog;
 use img_records::catalog::{Asset, Catalog, CatalogQuery};
 use std::collections::HashSet;
 
@@ -236,7 +242,7 @@ impl Library {
         cx.notify();
     }
     fn refresh(&mut self, cx: &mut Context<Self>) {
-        if self.busy || self.loading {
+        if self.loading || self.stopping {
             return;
         }
         let stamp = ["catalog.sqlite3", "catalog.sqlite3-wal", "queue.json"]
@@ -519,115 +525,133 @@ impl Library {
             let _=this.update_in(cx,|this,_,cx|match file{Ok(file)=>{let args=vec!["library".into(),"delete".into(),"--plan".into(),file.path().to_string_lossy().into_owned()];this.command_file(args,Some(file),cx);},Err(error)=>{this.notice=Some(error.to_string());cx.notify();}});
         }).detach();
     }
-    fn download_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let ids = self.selected.snapshot();
+    fn read_selected(&mut self, download: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy || self.stopping || self.selected.is_empty() {
+            return;
+        }
+        self.busy = true;
+        let ids = self.selected.snapshot().into_iter().collect::<Vec<_>>();
         let provider = self.query.provider.clone();
-        let prompt = cx.prompt_for_paths(PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: false,
-            prompt: Some(crate::i18n::text("选择下载目录")),
+        let root = self.root.clone();
+        let task = cx.background_executor().spawn(async move {
+            (|| -> anyhow::Result<_> {
+                use std::io::Write;
+                let catalog = Catalog::open(&root)?;
+                let plan = img_records::targets::TargetPlan::capture(&catalog, &ids, &provider)?;
+                let mut file = tempfile::NamedTempFile::new()?;
+                file.write_all(&serde_json::to_vec(&plan)?)?;
+                file.as_file().sync_all()?;
+                Ok(file)
+            })()
         });
         cx.spawn_in(window, async move |this, cx| {
-            let Ok(Ok(Some(paths))) = prompt.await else {
-                return;
-            };
-            let Some(path) = paths.first() else {
-                return;
+            let prepared = task.await;
+            let file = match prepared {
+                Ok(file) => file,
+                Err(error) => {
+                    let _ = this.update_in(cx, |this, _, cx| {
+                        this.busy = false;
+                        this.notice = Some(error.to_string());
+                        cx.notify();
+                    });
+                    return;
+                }
             };
             let mut args = vec![
                 "library".into(),
-                "download".into(),
-                "--output-dir".into(),
-                path.to_string_lossy().into_owned(),
-                "--provider".into(),
-                provider,
+                if download { "download" } else { "check" }.into(),
+                "--plan".into(),
+                file.path().to_string_lossy().into_owned(),
             ];
-            args.extend(ids);
-            let _ = this.update_in(cx, |this, _, cx| this.command(args, cx));
-        })
-        .detach();
-    }
-    fn pause_scope(&mut self, cx: &mut Context<Self>) {
-        let root = self.root.clone();
-        let provider = self.query.provider.clone();
-        let prefix = self.query.prefix.trim_end_matches('/').to_string();
-        let task = cx.background_executor().spawn(async move {
-            (|| -> anyhow::Result<usize> {
-                let mut c = Catalog::open(&root)?;
-                let mut count = 0;
-                for (key, body) in c.settings_prefix("scope:")? {
-                    let mut scope: serde_json::Value = serde_json::from_str(&body)?;
-                    if scope["provider"] == provider
-                        && scope["prefix"].as_str().unwrap_or("").trim_end_matches('/') == prefix
-                    {
-                        scope["enabled"] = false.into();
-                        c.sync_set(&key, "enabled", Some(false.into()))?;
-                        c.set_setting(&key, &serde_json::to_string(&scope)?)?;
-                        count += 1;
-                    }
-                }
-                Ok(count)
-            })()
-        });
-        cx.spawn(async move |this, cx| {
-            let result = task.await;
-            let _ = this.update(cx, |this, cx| {
-                this.notice = Some(match result {
-                    Ok(0) => "此范围尚未开始索引".into(),
-                    Ok(_) => "索引将在当前请求结束后暂停，扫描进度会保留".into(),
-                    Err(error) => error.to_string(),
+            if download {
+                let prompt = this.update_in(cx, |_, _, cx| {
+                    cx.prompt_for_paths(PathPromptOptions {
+                        files: false,
+                        directories: true,
+                        multiple: false,
+                        prompt: Some(crate::i18n::text("选择下载目录")),
+                    })
                 });
+                let paths = match prompt {
+                    Ok(prompt) => prompt.await.ok().and_then(Result::ok).flatten(),
+                    Err(_) => None,
+                };
+                let Some(path) = paths.and_then(|paths| paths.into_iter().next()) else {
+                    let _ = this.update_in(cx, |this, _, cx| {
+                        this.busy = false;
+                        cx.notify();
+                    });
+                    return;
+                };
+                args.extend(["--output-dir".into(), path.to_string_lossy().into_owned()]);
+            }
+            let _ = this.update_in(cx, |this, _, cx| {
+                this.busy = false;
+                if !this.stopping {
+                    this.command_file(args, Some(file), cx);
+                }
                 cx.notify();
             });
         })
         .detach();
+        cx.notify();
     }
-    fn index_scope(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let provider = self.query.provider.clone();
-        let prefix = if self.query.prefix.is_empty() {
-            String::new()
-        } else {
-            format!("{}/", self.query.prefix.trim_end_matches('/'))
-        };
-        if provider.is_empty() {
+    fn copy_to(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy || self.selected.is_empty() {
             return;
         }
-        let message = format!(
-            "存储源：{provider}\n目录：{}\n将递归索引此范围，并在应用运行期间每 15 分钟刷新。",
-            if prefix.is_empty() {
-                "根目录"
-            } else {
-                &prefix
-            }
-        );
-        let prompt = crate::i18n::prompt(
-            window,
-            PromptLevel::Info,
-            "索引远端图片",
-            Some(&message),
-            &["取消", "开始索引"],
-            cx,
-        );
+        self.busy = true;
+        let ids = self.selected.snapshot().into_iter().collect::<Vec<_>>();
+        let hidden = self.selected.hidden();
+        let root = self.root.clone();
+        let provider = self.query.provider.clone();
+        let task = cx.background_executor().spawn(async move {
+            img_records::targets::TargetPlan::capture(&Catalog::open(&root)?, &ids, &provider)
+        });
         cx.spawn_in(window, async move |this, cx| {
-            if prompt.await.ok() == Some(1) {
-                let _ = this.update_in(cx, |this, _, cx| {
-                    this.command(
-                        vec![
-                            "library".into(),
-                            "index".into(),
-                            "--provider".into(),
-                            provider,
-                            "--prefix".into(),
-                            prefix,
-                            "--resume".into(),
-                        ],
-                        cx,
-                    )
-                });
-            }
+            let result = task.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.busy = false;
+                match result {
+                    Ok(targets) => {
+                        let parent = cx.weak_entity();
+                        let panel = cx.new(|cx| {
+                            copy_dialog::CopyDialog::new(parent, targets, hidden, window, cx)
+                        });
+                        window.open_dialog(cx, move |dialog, window, _| {
+                            dialog
+                                .title(crate::i18n::text("复制到其他图床"))
+                                .w(px((f32::from(window.viewport_size().width) - 80.)
+                                    .clamp(280., 660.)))
+                                .child(panel.clone())
+                        });
+                    }
+                    Err(error) => this.notice = Some(error.to_string()),
+                }
+                cx.notify();
+            });
         })
         .detach();
+        cx.notify();
+    }
+    fn index_scope(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.query.provider.is_empty() {
+            return;
+        }
+        let parent = cx.weak_entity();
+        let provider = self.query.provider.clone();
+        let prefix = self.query.prefix.clone();
+        let panel = cx.new(|cx| {
+            scope_dialog::ScopeDialog::new(parent, self.root.clone(), provider, prefix, window, cx)
+        });
+        window.open_dialog(cx, move |dialog, window, _| {
+            dialog
+                .title(crate::i18n::text("索引远端图片"))
+                .w(px(
+                    (f32::from(window.viewport_size().width) - 80.).clamp(280., 500.)
+                ))
+                .child(panel.clone())
+        });
     }
     fn copy(&mut self, cx: &mut Context<Self>) {
         let ids = self.selected.snapshot();
@@ -743,74 +767,29 @@ impl Library {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let selected = asset.selected_location(provider).cloned();
-        let thumbnails = self.thumbnails.clone();
-        let format = self.format;
+        let _ = provider;
+        let title = asset.name.clone();
+        let panel = cx.new(|cx| {
+            detail::Detail::new(
+                asset,
+                self.root.clone(),
+                self.format,
+                self.thumbnails.clone(),
+                image,
+                cx,
+            )
+        });
         window.open_dialog(cx, move |dialog, window, _| {
             let viewport = window.viewport_size();
             let width = (f32::from(viewport.width) * 0.85).clamp(240., 960.);
-            let image_height = (f32::from(viewport.height) * 0.60)
-                .min(560.)
-                .min((f32::from(viewport.height) - 220.).max(80.));
-            let top = ((f32::from(viewport.height) - image_height - 192.) / 2.).max(16.);
-            let mut body = div().flex().flex_col().gap(px(10.)).child(label(
-                format!("{} · {}", asset.content_type, model::size_label(asset.size)),
-                12.,
-                MUTED,
-            ));
-            if let Some(image) = &image {
-                body = body.child(
-                    img(image.path.clone())
-                        .image_cache(&thumbnails)
-                        .w_full()
-                        .h(px(image_height))
-                        .flex_shrink_0()
-                        .object_fit(ObjectFit::Contain),
-                );
-            } else {
-                body = body.child(label("尚未缓存预览，可下载远端图片", 12., MUTED));
-            }
-            for location in &asset.locations {
-                body = body.child(
-                    label(
-                        format!(
-                            "{} · {} · {}",
-                            location.provider, location.availability, location.url
-                        ),
-                        12.,
-                        TEXT,
-                    )
-                    .text_ellipsis(),
-                );
-            }
-            let link = selected
-                .as_ref()
-                .map(|link| format.render(&asset.name, &link.url));
             dialog
                 .w(px(width))
-                .margin_top(px(top))
-                .title(crate::i18n::text(asset.name.clone()))
-                .child(body)
+                .margin_top(px(24.))
+                .title(crate::i18n::text(title.clone()))
+                .child(panel.clone())
                 .footer(
-                    div()
-                        .flex()
-                        .justify_end()
-                        .gap(px(8.))
-                        .child(
-                            action("detail-copy", "复制链接")
-                                .disabled(link.is_none())
-                                .on_click(move |_, _, cx| {
-                                    if let Some(link) = &link {
-                                        cx.write_to_clipboard(ClipboardItem::new_string(
-                                            link.clone(),
-                                        ));
-                                    }
-                                }),
-                        )
-                        .child(
-                            action("detail-close", "关闭预览")
-                                .on_click(|_, window, cx| window.close_dialog(cx)),
-                        ),
+                    action("detail-close", "关闭预览")
+                        .on_click(|_, window, cx| window.close_dialog(cx)),
                 )
         });
     }
@@ -1066,7 +1045,6 @@ impl Render for Library {
                 .dropdown_menu({
                     let providers = self.providers.clone();
                     let can_index = self.manageable.contains(&self.query.provider);
-                    let busy = self.busy;
                     move |mut menu, _, _| {
                         for name in std::iter::once(String::new()).chain(providers.clone()) {
                             let weak = weak.clone();
@@ -1086,23 +1064,14 @@ impl Render for Library {
                         }
                         if can_index {
                             let start = weak.clone();
-                            let pause = weak.clone();
-                            menu = menu
-                                .separator()
-                                .item(
-                                    PopupMenuItem::new(crate::i18n::text("索引当前图床"))
-                                        .disabled(busy)
-                                        .on_click(move |_, window, cx| {
-                                            let _ = start.update(cx, |this, cx| {
-                                                this.index_scope(window, cx)
-                                            });
-                                        }),
-                                )
-                                .item(PopupMenuItem::new(crate::i18n::text("暂停索引")).on_click(
-                                    move |_, _, cx| {
-                                        let _ = pause.update(cx, |this, cx| this.pause_scope(cx));
+                            menu = menu.separator().item(
+                                PopupMenuItem::new(crate::i18n::text("索引当前图床")).on_click(
+                                    move |_, window, cx| {
+                                        let _ = start
+                                            .update(cx, |this, cx| this.index_scope(window, cx));
                                     },
-                                ));
+                                ),
+                            );
                         }
                         menu
                     }
@@ -1172,42 +1141,70 @@ impl Render for Library {
                                     .on_click(cx.listener(|this, _, _, cx| this.copy(cx))),
                             )
                             .child(
-                                action("catalog-download", "下载所选")
+                                action("catalog-more", "更多操作")
                                     .disabled(self.selected.is_empty() || self.busy)
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.download_selected(window, cx)
-                                    })),
-                            )
-                            .child(
-                                action("catalog-hide", "隐藏所选")
-                                    .disabled(self.selected.is_empty() || self.busy)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        let mut args = vec!["library".into(), "hide".into()];
-                                        args.extend(this.selected.iter().cloned());
-                                        this.command(args, cx);
-                                    })),
-                            )
-                            .child(
-                                action("catalog-delete", "删除远端文件")
-                                    .disabled(self.selected.is_empty() || self.busy)
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.delete_selected(window, cx)
-                                    })),
-                            )
-                            .child(
-                                action("catalog-check", "检查链接")
-                                    .disabled(self.selected.is_empty() || self.busy)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        let mut args = vec!["library".into(), "check".into()];
-                                        args.extend(this.selected.iter().cloned());
-                                        if !this.query.provider.is_empty() {
-                                            args.extend([
-                                                "--provider".into(),
-                                                this.query.provider.clone(),
-                                            ]);
+                                    .dropdown_menu({
+                                        let weak = cx.weak_entity();
+                                        move |menu, _, _| {
+                                            let download = weak.clone();
+                                            let check = weak.clone();
+                                            let copy = weak.clone();
+                                            let hide = weak.clone();
+                                            let delete = weak.clone();
+                                            menu.item(
+                                                PopupMenuItem::new(crate::i18n::text("下载所选"))
+                                                    .on_click(move |_, window, cx| {
+                                                        let _ = download.update(cx, |this, cx| {
+                                                            this.read_selected(true, window, cx)
+                                                        });
+                                                    }),
+                                            )
+                                            .item(
+                                                PopupMenuItem::new(crate::i18n::text("检查链接"))
+                                                    .on_click(move |_, window, cx| {
+                                                        let _ = check.update(cx, |this, cx| {
+                                                            this.read_selected(false, window, cx)
+                                                        });
+                                                    }),
+                                            )
+                                            .item(
+                                                PopupMenuItem::new(crate::i18n::text(
+                                                    "复制到其他图床",
+                                                ))
+                                                .on_click(move |_, window, cx| {
+                                                    let _ = copy.update(cx, |this, cx| {
+                                                        this.copy_to(window, cx)
+                                                    });
+                                                }),
+                                            )
+                                            .separator()
+                                            .item(
+                                                PopupMenuItem::new(crate::i18n::text("隐藏所选"))
+                                                    .on_click(move |_, _, cx| {
+                                                        let _ = hide.update(cx, |this, cx| {
+                                                            let mut args = vec![
+                                                                "library".into(),
+                                                                "hide".into(),
+                                                            ];
+                                                            args.extend(
+                                                                this.selected.iter().cloned(),
+                                                            );
+                                                            this.command(args, cx);
+                                                        });
+                                                    }),
+                                            )
+                                            .item(
+                                                PopupMenuItem::new(crate::i18n::text(
+                                                    "删除远端文件",
+                                                ))
+                                                .on_click(move |_, window, cx| {
+                                                    let _ = delete.update(cx, |this, cx| {
+                                                        this.delete_selected(window, cx)
+                                                    });
+                                                }),
+                                            )
                                         }
-                                        this.command(args, cx);
-                                    })),
+                                    }),
                             ),
                     ),
             );

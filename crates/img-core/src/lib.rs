@@ -19,3 +19,5 @@ pub mod sync_settings;
 pub mod sync_providers;
 
 pub mod library_ops;
+
+pub mod migrate;

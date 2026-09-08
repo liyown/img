@@ -92,26 +92,66 @@ impl Cache {
         )?;
         Ok(CacheLease { path, _file: file })
     }
+    pub fn touch_legacy(&self, path: &Path) -> Result<()> {
+        crate::legacy_cache::touch(&self.catalog, path)
+    }
+    pub fn usage(&self) -> Result<(u64, u64)> {
+        let _lock = self.lock()?;
+        let current: u64 =
+            self.catalog
+                .db
+                .query_row("SELECT coalesce(sum(size),0) FROM cache", [], |r| {
+                    crate::catalog::unsigned(r, 0)
+                })?;
+        let legacy = crate::legacy_cache::entries(&self.catalog)?;
+        Ok((
+            current + legacy.iter().map(|e| e.size).sum::<u64>(),
+            legacy.iter().filter(|e| e.protected).map(|e| e.size).sum(),
+        ))
+    }
     /// Clear uses the same LRU path with a zero limit; leased entries are skipped.
     pub fn trim(&self, limit: u64) -> Result<u64> {
         let _lock = self.lock()?;
         let mut stmt = self
             .catalog
             .db
-            .prepare("SELECT key,size FROM cache ORDER BY accessed,key")?;
-        let entries = stmt
+            .prepare("SELECT key,size,accessed FROM cache ORDER BY accessed,key")?;
+        let mut entries = stmt
             .query_map([], |r| {
-                Ok((r.get::<_, String>(0)?, crate::catalog::unsigned(r, 1)?))
+                Ok((
+                    Some(r.get::<_, String>(0)?),
+                    crate::catalog::unsigned(r, 1)?,
+                    r.get::<_, i64>(2)?,
+                ))
             })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        let mut total: u64 = entries.iter().map(|(_, s)| s).sum();
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .map(|(key, size, accessed)| {
+                Ok((
+                    self.file(key.as_ref().unwrap())?,
+                    key,
+                    size,
+                    accessed,
+                    false,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        entries.extend(
+            crate::legacy_cache::entries(&self.catalog)?
+                .into_iter()
+                .map(|e| (e.path, None, e.size, e.accessed, e.protected)),
+        );
+        entries.sort_by(|a, b| a.3.cmp(&b.3).then(a.0.cmp(&b.0)));
+        let mut total: u64 = entries.iter().map(|e| e.2).sum();
         let mut removed = 0;
-        for (key, size) in entries {
+        for (path, key, size, _, protected) in entries {
             if total <= limit {
                 break;
             }
-            let path = self.file(&key)?;
-            match File::options().read(true).write(true).open(&path) {
+            if protected {
+                continue;
+            }
+            let freed = match File::options().read(true).write(true).open(&path) {
                 Ok(file) => {
                     if file.try_lock().is_err() {
                         continue;
@@ -121,15 +161,18 @@ impl Cache {
                         "cache entry is not a regular file"
                     );
                     std::fs::remove_file(&path)?;
+                    size
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
                 Err(e) => return Err(e.into()),
+            };
+            if let Some(key) = key {
+                self.catalog
+                    .db
+                    .execute("DELETE FROM cache WHERE key=?", [key])?;
             }
-            self.catalog
-                .db
-                .execute("DELETE FROM cache WHERE key=?", [key])?;
             total = total.saturating_sub(size);
-            removed += size;
+            removed += freed;
         }
         Ok(removed)
     }
@@ -156,5 +199,78 @@ mod tests {
         assert_eq!(cache.trim(0).unwrap(), 5);
         assert!(root.path().join("catalog.sqlite3").exists());
         assert!(cache.lease("../../secret").is_err());
+    }
+}
+
+#[cfg(test)]
+mod legacy_tests {
+    use super::*;
+    #[test]
+    fn cache_clear_includes_imported_app_copies_and_preserves_active_and_user_files() {
+        let root = tempfile::tempdir().unwrap();
+        let done = uuid::Uuid::new_v4().to_string();
+        let active = uuid::Uuid::new_v4().to_string();
+        let original = root.path().join("user-original.png");
+        std::fs::write(&original, b"user bytes").unwrap();
+        let mut rows = vec![];
+        for (id, status) in [(&done, "Done"), (&active, "Running")] {
+            let dir = root.path().join("images").join(id).join("original");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("image.png"), b"app bytes").unwrap();
+            rows.push(serde_json::json!({"id":id,"status":status,"source":original,"url":"https://example.test/image.png","target":"test","name":"image.png"}));
+        }
+        std::fs::write(
+            root.path().join("queue.json"),
+            serde_json::to_vec(&rows).unwrap(),
+        )
+        .unwrap();
+        let mut catalog = Catalog::open(root.path()).unwrap();
+        catalog.import_legacy().unwrap();
+        let count = catalog.query(&Default::default()).unwrap().total;
+        let cache = Cache::open(root.path()).unwrap();
+        assert_eq!(cache.usage().unwrap(), (18, 9));
+        let done_file = root
+            .path()
+            .join("images")
+            .join(&done)
+            .join("original/image.png");
+        let lease = File::open(&done_file).unwrap();
+        lease.lock_shared().unwrap();
+        assert_eq!(cache.trim(0).unwrap(), 0);
+        drop(lease);
+        assert_eq!(cache.trim(0).unwrap(), 9);
+        assert!(!done_file.exists());
+        assert!(
+            root.path()
+                .join("images")
+                .join(active)
+                .join("original/image.png")
+                .exists()
+        );
+        assert_eq!(std::fs::read(original).unwrap(), b"user bytes");
+        assert_eq!(catalog.query(&Default::default()).unwrap().total, count);
+        assert_eq!(
+            std::fs::read(root.path().join("queue.json")).unwrap(),
+            serde_json::to_vec(&rows).unwrap()
+        );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn cache_inventory_never_follows_legacy_directory_symlinks() {
+        let root = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let file = other.path().join("preview.png");
+        std::fs::write(&file, b"outside").unwrap();
+        std::fs::create_dir(root.path().join("images")).unwrap();
+        std::os::unix::fs::symlink(
+            other.path(),
+            root.path()
+                .join("images")
+                .join(uuid::Uuid::new_v4().to_string()),
+        )
+        .unwrap();
+        let cache = Cache::open(root.path()).unwrap();
+        assert_eq!(cache.trim(0).unwrap(), 0);
+        assert_eq!(std::fs::read(file).unwrap(), b"outside");
     }
 }

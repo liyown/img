@@ -1,3 +1,5 @@
+#[path = "cache_settings.rs"]
+mod cache_settings;
 #[path = "catalog_ui.rs"]
 mod catalog_ui;
 #[path = "diagnostic_ui.rs"]
@@ -70,6 +72,7 @@ enum Page {
     Queue,
     Library,
     History,
+    Sources,
     Settings,
 }
 #[derive(Clone, Copy, PartialEq)]
@@ -83,6 +86,7 @@ enum Filter {
 pub struct ImgDesktop {
     catalog: Entity<catalog_ui::Library>,
     sync_panel: Entity<sync_ui::SyncPanel>,
+    cache_settings: Entity<cache_settings::CacheSettings>,
     shutting_down: bool,
     shutdown_saved: bool,
     pending_restore: bool,
@@ -291,6 +295,7 @@ impl ImgDesktop {
         });
         let catalog =
             cx.new(|cx| catalog_ui::Library::new(root.clone(), engine.clone(), window, cx));
+        let cache_settings = cx.new(|cx| cache_settings::CacheSettings::new(root.clone(), cx));
         let sync_panel =
             cx.new(|cx| sync_ui::SyncPanel::new(root.clone(), engine.clone(), window, cx));
         let loaded = model::load(&root);
@@ -386,7 +391,7 @@ impl ImgDesktop {
             &storage_settings,
             window,
             |this, _, _: &EditorClosed, window, cx| {
-                if this.page == Page::Settings {
+                if this.page == Page::Sources {
                     this.focus.focus(window, cx);
                 }
             },
@@ -448,6 +453,7 @@ impl ImgDesktop {
         Self {
             catalog,
             sync_panel,
+            cache_settings,
             shutting_down: false,
             shutdown_saved: false,
             pending_restore: false,
@@ -1115,11 +1121,11 @@ impl ImgDesktop {
             ),
             (
                 Page::Queue,
-                "上传队列",
+                "上传",
                 "upload-simple",
                 Some(self.queue.items.len()),
             ),
-            (Page::History, "历史记录", "clock-counter-clockwise", None),
+            (Page::Sources, "存储源", "folder-open", None),
             (Page::Settings, "设置", "gear", None),
         ] {
             let active = self.page == page;
@@ -1207,7 +1213,7 @@ impl ImgDesktop {
                                     ),
                             )
                             .on_click(cx.listener(|this, _, window, cx| {
-                                this.navigate(Page::Settings, window, cx)
+                                this.navigate(Page::Sources, window, cx)
                             })),
                     ),
             )
@@ -1342,7 +1348,7 @@ impl ImgDesktop {
                     PopupMenuItem::new(crate::i18n::text("管理存储源…")).on_click(
                         move |_, window, cx| {
                             let _ = weak
-                                .update(cx, |this, cx| this.navigate(Page::Settings, window, cx));
+                                .update(cx, |this, cx| this.navigate(Page::Sources, window, cx));
                         },
                     ),
                 )
@@ -1354,9 +1360,10 @@ impl ImgDesktop {
             "收起侧边栏"
         };
         let (title, symbol) = match self.page {
-            Page::Queue => ("上传队列", "upload-simple"),
+            Page::Queue => ("上传", "upload-simple"),
             Page::Library => ("图库", "image"),
             Page::History => ("历史记录", "clock-counter-clockwise"),
+            Page::Sources => ("存储源", "folder-open"),
             Page::Settings => ("设置", "gear"),
         };
         let chrome_button = |id, label: &str, symbol| {
@@ -1440,20 +1447,23 @@ impl ImgDesktop {
                             .whitespace_nowrap(),
                     )
                     .child(div().flex_1().min_w(px(12.)))
-                    .when(self.page != Page::Settings, |this| {
-                        this.child(
-                            div().w(px(220.)).min_w(px(140.)).flex_shrink(1.).child(
-                                Input::new(&self.search)
-                                    .aria_label(crate::i18n::text("搜索图片"))
-                                    .h(px(30.))
-                                    .text_size(px(12.))
-                                    .bg(crate::theme::color(CANVAS))
-                                    .border_color(crate::theme::color(BORDER))
-                                    .rounded(px(7.))
-                                    .cleanable(true),
-                            ),
-                        )
-                    })
+                    .when(
+                        matches!(self.page, Page::Library | Page::Queue | Page::History),
+                        |this| {
+                            this.child(
+                                div().w(px(220.)).min_w(px(140.)).flex_shrink(1.).child(
+                                    Input::new(&self.search)
+                                        .aria_label(crate::i18n::text("搜索图片"))
+                                        .h(px(30.))
+                                        .text_size(px(12.))
+                                        .bg(crate::theme::color(CANVAS))
+                                        .border_color(crate::theme::color(BORDER))
+                                        .rounded(px(7.))
+                                        .cleanable(true),
+                                ),
+                            )
+                        },
+                    )
                     .child(provider),
             )
             .into_any_element()
@@ -2066,12 +2076,11 @@ impl ImgDesktop {
             .gap(px(20.))
             .child(label("设置", 20., TEXT).font_weight(FontWeight::SEMIBOLD))
             .child(card().child(self.sync_panel.clone()))
+            .child(card().child(self.cache_settings.clone()))
             .child(card().child(self.recovery_controls(cx)))
-            .child(card().child(self.storage_settings.clone()))
             .child(card().child(self.upload_settings.clone()))
             .child(card().child(self.shortcut_settings.clone()))
             .child(card().child(self.workflow_controls(cx)))
-            .child(card().child(self.remote_controls(cx)))
             .child(
                 card()
                     .child(label("链接与剪贴板", 16., TEXT).font_weight(FontWeight::SEMIBOLD))
@@ -2271,6 +2280,35 @@ impl ImgDesktop {
         if self.page == Page::Library && !self.reference {
             return self.catalog.clone().into_any_element();
         }
+        if self.page == Page::Sources {
+            return div()
+                .id("storage-page")
+                .size_full()
+                .overflow_y_scroll()
+                .p(px(24.))
+                .flex()
+                .flex_col()
+                .gap(px(20.))
+                .child(
+                    div()
+                        .bg(crate::theme::color(CARD))
+                        .border_1()
+                        .border_color(crate::theme::color(BORDER))
+                        .rounded(px(16.))
+                        .p(px(22.))
+                        .child(self.storage_settings.clone()),
+                )
+                .child(
+                    div()
+                        .bg(crate::theme::color(CARD))
+                        .border_1()
+                        .border_color(crate::theme::color(BORDER))
+                        .rounded(px(16.))
+                        .p(px(22.))
+                        .child(self.remote_controls(cx)),
+                )
+                .into_any_element();
+        }
         let rows = self.filtered(cx);
         let mut body = div()
             .flex()
@@ -2314,7 +2352,12 @@ impl ImgDesktop {
                     .child(mono(format!("{} 项", rows.len()), 11., MUTED).ml(px(16.)))
                     .child(div().flex_1())
                     .when(self.page == Page::Queue, |this| {
-                        this.child(self.queue_filters(cx))
+                        this.child(action("upload-history", "历史记录").ghost().on_click(
+                            cx.listener(|this, _, window, cx| {
+                                this.navigate(Page::History, window, cx)
+                            }),
+                        ))
+                        .child(self.queue_filters(cx))
                     })
                     .when(self.page == Page::Library, |this| {
                         this.child(self.library_view_switch(cx)).child(
@@ -2579,7 +2622,8 @@ impl Render for ImgDesktop {
                 * match self.page {
                     Page::Library => 0.,
                     Page::Queue => 1.,
-                    Page::History => 2.,
+                    Page::History => 1.,
+                    Page::Sources => 2.,
                     Page::Settings => 3.,
                 });
         let active_y = gpui_kit::base::spring(

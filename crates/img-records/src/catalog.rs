@@ -150,6 +150,15 @@ impl Catalog {
         Ok(catalog)
     }
     pub fn upsert(&mut self, record: &RemoteRecord) -> Result<String> {
+        Self::validate_record(record)?;
+        let tx = self
+            .db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let id = Self::upsert_transaction(&tx, record)?;
+        tx.commit()?;
+        Ok(id)
+    }
+    fn validate_record(record: &RemoteRecord) -> Result<()> {
         ensure!(
             !record.namespace.is_empty() && !record.url.is_empty(),
             "remote namespace and URL are required"
@@ -173,6 +182,9 @@ impl Catalog {
                 "invalid remote object path"
             );
         }
+        Ok(())
+    }
+    fn upsert_transaction(tx: &rusqlite::Transaction<'_>, record: &RemoteRecord) -> Result<String> {
         let id = identity(&[
             &record.namespace,
             if record.path.is_some() { "key" } else { "url" },
@@ -183,9 +195,6 @@ impl Catalog {
             .as_ref()
             .map(|h| format!("sha256:{}", h.to_ascii_lowercase()))
             .unwrap_or_else(|| format!("remote:{}", identity(&[&id, &record.version])));
-        let tx = self
-            .db
-            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let previous: Option<(String, String)> = tx
             .query_row(
                 "SELECT asset_id,version FROM locations WHERE id=?",
@@ -217,8 +226,64 @@ impl Catalog {
         }
         tx.execute("INSERT INTO locations(id,asset_id,namespace,provider,path,url,version) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET asset_id=excluded.asset_id,provider=excluded.provider,path=excluded.path,url=excluded.url,version=excluded.version,availability=CASE WHEN locations.version=excluded.version THEN locations.availability ELSE 'unknown' END,last_checked=CASE WHEN locations.version=excluded.version THEN locations.last_checked ELSE NULL END",
             params![id,asset_id,record.namespace,record.provider,record.path,record.url,record.version])?;
-        tx.commit()?;
         Ok(asset_id)
+    }
+    /// Record a verified copy without rolling back a newer observation of its source.
+    pub fn record_copy(
+        &mut self,
+        source: &crate::targets::Target,
+        destination: &RemoteRecord,
+    ) -> Result<String> {
+        Self::validate_record(destination)?;
+        let hash = destination
+            .content_hash
+            .as_ref()
+            .context("verified copy requires a content hash")?;
+        ensure!(
+            hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit()),
+            "invalid copy hash"
+        );
+        if let Some(expected) = &source.content_hash {
+            ensure!(expected.eq_ignore_ascii_case(hash), "copy content changed");
+        }
+        let tx = self
+            .db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let current: Option<(String, String)> = tx
+            .query_row(
+                "SELECT asset_id,version FROM locations WHERE id=?",
+                [&source.location.id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        if current.as_ref().is_some_and(|(id, version)| {
+            id == &source.input_id && version == &source.location.version
+        }) {
+            let origin = RemoteRecord {
+                namespace: source.location.namespace.clone(),
+                provider: source.location.provider.clone(),
+                path: source.location.path.clone(),
+                url: source.location.url.clone(),
+                version: source.location.version.clone(),
+                name: source.name.clone(),
+                content_type: destination.content_type.clone(),
+                size: destination.size,
+                added_at: tx.query_row(
+                    "SELECT added_at FROM assets WHERE id=?",
+                    [&source.input_id],
+                    |row| row.get::<_, i64>(0),
+                )? as u64,
+                origin: "verified-copy".into(),
+                content_hash: Some(hash.clone()),
+            };
+            Self::upsert_transaction(&tx, &origin)?;
+        }
+        let id = Self::upsert_transaction(&tx, destination)?;
+        if id != source.input_id {
+            tx.execute("INSERT OR IGNORE INTO versions(parent,child,recipe) SELECT ?,?, 'verified-copy' WHERE EXISTS(SELECT 1 FROM assets WHERE id=?)", rusqlite::params![source.input_id,id,source.input_id])?;
+        }
+        tx.commit()?;
+        Ok(id)
     }
     pub fn finish_scan(
         &mut self,
@@ -366,6 +431,43 @@ impl Catalog {
         );
         Ok(())
     }
+    pub fn link_version(&self, parent: &str, child: &str, recipe: &str) -> Result<()> {
+        ensure!(
+            parent != child,
+            "an image cannot be its own processing ancestor"
+        );
+        let tx = self.db.unchecked_transaction()?;
+        self.get(parent)?;
+        self.get(child)?;
+        let cycle:bool=self.db.query_row("WITH RECURSIVE descendants(id) AS (SELECT child FROM versions WHERE parent=?1 UNION SELECT v.child FROM versions v JOIN descendants d ON v.parent=d.id) SELECT EXISTS(SELECT 1 FROM descendants WHERE id=?2)",params![child,parent],|r|r.get(0))?;
+        ensure!(!cycle, "processing versions cannot form a cycle");
+        self.db.execute("INSERT INTO versions(parent,child,recipe) VALUES(?,?,?) ON CONFLICT(parent,child) DO UPDATE SET recipe=excluded.recipe",params![parent,child,recipe])?;
+        tx.commit()?;
+        Ok(())
+    }
+    pub fn related_versions(&self, id: &str) -> Result<Vec<(Asset, String, bool)>> {
+        let mut stmt=self.db.prepare("SELECT parent,child,recipe FROM versions WHERE parent=? OR child=? ORDER BY parent,child")?;
+        let links = stmt
+            .query_map(params![id, id], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        links
+            .into_iter()
+            .map(|(parent, child, recipe)| {
+                let ancestor = child == id;
+                Ok((
+                    self.get(if ancestor { &parent } else { &child })?,
+                    recipe,
+                    ancestor,
+                ))
+            })
+            .collect()
+    }
     pub fn set_preferred(&self, id: &str, location: &str) -> Result<()> {
         ensure!(
             self.locations(id)?.iter().any(|l| l.id == location),
@@ -436,6 +538,12 @@ impl Catalog {
         self.db.execute("INSERT INTO tasks(id,kind,body) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body",params![id,kind,body])?;
         Ok(())
     }
+    pub fn task_optional(&self, id: &str) -> Result<Option<String>> {
+        Ok(self
+            .db
+            .query_row("SELECT body FROM tasks WHERE id=?", [id], |r| r.get(0))
+            .optional()?)
+    }
     pub fn task(&self, id: &str) -> Result<String> {
         Ok(self
             .db
@@ -467,6 +575,7 @@ impl Catalog {
         }
         let rows: Vec<serde_json::Value> = serde_json::from_slice(&std::fs::read(path)?)?;
         let mut count = 0;
+        let mut cache_dirty = false;
         for row in rows {
             if row["simulated"].as_bool().unwrap_or(false) || row["status"] != "Done" {
                 continue;
@@ -485,6 +594,7 @@ impl Catalog {
             {
                 continue;
             }
+            cache_dirty = true;
             if row["catalog_asset_id"]
                 .as_str()
                 .is_some_and(|id| self.get(id).is_ok())
@@ -535,7 +645,6 @@ impl Catalog {
                         && let Ok(key) = cache.put(&bytes)
                     {
                         self.set_setting(&format!("preview:{asset_id}"), &key)?;
-                        cache.trim(cache.limit()?)?;
                         break;
                     }
                 }
@@ -543,6 +652,10 @@ impl Catalog {
             self.db
                 .execute("INSERT OR IGNORE INTO imported(source) VALUES(?)", [marker])?;
             count += 1;
+        }
+        if cache_dirty {
+            let cache = crate::cache::Cache::open(&self.root)?;
+            cache.trim(cache.limit()?)?;
         }
         Ok(count)
     }
@@ -703,5 +816,56 @@ mod tests {
         let p = c.query(&CatalogQuery::default()).unwrap();
         assert!(p.assets[0].locations[0].path.is_none());
         assert!(!serde_json::to_string(&p).unwrap().contains("/private"));
+    }
+}
+
+#[cfg(test)]
+mod version_tests {
+    use super::*;
+    #[test]
+    fn processing_relationships_keep_unavailable_ancestors_and_reject_cycles() {
+        let root = tempfile::tempdir().unwrap();
+        let mut c = Catalog::open(root.path()).unwrap();
+        let mut record = RemoteRecord {
+            namespace: "source".into(),
+            provider: "source".into(),
+            path: Some("one.png".into()),
+            url: "https://source.test/one.png".into(),
+            version: "v1".into(),
+            name: "one.png".into(),
+            content_type: "image/png".into(),
+            size: 1,
+            added_at: 1,
+            origin: String::new(),
+            content_hash: None,
+        };
+        let parent = c.upsert(&record).unwrap();
+        record.path = Some("two.png".into());
+        record.url = "https://source.test/two.png".into();
+        let child = c.upsert(&record).unwrap();
+        c.link_version(&parent, &child, "{\"format\":\"png\"}")
+            .unwrap();
+        assert!(c.link_version(&child, &parent, "loop").is_err());
+        assert!(c.link_version(&parent, &parent, "loop").is_err());
+        let related = c.related_versions(&child).unwrap();
+        assert_eq!(related[0].0.id, parent);
+        assert!(related[0].2);
+        let parent_location = c.get(&parent).unwrap().locations[0].clone();
+        c.mark_location(&parent_location.id, &parent_location.version, "deleted", 2)
+            .unwrap();
+        assert_eq!(
+            c.related_versions(&child).unwrap()[0].0.locations[0].availability,
+            "deleted"
+        );
+        assert!(
+            c.set_preferred(&parent, &c.get(&child).unwrap().locations[0].id)
+                .is_err()
+        );
+        let location = c.get(&child).unwrap().locations[0].id.clone();
+        c.set_preferred(&child, &location).unwrap();
+        assert_eq!(
+            c.get(&child).unwrap().selected_location("").unwrap().id,
+            location
+        );
     }
 }

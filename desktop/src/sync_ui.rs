@@ -347,6 +347,11 @@ impl SyncPanel {
                             );
                         } else if operation == "resolve" {
                             this.notice = Some("冲突已处理".into());
+                            if let Some(entity) = value["entity"].as_str() {
+                                this.conflicts.retain(|row| {
+                                    row["entity"] != entity || row["field"] != value["field"]
+                                });
+                            }
                         }
                     }
                     Ok((false, value)) => {
@@ -870,47 +875,115 @@ impl Render for SyncPanel {
                 ));
             }
         }
-        for (index, conflict) in self.conflicts.clone().into_iter().enumerate() {
-            let mut row = div().flex().flex_col().gap(px(6.)).child(label(
-                format!(
-                    "{} · {}",
-                    conflict["entity"].as_str().unwrap_or(""),
-                    conflict["field"].as_str().unwrap_or("")
-                ),
+        if !self.conflicts.is_empty() {
+            body = body.child(label(
+                "这些设置在不同设备上同时被修改，请选择要保留的内容。",
                 12.,
-                TEXT,
+                MUTED,
             ));
+        }
+        for (index, conflict) in self.conflicts.clone().into_iter().enumerate() {
+            let entity = conflict["entity"].as_str().unwrap_or("");
+            let field = conflict["field"].as_str().unwrap_or("");
+            let title = match entity.split_once(':') {
+                Some(("provider", name)) => format!("存储源 {name}"),
+                Some(("asset", _)) => "图片设置".into(),
+                Some(("location", _)) => "远端地址".into(),
+                Some(("preset", _)) => "处理预设".into(),
+                _ => "同步设置".into(),
+            };
+            let field_label = match field {
+                "endpoint" => "服务地址",
+                "hidden" => "隐藏记录",
+                "preferred_location" => "首选链接",
+                "name" => "名称",
+                "public_url" => "公开访问地址",
+                "bucket" => "存储桶",
+                "region" => "区域",
+                "access_key" | "secret_key" | "session_token" | "token" | "headers" | "fields" => {
+                    "访问凭据"
+                }
+                _ => field,
+            };
+            let mut choices = div().flex().gap(px(10.));
             if let Some(candidates) = conflict["candidates"].as_array() {
                 for (n, event) in candidates.iter().enumerate() {
                     let args = vec![
                         "resolve".into(),
-                        conflict["entity"].as_str().unwrap_or("").into(),
-                        conflict["field"].as_str().unwrap_or("").into(),
+                        entity.into(),
+                        field.into(),
                         event["id"].as_str().unwrap_or("").into(),
                     ];
-                    row = row.child(
-                        action(
-                            SharedString::from(format!("resolve-{index}-{n}")),
-                            &format!(
-                                "使用设备 {} 的值：{}",
-                                event["device"]
-                                    .as_str()
-                                    .unwrap_or("")
-                                    .chars()
-                                    .take(8)
-                                    .collect::<String>(),
-                                event["value"]
+                    let value = if [
+                        "access_key",
+                        "secret_key",
+                        "session_token",
+                        "token",
+                        "headers",
+                        "fields",
+                    ]
+                    .contains(&field)
+                    {
+                        "已保存的访问凭据".into()
+                    } else if event["value"].is_null() {
+                        "已删除".into()
+                    } else if let Some(text) = event["value"].as_str() {
+                        text.to_owned()
+                    } else {
+                        event["value"].to_string()
+                    };
+                    choices = choices.child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap(px(8.))
+                            .p(px(12.))
+                            .border_1()
+                            .border_color(crate::theme::color(BORDER))
+                            .rounded(px(8.))
+                            .child(label(
+                                format!(
+                                    "设备 {}",
+                                    event["device"]
+                                        .as_str()
+                                        .unwrap_or("")
+                                        .chars()
+                                        .take(8)
+                                        .collect::<String>()
+                                ),
+                                11.,
+                                MUTED,
+                            ))
+                            .child(
+                                div()
+                                    .id(SharedString::from(format!("conflict-value-{index}-{n}")))
+                                    .max_h(px(100.))
+                                    .overflow_y_scroll()
+                                    .child(label(value, 12., TEXT)),
+                            )
+                            .child(
+                                action(
+                                    SharedString::from(format!("resolve-{index}-{n}")),
+                                    "保留此版本",
+                                )
+                                .disabled(self.busy)
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| this.run(args.clone(), None, cx),
+                                )),
                             ),
-                        )
-                        .disabled(self.busy)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.conflicts.clear();
-                            this.run(args.clone(), None, cx);
-                        })),
                     );
                 }
             }
-            body = body.child(row);
+            body = body.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(label(format!("{title} · {field_label}"), 13., TEXT))
+                    .child(choices),
+            );
         }
         body
     }
