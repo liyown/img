@@ -3,7 +3,7 @@ export const site = {
   origin: 'https://liyown.github.io',
   base: '/img/',
   repository: 'https://github.com/liyown/img',
-  productCommit: '3d8e8b9',
+  productCommit: '53d02de',
   verified: '2026-09-08',
   gaId: import.meta.env.PUBLIC_GA_MEASUREMENT_ID?.trim() ?? '',
   verification: import.meta.env.PUBLIC_GOOGLE_SITE_VERIFICATION?.trim() ?? '',

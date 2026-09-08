@@ -1,0 +1,102 @@
+---
+import { asset, t, type Locale } from '../lib/site';
+const { locale } = Astro.props as { locale: Locale };
+---
+
+<section class="product-video wrap" aria-labelledby="product-video-title">
+  <div class="video-intro">
+    <h2 id="product-video-title">
+      {t(locale, '看看 img 怎么用', 'See img in action')}
+    </h2>
+    <p>
+      {
+        t(
+          locale,
+          '47 秒，看看图库管理、图片处理和原生 CLI。',
+          'A 47-second tour of the library, image tools, and native CLI.',
+        )
+      }
+    </p>
+  </div>
+  <video
+    controls
+    playsinline
+    preload="none"
+    width="1920"
+    height="1080"
+    poster={asset('media/img-0.4-poster.webp')}
+    aria-label={t(locale, 'img 0.4 产品演示', 'img 0.4 product demonstration')}
+  >
+    <source src={asset('media/img-0.4.mp4')} type="video/mp4" />
+    <track
+      kind="captions"
+      src={asset('media/img-0.4.en.vtt')}
+      srclang="en"
+      label="English"
+      default={locale === 'en'}
+    />
+    <track
+      kind="captions"
+      src={asset('media/img-0.4.zh.vtt')}
+      srclang="zh"
+      label="简体中文"
+    />
+    <p>
+      <a href={asset('media/img-0.4.mp4')}
+        >{t(locale, '下载视频', 'Download video')}</a
+      >
+    </p>
+  </video>
+  <p class="video-note">
+    {
+      t(
+        locale,
+        '真实 macOS 界面，使用演示数据。视频含音乐，无旁白。',
+        'Real macOS interface with demo data. Chinese titles, English captions, music, no narration.',
+      )
+    }
+  </p>
+</section>
+
+<style>
+  .product-video {
+    padding-block: 64px;
+  }
+  .video-intro {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .video-intro h2 {
+    font-size: clamp(24px, 3vw, 36px);
+    letter-spacing: -0.04em;
+  }
+  .video-intro p,
+  .video-note {
+    color: var(--muted);
+    font-size: 14px;
+  }
+  video {
+    display: block;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 16 / 9;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: #f8f7f3;
+  }
+  .video-note {
+    margin-top: 14px;
+  }
+  @media (max-width: 640px) {
+    .product-video {
+      padding-block: 40px;
+    }
+    video {
+      border-radius: 10px;
+    }
+  }
+</style>

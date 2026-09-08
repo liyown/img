@@ -3,6 +3,7 @@ import Icon from './Icon.astro';
 import Actions from './Actions.astro';
 import Screenshot from './Screenshot.astro';
 import Comparison from './Comparison.astro';
+import ProductVideo from './ProductVideo.astro';
 import { evidence } from '../lib/comparison';
 import { href, t, type Locale } from '../lib/site';
 const { locale } = Astro.props as { locale: Locale };
@@ -238,6 +239,7 @@ const faq = t(
     }
   </p>
 </section>
+<ProductVideo locale={locale} />
 <section
   class="metrics wrap"
   aria-label={t(locale, '安装与平台', 'Packages and platforms')}

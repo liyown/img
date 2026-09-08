@@ -1,14 +1,14 @@
 export const evidence = {
-  checked: '2026-09-07',
+  checked: '2026-09-08',
   platform: 'macOS ARM64',
   package: 'GUI DMG',
   unit: 'MB (1 MB = 1,000,000 bytes)',
   products: [
     {
       name: 'img',
-      version: '0.3.0',
-      bytes: 26268008,
-      source: 'https://github.com/liyown/img/releases/tag/desktop-v0.3.0',
+      version: '0.4.0',
+      bytes: 46884313,
+      source: 'https://github.com/liyown/img/releases/tag/desktop-v0.4.0',
       kind: 'official-release',
     },
     {
@@ -36,10 +36,10 @@ export const evidence = {
     },
   ],
   cli: {
-    bytes: 7088101,
+    bytes: 23849362,
     platform: 'macOS ARM64',
     package: 'tar.gz',
-    version: '0.3.0',
+    version: '0.4.0',
   },
   benchmark: {
     version: '0.3.0',
