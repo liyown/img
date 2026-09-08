@@ -244,6 +244,74 @@ impl Provider {
             _ => bail!("this provider does not support remote browsing"),
         }
     }
+    /// Authenticated bounded reads; an expected version pins the selected remote object.
+    pub fn read_remote(
+        &self,
+        path: &str,
+        version: &str,
+        limit: u64,
+        control: &Control,
+    ) -> Result<Vec<u8>> {
+        pathgen::validate(path)?;
+        ensure!(!path.ends_with('/'), "cannot download a directory");
+        control.check()?;
+        let result = (|| -> Result<Vec<u8>> {
+            let response = match self.cfg.kind.as_str() {
+                "s3" => self.s3_request_condition(
+                    Method::GET,
+                    &self.s3_url(Some(path))?,
+                    None,
+                    "",
+                    false,
+                    (!version.is_empty()).then_some(version),
+                    control,
+                )?,
+                "webdav" => {
+                    let mut request = self.dav_request(Method::GET, path)?;
+                    if !version.is_empty() {
+                        request = request.header("If-Match", version);
+                    }
+                    request.send()?
+                }
+                "github" => {
+                    ensure!(
+                        !version.is_empty() && version.bytes().all(|b| b.is_ascii_hexdigit()),
+                        "GitHub download needs the listed blob SHA"
+                    );
+                    let response = self
+                        .github_request(
+                            Method::GET,
+                            &format!("{}/git/blobs/{version}", self.repository_endpoint()),
+                        )
+                        .send()?;
+                    if !response.status().is_success() {
+                        self.response(response, "GitHub download")?;
+                        unreachable!()
+                    }
+                    let body = network::bounded(response, limit.saturating_mul(2))?;
+                    let value: serde_json::Value = serde_json::from_slice(&body)?;
+                    ensure!(
+                        value["sha"].as_str() == Some(version),
+                        "remote version changed"
+                    );
+                    let content = value["content"]
+                        .as_str()
+                        .context("missing blob content")?
+                        .replace(['\n', '\r'], "");
+                    let bytes = base64::engine::general_purpose::STANDARD.decode(content)?;
+                    ensure!(bytes.len() as u64 <= limit, "download exceeds size limit");
+                    return Ok(bytes);
+                }
+                _ => bail!("provider does not support authenticated remote reads"),
+            };
+            if !response.status().is_success() {
+                self.response(response, "remote download")?;
+                unreachable!()
+            }
+            network::bounded(response, limit)
+        })();
+        result.map_err(|e| self.safe_error(e))
+    }
     /// Delete a single explicitly selected file only if its version still matches.
     pub fn delete_remote(&self, path: &str, version: &str) -> Result<()> {
         pathgen::validate(path)?;

@@ -36,11 +36,13 @@ fn allowed(name: &str) -> bool {
         name,
         "config.toml"
             | "credentials.json"
+            | "catalog.sqlite3"
             | "queue.json"
             | "preferences.json"
             | "upload-options.json"
             | "shortcuts.json"
-    ) || name.starts_with("images/")
+    ) || name.starts_with("cache/")
+        || name.starts_with("images/")
         || name.starts_with("upload-inbox/")
 }
 fn restored_cache_path(source: &str, previous_root: &Path, new_root: &Path) -> Option<PathBuf> {
@@ -115,6 +117,15 @@ pub fn export(
     destination: &Path,
     options: Options,
 ) -> Result<Manifest> {
+    export_inner(root, config, destination, options, false)
+}
+fn export_inner(
+    root: &Path,
+    config: &Path,
+    destination: &Path,
+    options: Options,
+    catalog_locked: bool,
+) -> Result<Manifest> {
     ensure!(!destination.exists(), "backup destination already exists");
     let parent = destination
         .parent()
@@ -161,9 +172,26 @@ pub fn export(
     if options.records && root.join("queue.json").is_file() {
         add("queue.json", std::fs::read(root.join("queue.json"))?)?;
     }
+    if options.records && root.join("catalog.sqlite3").is_file() {
+        let snapshot_dir = tempfile::tempdir()?;
+        let snapshot = snapshot_dir.path().join("catalog.sqlite3");
+        if catalog_locked {
+            rusqlite::Connection::open(root.join("catalog.sqlite3"))?
+                .backup("main", &snapshot, None)?;
+        } else {
+            crate::catalog::Catalog::open(root)?.snapshot(&snapshot)?;
+        }
+        // Cache metadata is device local and cannot imply the backup contains image bytes.
+        if !options.cache {
+            let db = rusqlite::Connection::open(&snapshot)?;
+            db.execute("DELETE FROM cache", [])?;
+        }
+        add("catalog.sqlite3", std::fs::read(snapshot)?)?;
+    }
     let mut pending = vec![];
     if options.cache {
         pending.push(root.join("images"));
+        pending.push(root.join("cache"));
     }
     if options.records {
         pending.push(root.join("upload-inbox"));
@@ -259,11 +287,25 @@ pub fn restore(
         .open(root.join("session.lock"))?;
     lock.try_lock()
         .map_err(|_| anyhow::anyhow!("close img before restoring its data"))?;
+    let catalog_lock = std::fs::File::options()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(root.join("catalog.lock"))?;
+    catalog_lock
+        .try_lock()
+        .map_err(|_| anyhow::anyhow!("close library operations before restoring"))?;
+    if root.join("catalog.sqlite3").exists() {
+        let db = rusqlite::Connection::open(root.join("catalog.sqlite3"))?;
+        let busy: i64 = db.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get(0))?;
+        ensure!(busy == 0, "library has an active writer; restore cancelled");
+    }
     let rollback = root
         .parent()
         .unwrap()
         .join(format!("img-before-restore-{}", uuid::Uuid::new_v4()));
-    export(
+    export_inner(
         root,
         config,
         &rollback,
@@ -273,6 +315,7 @@ pub fn restore(
             cache: true,
             credentials: include_credentials,
         },
+        true,
     )?;
     // Keep exact pre-restore bytes privately for rollback, including plaintext
     // credentials in legacy configurations. This directory is never uploaded.
@@ -403,6 +446,43 @@ pub fn restore(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn catalog_snapshot_restore_preserves_metadata_without_cache() {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path().join("data");
+        let config = t.path().join("config.toml");
+        let c = crate::catalog::Catalog::open(&root).unwrap();
+        c.set_setting("acceptance", "before").unwrap();
+        let cache = crate::cache::Cache::open(&root).unwrap();
+        cache.put(b"private pixels").unwrap();
+        drop(cache);
+        let destination = t.path().join("backup");
+        let manifest = export(
+            &root,
+            &config,
+            &destination,
+            Options {
+                config: false,
+                records: true,
+                cache: false,
+                credentials: false,
+            },
+        )
+        .unwrap();
+        assert!(manifest.files.contains_key("catalog.sqlite3"));
+        assert!(!manifest.files.keys().any(|name| name.starts_with("cache/")));
+        c.set_setting("acceptance", "after").unwrap();
+        assert!(restore(&destination, &root, &config, false).is_err());
+        drop(c);
+        restore(&destination, &root, &config, false).unwrap();
+        let c = crate::catalog::Catalog::open(&root).unwrap();
+        assert_eq!(c.setting("acceptance").unwrap().as_deref(), Some("before"));
+        assert_eq!(
+            c.db.query_row("SELECT count(*) FROM cache", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
     #[test]
     fn cache_paths_restore_across_operating_systems_without_path_escape() {
         let root = Path::new("/new");

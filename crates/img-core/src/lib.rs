@@ -9,3 +9,5 @@ pub mod pathgen;
 pub mod provider;
 mod reuse;
 pub mod upload;
+
+pub mod index;

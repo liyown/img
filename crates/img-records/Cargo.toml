@@ -13,6 +13,7 @@ sha2 = "0.10"
 directories = "6"
 tempfile = "3"
 uuid = { version = "1", features = ["v4"] }
+rusqlite = { version = "0.40.2", features = ["bundled", "backup"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3.7"

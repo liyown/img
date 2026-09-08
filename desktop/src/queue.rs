@@ -305,6 +305,7 @@ impl ImgDesktop {
                                 item.progress = Some(100);
                                 item.url = Some(result.url);
                                 item.uploaded_size = result.size;
+                                item.catalog_asset_id = result.asset_id;
                                 item.error = None;
                                 if let Some(batch) = &mut this.queue.batch {
                                     batch.completed.push(item.clone());
@@ -625,6 +626,9 @@ impl ImgDesktop {
     fn shutdown_with_mode(&mut self, allow_unsaved: bool, cx: &mut Context<Self>) {
         if self.shutting_down {
             return;
+        }
+        if let Some(control) = self.catalog.update(cx, |library, _| library.stop()) {
+            self.queue.auxiliary.push(control);
         }
         self.shutting_down = true;
         let (controls, saved) = self.prepare_shutdown();

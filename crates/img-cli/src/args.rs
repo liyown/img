@@ -17,6 +17,11 @@ pub struct Cli {
 }
 #[derive(Subcommand)]
 pub enum Command {
+    /// Query the shared remote image library
+    Library {
+        #[command(subcommand)]
+        command: LibraryCommand,
+    },
     /// Browse remote files or explicitly delete one version
     Remote {
         #[arg(long, default_value = "")]
@@ -223,13 +228,15 @@ impl Processing {
             recipe,
             reuse: self.reuse,
             force: self.force,
-            record_origin: if self.no_history
-                || std::env::var("IMG_DESKTOP_UPLOAD").as_deref() == Ok("1")
-            {
+            record_origin: if self.no_history {
                 None
             } else {
                 Some(if self.origin.is_empty() {
-                    "cli".into()
+                    if std::env::var("IMG_DESKTOP_UPLOAD").as_deref() == Ok("1") {
+                        "desktop".into()
+                    } else {
+                        "cli".into()
+                    }
                 } else {
                     self.origin.clone()
                 })
@@ -391,4 +398,65 @@ pub enum ConfigCommand {
     Get { key: String },
     Set { key: String, value: String },
     Unset { key: String },
+}
+
+#[derive(Subcommand)]
+pub enum LibraryCommand {
+    Index {
+        #[arg(long)]
+        provider: String,
+        #[arg(long, default_value = "")]
+        prefix: String,
+        #[arg(long)]
+        resume: bool,
+    },
+    List {
+        #[arg(long, default_value = "")]
+        search: String,
+        #[arg(long, default_value = "")]
+        provider: String,
+        #[arg(long, default_value = "")]
+        prefix: String,
+        #[arg(long, default_value = "")]
+        content_type: String,
+        #[arg(long, default_value = "")]
+        origin: String,
+        #[arg(long, default_value = "")]
+        availability: String,
+        #[arg(long)]
+        hidden: bool,
+        #[arg(long, default_value_t = 200)]
+        limit: usize,
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+    },
+    Show {
+        id: String,
+    },
+    Check {
+        #[arg(required = true)]
+        ids: Vec<String>,
+        #[arg(long, default_value = "")]
+        provider: String,
+        #[arg(long)]
+        allow_insecure: bool,
+    },
+    Download {
+        #[arg(required = true)]
+        ids: Vec<String>,
+        #[arg(long)]
+        output_dir: PathBuf,
+        #[arg(long, default_value = "")]
+        provider: String,
+    },
+    Hide {
+        #[arg(required = true)]
+        ids: Vec<String>,
+        #[arg(long)]
+        restore: bool,
+    },
+    Cache {
+        #[arg(long)]
+        clear: bool,
+    },
 }

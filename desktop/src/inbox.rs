@@ -37,6 +37,7 @@ pub fn prepare(root: &Path, known: &HashSet<String>) -> Result<(Vec<Item>, Vec<S
                     uploaded_size: Some(record.size),
                     origin: String::new(),
                     imported_record_id: None,
+                    catalog_asset_id: None,
                 }),
                 Err(e) => Err(e.into()),
             };
@@ -54,6 +55,8 @@ pub fn prepare(root: &Path, known: &HashSet<String>) -> Result<(Vec<Item>, Vec<S
             item.added_at = record.created_at;
             item.origin = record.origin;
             item.imported_record_id = Some(record.id.clone());
+            item.catalog_asset_id = img_records::catalog::Catalog::open(root)?
+                .setting(&format!("inbox:{}", record.id))?;
             if let Some(source) = &item.source {
                 std::fs::OpenOptions::new()
                     .read(true)

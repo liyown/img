@@ -1,9 +1,12 @@
 //! Cross-process upload inbox. Each immutable directory is published atomically;
 //! desktop queue ownership stays with the desktop process.
 pub mod backup;
+pub mod cache;
+pub mod catalog;
 pub mod credentials;
 pub mod files;
 pub mod migration;
+pub mod sync;
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::{

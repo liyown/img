@@ -65,6 +65,23 @@ pub struct Request<'a> {
     pub overwrite: bool,
 }
 impl Provider {
+    /// Identity describes the object namespace, never credentials or a CDN URL.
+    pub fn namespace(&self) -> String {
+        let c = &self.cfg;
+        let endpoint = c.endpoint.trim_end_matches('/');
+        let branch = if c.branch.is_empty() {
+            "main"
+        } else {
+            &c.branch
+        };
+        let parts: Vec<&str> = match c.kind.as_str() {
+            "s3" => vec!["s3", endpoint, &c.bucket],
+            "github" => vec!["github", &self.github_api, &c.owner, &c.repo, branch],
+            "webdav" => vec!["webdav", endpoint],
+            _ => vec!["http", &c.url, &self.name],
+        };
+        img_records::catalog::identity(&parts)
+    }
     pub fn path_prefix(&self) -> &str {
         &self.cfg.path_prefix
     }

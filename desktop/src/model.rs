@@ -50,6 +50,8 @@ pub struct Item {
     pub origin: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub imported_record_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_asset_id: Option<String>,
 }
 
 impl Item {
@@ -85,6 +87,7 @@ impl Item {
             uploaded_size: None,
             origin: String::new(),
             imported_record_id: None,
+            catalog_asset_id: None,
         }
     }
     pub fn reference_items() -> Vec<Self> {
@@ -324,6 +327,7 @@ pub fn prepare_bytes_with_limit(
         uploaded_size: None,
         origin: String::new(),
         imported_record_id: None,
+        catalog_asset_id: None,
     })
 }
 
@@ -417,6 +421,7 @@ impl UploadConfiguration {
 }
 pub struct UploadResult {
     pub url: String,
+    pub asset_id: Option<String>,
     pub size: Option<u64>,
 }
 pub enum UploadOutcome {
@@ -482,6 +487,10 @@ pub fn upload(
     Ok(UploadOutcome::Done(UploadResult {
         url,
         size: payload["files"][0]["size"].as_u64(),
+        asset_id: payload["files"][0]["asset_id"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned),
     }))
 }
 

@@ -41,6 +41,8 @@ pub struct FileResult {
     pub retryable: Option<bool>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub record_warning: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub asset_id: String,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub reused: bool,
 }
@@ -239,26 +241,49 @@ fn one(
             }
         }
     };
+    let mut asset_id = String::new();
     let record_warning = if let Some(origin) = &o.record_origin {
         let result = (|| {
             let root = img_records::data_dir()?;
-            img_records::publish(
-                &root,
-                img_records::Record {
-                    id: String::new(),
-                    name: name.clone(),
-                    provider: p.name.clone(),
-                    url: url.clone(),
-                    remote_path: remote.clone(),
-                    content_type: processed.content_type.clone(),
-                    size: data.len() as u64,
-                    origin: origin.clone(),
-                    created_at: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)?
-                        .as_secs(),
-                },
-                &data,
-            )?;
+            let mut catalog = img_records::catalog::Catalog::open(&root)?;
+            asset_id = catalog.upsert(&img_records::catalog::RemoteRecord {
+                namespace: p.namespace(),
+                provider: p.name.clone(),
+                path: Some(remote.clone()),
+                url: url.clone(),
+                version: String::new(),
+                name: name.clone(),
+                content_type: processed.content_type.clone(),
+                size: data.len() as u64,
+                added_at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)?
+                    .as_secs(),
+                origin: origin.clone(),
+                content_hash: Some(img_records::catalog::digest(&data)),
+            })?;
+            let cache = img_records::cache::Cache::open(&root)?;
+            cache.put(&data)?;
+            cache.trim(img_records::cache::DEFAULT_LIMIT)?;
+            if std::env::var("IMG_DESKTOP_UPLOAD").as_deref() != Ok("1") {
+                let inbox_id = img_records::publish(
+                    &root,
+                    img_records::Record {
+                        id: String::new(),
+                        name: name.clone(),
+                        provider: p.name.clone(),
+                        url: url.clone(),
+                        remote_path: remote.clone(),
+                        content_type: processed.content_type.clone(),
+                        size: data.len() as u64,
+                        origin: origin.clone(),
+                        created_at: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)?
+                            .as_secs(),
+                    },
+                    &data,
+                )?;
+                catalog.set_setting(&format!("inbox:{inbox_id}"), &asset_id)?;
+            }
             Ok::<_, anyhow::Error>(())
         })();
         if result.is_err() {
@@ -272,6 +297,7 @@ fn one(
     let result = FileResult {
         reused,
         record_warning,
+        asset_id,
         local_path: source.into(),
         success: true,
         remote_path: remote,

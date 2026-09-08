@@ -303,6 +303,22 @@ fn uploads_publish_agent_records_and_local_failure_keeps_remote_success() {
         &std::fs::read(entries[0].as_ref().unwrap().path().join("record.json")).unwrap(),
     )
     .unwrap();
+    let library = parsed(&f.run(&["library", "list"]));
+    assert_eq!(library["total"], 1);
+    assert_eq!(library["assets"][0]["origin"], "agent");
+    let id = library["assets"][0]["id"].as_str().unwrap();
+    assert!(f.run(&["library", "cache", "--clear"]).status.success());
+    assert_eq!(
+        parsed(&f.run(&["library", "show", id]))["locations"][0]["url"],
+        "https://cdn.test/picture.png"
+    );
+    assert!(f.run(&["library", "hide", id]).status.success());
+    assert_eq!(parsed(&f.run(&["library", "list"]))["total"], 0);
+    assert!(
+        f.run(&["library", "hide", id, "--restore"])
+            .status
+            .success()
+    );
     assert_eq!(record["origin"], "agent");
     assert_eq!(record["url"], "https://cdn.test/picture.png");
     let out = f.run(&[

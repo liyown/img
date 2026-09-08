@@ -1,3 +1,5 @@
+#[path = "catalog_ui.rs"]
+mod catalog_ui;
 #[path = "diagnostic_ui.rs"]
 mod diagnostic_ui;
 #[path = "gallery_ui.rs"]
@@ -77,6 +79,7 @@ enum Filter {
 }
 
 pub struct ImgDesktop {
+    catalog: Entity<catalog_ui::Library>,
     shutting_down: bool,
     shutdown_saved: bool,
     pending_restore: bool,
@@ -273,11 +276,16 @@ impl ImgDesktop {
             InputState::new(window, cx)
                 .placeholder(crate::i18n::text("https://example.com/image.png"))
         });
-        let subscription = cx.subscribe(&search, |_, _, event: &InputEvent, cx| {
+        let subscription = cx.subscribe(&search, |this, field, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
+                let value = field.read(cx).value().to_string();
+                this.catalog
+                    .update(cx, |catalog, cx| catalog.search(value, cx));
                 cx.notify();
             }
         });
+        let catalog =
+            cx.new(|cx| catalog_ui::Library::new(root.clone(), engine.clone(), window, cx));
         let loaded = model::load(&root);
         let persistence_ok = loaded.is_ok();
         let mut notice = loaded.as_ref().err().map(|e| (e.to_string(), true));
@@ -402,6 +410,7 @@ impl ImgDesktop {
             }));
         }
         Self {
+            catalog,
             shutting_down: false,
             shutdown_saved: false,
             pending_restore: false,
@@ -430,7 +439,11 @@ impl ImgDesktop {
             engine,
             providers,
             provider,
-            page: Page::Queue,
+            page: if reference {
+                Page::Queue
+            } else {
+                Page::Library
+            },
             back_stack: vec![],
             forward_stack: vec![],
             content_revision: 0,
@@ -576,6 +589,7 @@ impl ImgDesktop {
             self.content_revision = self.content_revision.wrapping_add(1);
         }
         if page != Page::Library {
+            self.catalog.update(cx, |catalog, cx| catalog.leave(cx));
             self.selection.finish();
         }
         self.page = page;
@@ -2172,6 +2186,9 @@ impl ImgDesktop {
             .into_any_element()
     }
     fn content(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        if self.page == Page::Library && !self.reference {
+            return self.catalog.clone().into_any_element();
+        }
         let rows = self.filtered(cx);
         let mut body = div()
             .flex()
