@@ -811,7 +811,13 @@ impl Library {
 }
 impl Render for Library {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut view = div().flex().flex_col().size_full().p(px(22.)).gap(px(12.));
+        let mut view = div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .p(px(22.))
+            .pb(px(10.))
+            .gap(px(12.));
         let weak = cx.entity().downgrade();
         let mut top = div()
             .flex()
@@ -1096,12 +1102,16 @@ impl Render for Library {
         view.child(
             div()
                 .flex()
+                .w_full()
+                .h(px(28.))
                 .items_center()
                 .flex_shrink_0()
-                .gap(px(16.))
-                .pt(px(8.))
                 .child(
                     action("catalog-prev", "上一页")
+                        .w(px(80.))
+                        .h(px(28.))
+                        .px(px(10.))
+                        .rounded(px(6.))
                         .disabled(self.query.offset == 0 || self.busy)
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.query.offset = this.query.offset.saturating_sub(200);
@@ -1112,8 +1122,7 @@ impl Render for Library {
                 )
                 .child(
                     div()
-                        .min_w(px(56.))
-                        .flex_shrink_0()
+                        .flex_1()
                         .flex()
                         .items_center()
                         .justify_center()
@@ -1129,6 +1138,10 @@ impl Render for Library {
                 )
                 .child(
                     action("catalog-next", "下一页")
+                        .w(px(80.))
+                        .h(px(28.))
+                        .px(px(10.))
+                        .rounded(px(6.))
                         .disabled(self.query.offset + 200 >= self.total || self.busy)
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.query.offset += 200;
