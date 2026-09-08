@@ -139,6 +139,12 @@ mod tests {
             "Remove 3 records? 2 are outside the current search results."
         );
         assert_eq!(translate("存储源名称 *", 0), "Storage name *");
+        assert_eq!(
+            translate("已索引 25 张图片 · 当前结果 3 项", 0),
+            "25 images indexed · 3 results"
+        );
+        assert_eq!(translate("0 项 · 已索引范围", 0), "0 items · Indexed scope");
+        assert_eq!(translate("全部图床", 0), "All storage");
         assert_eq!(translate("holiday.png", 0), "holiday.png");
     }
 }

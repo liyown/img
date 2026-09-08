@@ -2208,6 +2208,7 @@ impl ImgDesktop {
                             .child(row("Language / 语言", "English / 简体中文"))
                             .child(
                                 Switch::new("english-language")
+                                    .accessibility_label("English / 简体中文")
                                     .checked(self.preferences.english)
                                     .on_click(cx.listener(|this, checked: &bool, _, cx| {
                                         this.preferences.english = *checked;
