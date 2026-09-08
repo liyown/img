@@ -1,4 +1,6 @@
 {
+  "索引当前图床": "Index this storage",
+  "暂停索引": "Pause indexing",
   " · {} 张失败，可批量重试": " · {} failed; retry from the queue",
   " · 已复制为 {}": " · Copied as {}",
   " · 本批剩余上传已取消": " · Remaining uploads cancelled",

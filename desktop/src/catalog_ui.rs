@@ -31,24 +31,14 @@ pub(super) struct Library {
     providers: Vec<String>,
     manageable: HashSet<String>,
     scroll: UniformListScrollHandle,
-    prefix: Entity<InputState>,
-    _subscriptions: Vec<Subscription>,
 }
 impl Library {
     pub fn new(
         root: PathBuf,
         engine: PathBuf,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let prefix =
-            cx.new(|cx| InputState::new(window, cx).placeholder(crate::i18n::text("目录前缀")));
-        let sub = cx.subscribe(&prefix, |this, field, event: &InputEvent, cx| {
-            if matches!(event, InputEvent::Change) {
-                this.query.prefix = field.read(cx).value().to_string();
-                this.changed(cx);
-            }
-        });
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_secs(2)).await;
@@ -91,8 +81,6 @@ impl Library {
             providers: vec![],
             manageable: HashSet::new(),
             scroll: UniformListScrollHandle::new(),
-            prefix,
-            _subscriptions: vec![sub],
         }
     }
     pub fn preferences(&mut self, preferences: Preferences, cx: &mut Context<Self>) {
@@ -934,6 +922,8 @@ impl Render for Library {
                 )
                 .dropdown_menu({
                     let providers = self.providers.clone();
+                    let can_index = self.manageable.contains(&self.query.provider);
+                    let busy = self.busy;
                     move |mut menu, _, _| {
                         for name in std::iter::once(String::new()).chain(providers.clone()) {
                             let weak = weak.clone();
@@ -950,6 +940,26 @@ impl Render for Library {
                                     });
                                 }),
                             );
+                        }
+                        if can_index {
+                            let start = weak.clone();
+                            let pause = weak.clone();
+                            menu = menu
+                                .separator()
+                                .item(
+                                    PopupMenuItem::new(crate::i18n::text("索引当前图床"))
+                                        .disabled(busy)
+                                        .on_click(move |_, window, cx| {
+                                            let _ = start.update(cx, |this, cx| {
+                                                this.index_scope(window, cx)
+                                            });
+                                        }),
+                                )
+                                .item(PopupMenuItem::new(crate::i18n::text("暂停索引")).on_click(
+                                    move |_, _, cx| {
+                                        let _ = pause.update(cx, |this, cx| this.pause_scope(cx));
+                                    },
+                                ));
                         }
                         menu
                     }
@@ -977,22 +987,7 @@ impl Render for Library {
                     cx.notify();
                 })),
             );
-        view = view.child(top).child(
-            div()
-                .flex()
-                .gap(px(8.))
-                .child(div().flex_1().child(Input::new(&self.prefix).small()))
-                .child(
-                    action("catalog-index", "索引此范围")
-                        .disabled(!self.manageable.contains(&self.query.provider) || self.busy)
-                        .on_click(cx.listener(|this, _, window, cx| this.index_scope(window, cx))),
-                )
-                .child(
-                    action("catalog-pause-index", "暂停索引")
-                        .disabled(!self.manageable.contains(&self.query.provider))
-                        .on_click(cx.listener(|this, _, _, cx| this.pause_scope(cx))),
-                ),
-        );
+        view = view.child(top);
         view = view.child(
             div()
                 .flex()
