@@ -201,8 +201,13 @@ impl Catalog {
             asset_id = old.clone();
         }
         let previous = previous.map(|(id, _)| id);
-        tx.execute("INSERT INTO assets(id,name,content_type,size,added_at,origin,content_hash) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
+        let inserted=tx.execute("INSERT INTO assets(id,name,content_type,size,added_at,origin,content_hash) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
             params![asset_id,record.name,record.content_type,record.size as i64,record.added_at as i64,record.origin,record.content_hash])?;
+        if inserted > 0
+            && let Some(old) = &previous
+        {
+            tx.execute("UPDATE assets SET hidden=(SELECT hidden FROM assets WHERE id=?1),preferred_location=(SELECT preferred_location FROM assets WHERE id=?1) WHERE id=?2",params![old,asset_id])?;
+        }
         if let Some(previous) = previous.filter(|old| old != &asset_id) {
             // Discovering a digest promotes unknown metadata; changed versions remain related.
             tx.execute(
@@ -339,6 +344,19 @@ impl Catalog {
             )?
             .collect::<rusqlite::Result<_>>()?)
     }
+    pub fn set_hidden_many(&mut self, ids: &[String], hidden: bool) -> Result<()> {
+        let tx = self
+            .db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        for id in ids {
+            ensure!(
+                tx.execute("UPDATE assets SET hidden=? WHERE id=?", params![hidden, id])? == 1,
+                "image no longer exists"
+            );
+        }
+        tx.commit()?;
+        Ok(())
+    }
     pub fn set_hidden(&self, id: &str, hidden: bool) -> Result<()> {
         ensure!(
             self.db
@@ -429,6 +447,19 @@ impl Catalog {
         Ok(())
     }
     /// Repeated upgrades are idempotent; never derive keys from URLs or cached bytes.
+    pub fn versions(&self, id: &str) -> Result<Vec<(String, String, String)>> {
+        let mut q=self.db.prepare("SELECT parent,child,recipe FROM versions WHERE parent=?1 OR child=?1 ORDER BY parent,child")?;
+        Ok(
+            q.query_map([id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+                .collect::<rusqlite::Result<_>>()?,
+        )
+    }
+    pub fn preview_key(&self, asset: &Asset) -> Result<Option<String>> {
+        Ok(asset
+            .content_hash
+            .clone()
+            .or(self.setting(&format!("preview:{}", asset.id))?))
+    }
     pub fn import_legacy(&mut self) -> Result<usize> {
         let path = self.root.join("queue.json");
         if !path.exists() {
@@ -474,7 +505,7 @@ impl Catalog {
                 continue;
             }
             let provider = row["target"].as_str().unwrap_or_default();
-            self.upsert(&RemoteRecord {
+            let asset_id = self.upsert(&RemoteRecord {
                 namespace: format!("legacy:{provider}"),
                 provider: provider.into(),
                 path: None,
@@ -490,6 +521,25 @@ impl Catalog {
                 origin: row["origin"].as_str().unwrap_or_default().into(),
                 content_hash: None,
             })?;
+            // Legacy thumbnails remain useful previews, but their digest is not proof of remote content.
+            if let Ok(cache_root) = self.root.join("images").canonicalize() {
+                for field in ["thumbnail", "source"] {
+                    if let Some(path) = row[field]
+                        .as_str()
+                        .and_then(|s| Path::new(s).canonicalize().ok())
+                        && path.starts_with(&cache_root)
+                        && std::fs::metadata(&path)
+                            .is_ok_and(|m| m.is_file() && m.len() <= 20 << 20)
+                        && let Ok(bytes) = std::fs::read(&path)
+                        && let Ok(cache) = crate::cache::Cache::open(&self.root)
+                        && let Ok(key) = cache.put(&bytes)
+                    {
+                        self.set_setting(&format!("preview:{asset_id}"), &key)?;
+                        cache.trim(cache.limit()?)?;
+                        break;
+                    }
+                }
+            }
             self.db
                 .execute("INSERT OR IGNORE INTO imported(source) VALUES(?)", [marker])?;
             count += 1;
@@ -619,6 +669,29 @@ mod tests {
                 .unwrap(),
             16
         );
+    }
+    #[test]
+    fn hundred_thousand_metadata_rows_page_without_loading_the_catalog() {
+        let root = tempfile::tempdir().unwrap();
+        let c = Catalog::open(root.path()).unwrap();
+        c.db.execute_batch("BEGIN; INSERT INTO settings(key,value) VALUES('sync-applying','1'); WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<100000) INSERT INTO assets(id,name,content_type,size,added_at,origin) SELECT printf('a-%06d',x),printf('photo-%06d.png',x),'image/png',100,x,'remote' FROM n; INSERT INTO locations(id,asset_id,namespace,provider,path,url,version) SELECT id,id,'namespace','test','photos/'||name,'https://cdn.test/'||name,'v1' FROM assets; DELETE FROM settings WHERE key='sync-applying'; COMMIT;").unwrap();
+        let start = std::time::Instant::now();
+        let page = c
+            .query(&CatalogQuery {
+                provider: "test".into(),
+                prefix: "photos/".into(),
+                limit: 200,
+                offset: 80000,
+                ..Default::default()
+            })
+            .unwrap();
+        println!(
+            "100000 metadata rows: query page at offset 80000 in {:?}",
+            start.elapsed()
+        );
+        assert_eq!(page.total, 100000);
+        assert_eq!(page.assets.len(), 200);
+        assert_eq!(page.assets[0].name, "photo-020000.png");
     }
     #[test]
     fn legacy_is_idempotent_and_never_guesses_a_remote_key() {

@@ -35,9 +35,14 @@ impl Catalog {
         for (table, kind, fields) in [
             ("assets", "asset", ASSET),
             ("locations", "location", LOCATION),
+            ("versions", "version", &["parent", "child", "recipe"][..]),
         ] {
             for field in fields {
-                let entity = format!("'{kind}:'||NEW.id");
+                let entity = if kind == "version" {
+                    "'version:'||json_array(NEW.parent,NEW.child)".to_string()
+                } else {
+                    format!("'{kind}:'||NEW.id")
+                };
                 let value = if *field == "hidden" {
                     "json(CASE NEW.hidden WHEN 0 THEN 'false' ELSE 'true' END)".to_string()
                 } else {
@@ -110,7 +115,7 @@ impl Catalog {
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let mut grouped = BTreeMap::<String, Vec<crate::sync::Event>>::new();
         {
-            let mut stmt = tx.prepare("SELECT body FROM sync_events WHERE entity LIKE 'asset:%' OR entity LIKE 'location:%' OR entity LIKE 'scope:%' ORDER BY rowid")?;
+            let mut stmt = tx.prepare("SELECT body FROM sync_events WHERE entity LIKE 'asset:%' OR entity LIKE 'location:%' OR entity LIKE 'scope:%' OR entity LIKE 'version:%' ORDER BY rowid")?;
             for body in stmt.query_map([], |r| r.get::<_, String>(0))? {
                 let event: crate::sync::Event = serde_json::from_str(&body?)?;
                 grouped.entry(event.entity.clone()).or_default().push(event);
@@ -199,6 +204,23 @@ impl Catalog {
                 && value["enabled"].is_boolean()
             {
                 tx.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![format!("scope:{id}"),serde_json::to_string(&value)?])?;
+            }
+        }
+        for (entity, state) in &states {
+            if !entity.starts_with("version:") || state.deleted || !state.conflicts.is_empty() {
+                continue;
+            }
+            if let (
+                Some(Value::String(parent)),
+                Some(Value::String(child)),
+                Some(Value::String(recipe)),
+            ) = (
+                state.fields.get("parent"),
+                state.fields.get("child"),
+                state.fields.get("recipe"),
+            ) {
+                ensure!(parent != child, "version cannot be its own parent");
+                tx.execute("INSERT INTO versions(parent,child,recipe) VALUES(?,?,?) ON CONFLICT(parent,child) DO UPDATE SET recipe=excluded.recipe",params![parent,child,recipe])?;
             }
         }
         tx.execute("DELETE FROM settings WHERE key='sync-applying'", [])?;

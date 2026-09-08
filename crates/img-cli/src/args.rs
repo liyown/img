@@ -407,6 +407,23 @@ pub enum ConfigCommand {
 
 #[derive(Subcommand)]
 pub enum LibraryCommand {
+    DeletePlan {
+        #[arg(required = true)]
+        ids: Vec<String>,
+        #[arg(long, default_value = "")]
+        provider: String,
+        #[arg(long)]
+        output: PathBuf,
+    },
+    Delete {
+        #[arg(long)]
+        plan: PathBuf,
+    },
+    Preview {
+        id: String,
+        #[arg(long, default_value = "")]
+        provider: String,
+    },
     Scopes {
         #[arg(long)]
         id: Option<String>,
@@ -436,6 +453,10 @@ pub enum LibraryCommand {
         origin: String,
         #[arg(long, default_value = "")]
         availability: String,
+        #[arg(long)]
+        since: Option<u64>,
+        #[arg(long)]
+        until: Option<u64>,
         #[arg(long)]
         hidden: bool,
         #[arg(long, default_value_t = 200)]
@@ -471,6 +492,8 @@ pub enum LibraryCommand {
     Cache {
         #[arg(long)]
         clear: bool,
+        #[arg(long)]
+        limit_mib: Option<u64>,
     },
 }
 

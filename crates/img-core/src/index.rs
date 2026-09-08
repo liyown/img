@@ -101,7 +101,11 @@ pub fn run(
         }
     }
     while let Some((prefix, cursor)) = scan.pending.front().cloned() {
-        if control.is_cancelled() {
+        let enabled = catalog
+            .setting(&format!("scope:{}", scope.id))?
+            .and_then(|s| serde_json::from_str::<Scope>(&s).ok())
+            .is_none_or(|s| s.enabled);
+        if control.is_cancelled() || !enabled {
             catalog.save_task(&task, "index", &serde_json::to_string(&scan)?)?;
             return Ok(scan);
         }

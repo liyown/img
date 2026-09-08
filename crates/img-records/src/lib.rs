@@ -142,3 +142,5 @@ mod tests {
 }
 
 mod sync_catalog;
+
+pub mod remote_lock;

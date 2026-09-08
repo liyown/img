@@ -34,6 +34,84 @@ fn execute(config_path: &Path, command: LibraryCommand, control: &Control) -> Re
     c.import_legacy()?;
     let mut failed = false;
     match command {
+        LibraryCommand::DeletePlan {
+            ids,
+            provider,
+            output,
+        } => {
+            let plan = img_core::library_ops::plan_delete(&c, &ids, &provider)?;
+            ensure!(!output.exists(), "plan output already exists");
+            let mut file = std::fs::File::options()
+                .create_new(true)
+                .write(true)
+                .open(output)?;
+            file.write_all(&serde_json::to_vec_pretty(&plan)?)?;
+            file.sync_all()?;
+            println!("{}", serde_json::to_string(&plan)?);
+        }
+        LibraryCommand::Delete { plan } => {
+            let plan = serde_json::from_slice(&std::fs::read(plan)?)?;
+            let config = config::read_global(config_path)?;
+            let files = img_core::library_ops::delete(&mut c, &config, &plan, control)?;
+            failed = files.iter().any(|r| !r.success);
+            println!("{}", serde_json::json!({"success":!failed,"files":files}));
+        }
+        LibraryCommand::Preview { id, provider } => {
+            let asset = c.get(&id)?;
+            let location = asset
+                .selected_location(&provider)
+                .context("no matching address")?
+                .clone();
+            let cfg = config::read_global(config_path)?;
+            let bytes = if let Some(key) = &location.path {
+                let p = crate::provider(&cfg, &location.provider)?;
+                ensure!(
+                    p.namespace() == location.namespace,
+                    "storage identity changed; refresh first"
+                );
+                p.read_remote(key, &location.version, cfg.upload.max_size, control)?
+            } else {
+                network::fetch(&location.url, cfg.upload.max_size, false)?.data
+            };
+            let ct = img_core::media::inspect(&bytes, cfg.upload.max_size)?.to_string();
+            let hash = img_records::catalog::digest(&bytes);
+            if asset.content_hash.as_ref().is_some_and(|h| h != &hash) {
+                c.mark_location(
+                    &location.id,
+                    &location.version,
+                    "unknown",
+                    SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+                )?;
+                anyhow::bail!("remote image changed; refresh before previewing this version");
+            }
+            let cache = img_records::cache::Cache::open(&root)?;
+            let key = cache.put(&bytes)?;
+            let lease = cache.lease(&key)?;
+            let asset_id = c.upsert(&img_records::catalog::RemoteRecord {
+                namespace: location.namespace,
+                provider: location.provider,
+                path: location.path,
+                url: location.url,
+                version: location.version.clone(),
+                name: asset.name,
+                content_type: ct,
+                size: bytes.len() as u64,
+                added_at: asset.added_at,
+                origin: asset.origin,
+                content_hash: Some(hash),
+            })?;
+            c.mark_location(
+                &location.id,
+                &location.version,
+                "available",
+                SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+            )?;
+            cache.trim(cache.limit()?)?;
+            println!(
+                "{}",
+                serde_json::json!({"id":asset_id,"cache_key":key,"path":lease.path})
+            );
+        }
         LibraryCommand::Scopes { id, enabled } => {
             if let Some(enabled) = enabled {
                 let id = id.context("--enabled requires --id")?;
@@ -87,6 +165,8 @@ fn execute(config_path: &Path, command: LibraryCommand, control: &Control) -> Re
             content_type,
             origin,
             availability,
+            since,
+            until,
             hidden,
             limit,
             offset,
@@ -99,27 +179,30 @@ fn execute(config_path: &Path, command: LibraryCommand, control: &Control) -> Re
                 content_type,
                 origin,
                 availability,
+                since,
+                until,
                 include_hidden: hidden,
                 limit,
                 offset,
-                ..Default::default()
             })?)?
         ),
         LibraryCommand::Show { id } => println!("{}", serde_json::to_string(&c.get(&id)?)?),
         LibraryCommand::Hide { ids, restore } => {
-            for id in &ids {
-                c.get(id)?;
-            }
-            for id in &ids {
-                c.set_hidden(id, !restore)?;
-            }
+            c.set_hidden_many(&ids, !restore)?;
             println!("{}", serde_json::json!({"updated":ids.len()}));
         }
-        LibraryCommand::Cache { clear } => {
+        LibraryCommand::Cache { clear, limit_mib } => {
             let cache = img_records::cache::Cache::open(&root)?;
+            if let Some(limit) = limit_mib {
+                cache.set_limit(
+                    limit
+                        .checked_mul(1024 * 1024)
+                        .context("cache limit overflow")?,
+                )?;
+            }
             println!(
                 "{}",
-                serde_json::json!({"removed_bytes":cache.trim(if clear{0}else{img_records::cache::DEFAULT_LIMIT})?})
+                serde_json::json!({"removed_bytes":cache.trim(if clear{0}else{cache.limit()?})?})
             );
         }
         LibraryCommand::Check {

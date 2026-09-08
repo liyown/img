@@ -58,6 +58,10 @@ pub struct Provider {
     github_api: String,
     credentials: Option<S3Credentials>,
 }
+pub struct UploadReceipt {
+    pub url: String,
+    pub version: String,
+}
 pub struct Request<'a> {
     pub name: &'a str,
     pub remote_path: &'a str,
@@ -93,6 +97,9 @@ impl Provider {
             _ => vec!["http", &c.url, &self.name],
         };
         img_records::catalog::identity(&parts)
+    }
+    pub fn supports_remote_management(&self) -> bool {
+        matches!(self.cfg.kind.as_str(), "s3" | "webdav" | "github")
     }
     pub fn path_prefix(&self) -> &str {
         &self.cfg.path_prefix
@@ -247,9 +254,15 @@ impl Provider {
         .into()
     }
     pub fn upload(&self, r: Request<'_>, control: &Control) -> Result<String> {
+        self.upload_versioned(r, control).map(|receipt| receipt.url)
+    }
+    pub fn upload_versioned(&self, r: Request<'_>, control: &Control) -> Result<UploadReceipt> {
         control.check()?;
         let result = match self.cfg.kind.as_str() {
-            "http" => self.http_upload(&r, control),
+            "http" => self.http_upload(&r, control).map(|url| UploadReceipt {
+                url,
+                version: String::new(),
+            }),
             "github" => self.github_upload(&r, control),
             "s3" => self.s3_upload(&r, control),
             "webdav" => self.webdav_upload(&r, control),
@@ -361,7 +374,7 @@ impl Provider {
             .header("Accept", "application/vnd.github+json")
             .header("X-GitHub-Api-Version", "2022-11-28")
     }
-    fn github_upload(&self, r: &Request<'_>, control: &Control) -> Result<String> {
+    fn github_upload(&self, r: &Request<'_>, control: &Control) -> Result<UploadReceipt> {
         let branch = if self.cfg.branch.is_empty() {
             "main"
         } else {
@@ -407,7 +420,11 @@ impl Provider {
             .header("Content-Type", "application/json")
             .body(Body::sized(ProgressReader::new(data, control), len))
             .send()?;
-        self.response(response, "GitHub upload")?;
+        let bytes = self.response(response, "GitHub upload")?;
+        let version = serde_json::from_slice::<serde_json::Value>(&bytes)
+            .ok()
+            .and_then(|v| v["content"]["sha"].as_str().map(str::to_owned))
+            .unwrap_or_default();
         let public = if self.cfg.public_url.is_empty() {
             format!(
                 "https://raw.githubusercontent.com/{}/{}/{}",
@@ -418,11 +435,14 @@ impl Provider {
         } else {
             self.cfg.public_url.clone()
         };
-        Ok(format!(
-            "{}/{}",
-            public.trim_end_matches('/'),
-            pathgen::escape(r.remote_path)
-        ))
+        Ok(UploadReceipt {
+            version,
+            url: format!(
+                "{}/{}",
+                public.trim_end_matches('/'),
+                pathgen::escape(r.remote_path)
+            ),
+        })
     }
     fn s3_url(&self, key: Option<&str>) -> Result<String> {
         let region = if self.cfg.region.is_empty() {
@@ -557,7 +577,7 @@ impl Provider {
         }
         Ok(request.send()?)
     }
-    fn s3_upload(&self, r: &Request<'_>, control: &Control) -> Result<String> {
+    fn s3_upload(&self, r: &Request<'_>, control: &Control) -> Result<UploadReceipt> {
         let url = self.s3_url(Some(r.remote_path))?;
         if !r.overwrite {
             let head = self.s3_request(Method::HEAD, &url, None, "", false, control)?;
@@ -581,12 +601,21 @@ impl Provider {
         if response.status() == StatusCode::PRECONDITION_FAILED {
             bail!("remote object already exists; use --overwrite");
         }
+        let version = response
+            .headers()
+            .get("ETag")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
         self.response(response, "S3 upload")?;
-        Ok(format!(
-            "{}/{}",
-            self.cfg.public_url.trim_end_matches('/'),
-            pathgen::escape(r.remote_path)
-        ))
+        Ok(UploadReceipt {
+            version,
+            url: format!(
+                "{}/{}",
+                self.cfg.public_url.trim_end_matches('/'),
+                pathgen::escape(r.remote_path)
+            ),
+        })
     }
 }
 

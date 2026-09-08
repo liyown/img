@@ -145,6 +145,42 @@ impl ImageCache for ThumbnailCache {
 
 pub fn prepare(root: &Path, preview: &Path) -> anyhow::Result<PathBuf> {
     use anyhow::{Context, ensure};
+    if let Ok(relative) = preview.strip_prefix(root.join("cache")) {
+        use image::ImageDecoder;
+        let key = relative.to_str().context("缓存键无效")?;
+        let cache = img_records::cache::Cache::open(root)?;
+        let catalog = img_records::catalog::Catalog::open(root)?;
+        let original = cache.lease(key)?;
+        if let Some(thumbnail) = catalog.setting(&format!("thumbnail:{key}"))?
+            && let Ok(lease) = cache.lease(&thumbnail)
+        {
+            return Ok(lease.path.clone());
+        }
+        let mut reader = image::ImageReader::open(&original.path)?.with_guessed_format()?;
+        let mut limits = image::Limits::default();
+        limits.max_alloc = Some(256 << 20);
+        limits.max_image_width = Some(32768);
+        limits.max_image_height = Some(32768);
+        reader.limits(limits);
+        let mut decoder = reader.into_decoder()?;
+        let (w, h) = decoder.dimensions();
+        ensure!(
+            u64::from(w) * u64::from(h) <= 40_000_000,
+            "图片超过 40 MP 预览限制"
+        );
+        let orientation = decoder.orientation()?;
+        let mut image = image::DynamicImage::from_decoder(decoder)?;
+        image.apply_orientation(orientation);
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image
+            .thumbnail(512, 512)
+            .write_to(&mut bytes, image::ImageFormat::Png)?;
+        let thumbnail = cache.put(&bytes.into_inner())?;
+        catalog.set_setting(&format!("thumbnail:{key}"), &thumbnail)?;
+        let protected = cache.lease(&thumbnail)?;
+        cache.trim(cache.limit()?)?;
+        return Ok(protected.path.clone());
+    }
     let images = root.join("images");
     let relative = preview
         .strip_prefix(&images)

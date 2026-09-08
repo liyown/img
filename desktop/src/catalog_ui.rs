@@ -2,16 +2,25 @@ use super::*;
 use img_records::catalog::{Asset, Catalog, CatalogQuery};
 use std::collections::HashSet;
 
+pub(super) enum PreferenceChanged {
+    Format(CopyFormat),
+    View(bool),
+}
+impl EventEmitter<PreferenceChanged> for Library {}
 pub(super) struct Library {
     root: PathBuf,
     engine: PathBuf,
     assets: Vec<Asset>,
+    previews: HashMap<String, String>,
+    thumbnails: Entity<crate::thumbnails::ThumbnailCache>,
     pub total: usize,
+    pub all_total: usize,
     matching: HashSet<String>,
-    selected: HashSet<String>,
+    selected: crate::selection::Ids,
     selecting: bool,
     query: CatalogQuery,
     busy: bool,
+    loading: bool,
     control: Option<Control>,
     generation: u64,
     stamp: String,
@@ -19,6 +28,7 @@ pub(super) struct Library {
     grid: bool,
     format: CopyFormat,
     providers: Vec<String>,
+    manageable: HashSet<String>,
     scroll: UniformListScrollHandle,
     prefix: Entity<InputState>,
     _subscriptions: Vec<Subscription>,
@@ -47,20 +57,29 @@ impl Library {
             }
         })
         .detach();
+        let weak = cx.weak_entity();
+        cx.defer(move |cx| {
+            let _ = weak.update(cx, |this, cx| this.refresh(cx));
+        });
+        let thumbnails = crate::thumbnails::ThumbnailCache::new(root.clone(), cx);
         let preferences = Preferences::load(&root).unwrap_or_default();
         Self {
             root,
             engine,
             assets: vec![],
+            previews: HashMap::new(),
+            thumbnails,
             total: 0,
+            all_total: 0,
             matching: HashSet::new(),
-            selected: HashSet::new(),
+            selected: Default::default(),
             selecting: false,
             query: CatalogQuery {
                 limit: 200,
                 ..Default::default()
             },
             busy: false,
+            loading: false,
             control: None,
             generation: 0,
             stamp: String::new(),
@@ -68,10 +87,80 @@ impl Library {
             grid: preferences.library_view == LibraryView::Grid,
             format: preferences.copy_format,
             providers: vec![],
+            manageable: HashSet::new(),
             scroll: UniformListScrollHandle::new(),
             prefix,
             _subscriptions: vec![sub],
         }
+    }
+    pub fn preferences(&mut self, preferences: Preferences, cx: &mut Context<Self>) {
+        self.format = preferences.copy_format;
+        self.grid = preferences.library_view == LibraryView::Grid;
+        cx.notify();
+    }
+    fn filter_button(
+        &self,
+        id: &'static str,
+        title: &str,
+        current: &str,
+        choices: &[(&str, &str)],
+        assign: fn(&mut CatalogQuery, String),
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let choices = choices
+            .iter()
+            .map(|(value, label)| (value.to_string(), label.to_string()))
+            .collect::<Vec<_>>();
+        let label = choices
+            .iter()
+            .find(|(v, _)| v == current)
+            .map(|(_, l)| l.as_str())
+            .unwrap_or(title)
+            .to_string();
+        let selected = current.to_string();
+        let weak = cx.weak_entity();
+        action(id, &label)
+            .dropdown_menu(move |mut menu, _, _| {
+                for (value, label) in &choices {
+                    let weak = weak.clone();
+                    let value = value.clone();
+                    menu = menu.item(
+                        PopupMenuItem::new(crate::i18n::text(label.clone()))
+                            .checked(value == selected)
+                            .on_click(move |_, _, cx| {
+                                let _ = weak.update(cx, |this, cx| {
+                                    assign(&mut this.query, value.clone());
+                                    this.changed(cx);
+                                });
+                            }),
+                    );
+                }
+                menu
+            })
+            .into_any_element()
+    }
+    fn format_picker(&self, cx: &mut Context<Self>) -> AnyElement {
+        let weak = cx.weak_entity();
+        let format = self.format;
+        action("catalog-format", format.label())
+            .dropdown_menu(move |mut menu, _, _| {
+                for value in CopyFormat::ALL {
+                    let weak = weak.clone();
+                    menu = menu.item(
+                        PopupMenuItem::new(crate::i18n::text(value.label()))
+                            .checked(value == format)
+                            .on_click(move |_, _, cx| {
+                                let _ = weak.update(cx, |this, cx| {
+                                    this.format = value;
+                                    cx.emit(PreferenceChanged::Format(value));
+                                    cx.notify();
+                                });
+                            }),
+                    );
+                }
+                menu
+            })
+            .into_any_element()
     }
     pub fn search(&mut self, text: String, cx: &mut Context<Self>) {
         if self.query.text != text {
@@ -93,7 +182,7 @@ impl Library {
         cx.notify();
     }
     fn refresh(&mut self, cx: &mut Context<Self>) {
-        if self.busy {
+        if self.busy || self.loading {
             return;
         }
         let stamp = ["catalog.sqlite3", "catalog.sqlite3-wal", "queue.json"]
@@ -108,7 +197,7 @@ impl Library {
             return;
         }
         self.stamp = stamp;
-        self.busy = true;
+        self.loading = true;
         let root = self.root.clone();
         let query = self.query.clone();
         let generation = self.generation;
@@ -118,29 +207,48 @@ impl Library {
                 c.import_legacy()?;
                 let page = c.query(&query)?;
                 let ids = c.query_ids(&query)?;
-                let providers = storage::configured_providers()?
-                    .0
+                let sources = storage::configured_providers()?.0;
+                let manageable = sources
+                    .iter()
+                    .filter(|(_, kind)| matches!(kind.as_str(), "s3" | "github" | "webdav"))
+                    .map(|(name, _)| name.clone())
+                    .collect();
+                let providers = sources.into_iter().map(|p| p.0).collect::<Vec<_>>();
+                let previews = page
+                    .assets
+                    .iter()
+                    .filter_map(|a| c.preview_key(a).ok().flatten().map(|k| (a.id.clone(), k)))
+                    .collect();
+                let valid = c
+                    .query_ids(&CatalogQuery {
+                        include_hidden: true,
+                        ..Default::default()
+                    })?
                     .into_iter()
-                    .map(|p| p.0)
-                    .collect::<Vec<_>>();
-                Ok((page, ids, providers))
+                    .collect::<HashSet<_>>();
+                Ok((page, ids, providers, previews, valid, manageable))
             })()
         });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
-                this.busy = false;
+                this.loading = false;
                 if this.generation != generation {
                     this.stamp.clear();
                     this.refresh(cx);
                     return;
                 }
                 match result {
-                    Ok((page, ids, providers)) => {
+                    Ok((page, ids, providers, previews, valid, manageable)) => {
                         this.assets = page.assets;
+                        this.previews = previews;
+
                         this.total = page.total;
+                        this.all_total = valid.len();
                         this.matching = ids.into_iter().collect();
+                        this.selected.reconcile(&this.matching, &valid);
                         this.providers = providers;
+                        this.manageable = manageable;
                     }
                     Err(e) => {
                         this.notice = Some(e.to_string());
@@ -159,6 +267,14 @@ impl Library {
         self.control.take()
     }
     fn command(&mut self, args: Vec<String>, cx: &mut Context<Self>) {
+        self.command_file(args, None, cx);
+    }
+    fn command_file(
+        &mut self,
+        args: Vec<String>,
+        file: Option<tempfile::NamedTempFile>,
+        cx: &mut Context<Self>,
+    ) {
         if self.busy {
             return;
         }
@@ -169,6 +285,7 @@ impl Library {
         self.control = Some(control.clone());
         let task = cx.background_executor().spawn(async move {
             (|| -> anyhow::Result<String> {
+                let _file = file;
                 let _completion = control.completion();
                 let mut command = std::process::Command::new(engine);
                 command
@@ -186,6 +303,25 @@ impl Library {
                 let result: serde_json::Value = serde_json::from_slice(&output.stdout)?;
                 if let Some(error) = result["error"].as_str() {
                     anyhow::bail!("{error}");
+                }
+                if let Some(complete) = result["complete"].as_bool() {
+                    return Ok(if complete {
+                        format!(
+                            "索引完成：{} 张图片",
+                            result["seen"].as_array().map(|a| a.len()).unwrap_or(0)
+                        )
+                    } else {
+                        "索引已暂停，可继续扫描".into()
+                    });
+                }
+                if let Some(count) = result["updated"].as_u64() {
+                    return Ok(format!("已更新 {count} 项图库记录"));
+                }
+                if let Some(bytes) = result["removed_bytes"].as_u64() {
+                    return Ok(format!(
+                        "已清理 {} 本机缓存，图库记录和远端文件保留",
+                        model::size_label(bytes)
+                    ));
                 }
                 let files = result["files"].as_array();
                 let failed = files
@@ -221,8 +357,148 @@ impl Library {
         })
         .detach();
     }
+    fn delete_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy || self.selected.is_empty() {
+            return;
+        }
+        let ids = self.selected.snapshot();
+        let hidden = self.selected.hidden();
+        let provider = self.query.provider.clone();
+        let root = self.root.clone();
+        let task=cx.background_executor().spawn(async move{(||->anyhow::Result<_>{
+            let c=Catalog::open(&root)?;let mut assets=ids.iter().map(|id|c.get(id)).collect::<anyhow::Result<Vec<_>>>()?;
+            assets.sort_by(|a,b|b.added_at.cmp(&a.added_at).then(a.id.cmp(&b.id)));
+            let mut targets=vec![];let mut counts=std::collections::BTreeMap::<String,usize>::new();
+            for asset in assets{let location=asset.selected_location(&provider).ok_or_else(||anyhow::anyhow!("所选图片没有对应地址"))?;
+                anyhow::ensure!(location.path.is_some()&&!location.version.is_empty(),"部分存储源不支持远端删除，或记录缺少远端版本。请仅选择可管理的图片");
+                *counts.entry(location.provider.clone()).or_default()+=1;
+                targets.push(serde_json::json!({"input_id":asset.id,"name":asset.name,"location":location}));
+            }
+            let plan=serde_json::json!({"version":1,"task_id":uuid::Uuid::new_v4().to_string(),"targets":targets});
+            Ok((plan,counts))
+        })()});
+        cx.spawn_in(window,async move |this,cx|{
+            let prepared=task.await;
+            let Ok((plan,counts))=prepared else {let _=this.update_in(cx,|this,_,cx|{this.notice=Some(prepared.err().unwrap().to_string());cx.notify();});return;};
+            let summary=format!("将删除 {} 个远端文件，其中 {hidden} 项不在当前搜索结果中。\n{}\n仅删除列出的远端位置，其他副本、原文件和本机缓存保留。相关链接可能立即失效。",plan["targets"].as_array().map(|a|a.len()).unwrap_or(0),counts.iter().map(|(p,n)|format!("{p}：{n} 个文件")).collect::<Vec<_>>().join("\n"));
+            let prompt=this.update_in(cx,|_,window,cx|crate::i18n::prompt(window,PromptLevel::Warning,"删除远端图片？",Some(&summary),&["取消","删除远端文件"],cx));
+            let Ok(prompt)=prompt else{return;};if prompt.await.ok()!=Some(1){return;}
+            let file=(||->anyhow::Result<_>{use std::io::Write;let mut file=tempfile::NamedTempFile::new()?;file.write_all(&serde_json::to_vec(&plan)?)?;file.as_file().sync_all()?;Ok(file)})();
+            let _=this.update_in(cx,|this,_,cx|match file{Ok(file)=>{let args=vec!["library".into(),"delete".into(),"--plan".into(),file.path().to_string_lossy().into_owned()];this.command_file(args,Some(file),cx);},Err(error)=>{this.notice=Some(error.to_string());cx.notify();}});
+        }).detach();
+    }
+    fn download_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let ids = self.selected.snapshot();
+        let provider = self.query.provider.clone();
+        let prompt = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some(crate::i18n::text("选择下载目录")),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(paths))) = prompt.await else {
+                return;
+            };
+            let Some(path) = paths.first() else {
+                return;
+            };
+            let mut args = vec![
+                "library".into(),
+                "download".into(),
+                "--output-dir".into(),
+                path.to_string_lossy().into_owned(),
+                "--provider".into(),
+                provider,
+            ];
+            args.extend(ids);
+            let _ = this.update_in(cx, |this, _, cx| this.command(args, cx));
+        })
+        .detach();
+    }
+    fn pause_scope(&mut self, cx: &mut Context<Self>) {
+        let root = self.root.clone();
+        let provider = self.query.provider.clone();
+        let prefix = self.query.prefix.trim_end_matches('/').to_string();
+        let task = cx.background_executor().spawn(async move {
+            (|| -> anyhow::Result<usize> {
+                let mut c = Catalog::open(&root)?;
+                let mut count = 0;
+                for (key, body) in c.settings_prefix("scope:")? {
+                    let mut scope: serde_json::Value = serde_json::from_str(&body)?;
+                    if scope["provider"] == provider
+                        && scope["prefix"].as_str().unwrap_or("").trim_end_matches('/') == prefix
+                    {
+                        scope["enabled"] = false.into();
+                        c.sync_set(&key, "enabled", Some(false.into()))?;
+                        c.set_setting(&key, &serde_json::to_string(&scope)?)?;
+                        count += 1;
+                    }
+                }
+                Ok(count)
+            })()
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.notice = Some(match result {
+                    Ok(0) => "此范围尚未开始索引".into(),
+                    Ok(_) => "索引将在当前请求结束后暂停，扫描进度会保留".into(),
+                    Err(error) => error.to_string(),
+                });
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+    fn index_scope(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let provider = self.query.provider.clone();
+        let prefix = if self.query.prefix.is_empty() {
+            String::new()
+        } else {
+            format!("{}/", self.query.prefix.trim_end_matches('/'))
+        };
+        if provider.is_empty() {
+            return;
+        }
+        let message = format!(
+            "存储源：{provider}\n目录：{}\n将递归索引此范围，并在应用运行期间每 15 分钟刷新。",
+            if prefix.is_empty() {
+                "根目录"
+            } else {
+                &prefix
+            }
+        );
+        let prompt = crate::i18n::prompt(
+            window,
+            PromptLevel::Info,
+            "索引远端图片",
+            Some(&message),
+            &["取消", "开始索引"],
+            cx,
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            if prompt.await.ok() == Some(1) {
+                let _ = this.update_in(cx, |this, _, cx| {
+                    this.command(
+                        vec![
+                            "library".into(),
+                            "index".into(),
+                            "--provider".into(),
+                            provider,
+                            "--prefix".into(),
+                            prefix,
+                            "--resume".into(),
+                        ],
+                        cx,
+                    )
+                });
+            }
+        })
+        .detach();
+    }
     fn copy(&mut self, cx: &mut Context<Self>) {
-        let ids = self.selected.clone();
+        let ids = self.selected.snapshot();
         let root = self.root.clone();
         let provider = self.query.provider.clone();
         let format = self.format;
@@ -231,8 +507,8 @@ impl Library {
                 let c = Catalog::open(&root)?;
                 let mut assets = ids
                     .iter()
-                    .map(|id| c.get(id))
-                    .collect::<anyhow::Result<Vec<_>>>()?;
+                    .filter_map(|id| c.get(id).ok())
+                    .collect::<Vec<_>>();
                 assets.sort_by(|a, b| b.added_at.cmp(&a.added_at).then(a.id.cmp(&b.id)));
                 let lines = assets
                     .iter()
@@ -241,7 +517,7 @@ impl Library {
                             .map(|l| format.render(&a.name, &l.url))
                     })
                     .collect::<Vec<_>>();
-                Ok((lines.join("\n"), lines.len(), assets.len() - lines.len()))
+                Ok((lines.join("\n"), lines.len(), ids.len() - lines.len()))
             })()
         });
         cx.spawn(async move |this, cx| {
@@ -261,12 +537,82 @@ impl Library {
         })
         .detach();
     }
-    fn detail(&self, asset: Asset, window: &mut Window, cx: &mut Context<Self>) {
-        let selected = asset.selected_location(&self.query.provider).cloned();
-        let hash = asset.content_hash.clone();
-        let image = hash
-            .map(|h| self.root.join("cache").join(h))
-            .filter(|p| p.is_file());
+    fn detail(&mut self, asset: Asset, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy {
+            return;
+        }
+        self.busy = true;
+        let root = self.root.clone();
+        let engine = self.engine.clone();
+        let original = asset.clone();
+        let key = self.previews.get(&asset.id).cloned();
+        let provider = self.query.provider.clone();
+        let target_provider = provider.clone();
+        let control = Control::default();
+        self.control = Some(control.clone());
+        let task = cx.background_executor().spawn(async move {
+            let _completion = control.completion();
+            (|| -> anyhow::Result<_> {
+                let cache = img_records::cache::Cache::open(&root)?;
+                if let Some(key) = key
+                    && let Ok(lease) = cache.lease(&key)
+                {
+                    return Ok((asset, key, std::sync::Arc::new(lease)));
+                }
+                let mut command = std::process::Command::new(engine);
+                command
+                    .arg("--config")
+                    .arg(storage::config_path()?)
+                    .args(["library", "preview", &asset.id, "--provider", &provider])
+                    .env("IMG_DATA_DIR", &root);
+                let output = engine::run(command, &control)?;
+                anyhow::ensure!(
+                    output.success && output.stopped == 0,
+                    "无法读取所选远端版本，请检查连接或刷新索引"
+                );
+                let result: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+                let key = result["cache_key"]
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("预览缓存无效"))?
+                    .to_string();
+                let asset = Catalog::open(&root)?.get(result["id"].as_str().unwrap_or(""))?;
+                let lease = std::sync::Arc::new(cache.lease(&key)?);
+                Ok((asset, key, lease))
+            })()
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = task.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.busy = false;
+                this.control = None;
+                match result {
+                    Ok((asset, key, lease)) => {
+                        this.previews.insert(asset.id.clone(), key);
+                        this.open_detail(asset, &target_provider, Some(lease), window, cx);
+                    }
+                    Err(error) => {
+                        this.notice = Some(error.to_string());
+                        this.open_detail(original, &target_provider, None, window, cx);
+                    }
+                }
+                this.stamp.clear();
+                this.refresh(cx);
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+    fn open_detail(
+        &self,
+        asset: Asset,
+        provider: &str,
+        image: Option<std::sync::Arc<img_records::cache::CacheLease>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let selected = asset.selected_location(provider).cloned();
+        let thumbnails = self.thumbnails.clone();
         window.open_dialog(cx, move |dialog, _, _| {
             let mut body = div().flex().flex_col().gap(px(10.)).child(label(
                 format!("{} · {}", asset.content_type, model::size_label(asset.size)),
@@ -275,7 +621,8 @@ impl Library {
             ));
             if let Some(image) = &image {
                 body = body.child(
-                    img(image.clone())
+                    img(image.path.clone())
+                        .image_cache(&thumbnails)
                         .w_full()
                         .h(px(280.))
                         .object_fit(ObjectFit::Contain),
@@ -326,9 +673,9 @@ impl Library {
     fn cell(&self, asset: Asset, cx: &mut Context<Self>) -> AnyElement {
         let id = asset.id.clone();
         let target = asset.clone();
-        let hash = asset
-            .content_hash
-            .as_ref()
+        let hash = self
+            .previews
+            .get(&asset.id)
             .map(|h| self.root.join("cache").join(h))
             .filter(|p| p.is_file());
         let preview = div()
@@ -339,8 +686,73 @@ impl Library {
             .items_center()
             .justify_center()
             .when_some(hash, |d, path| {
-                d.child(img(path).size_full().object_fit(ObjectFit::Contain))
+                d.child(
+                    img(path)
+                        .image_cache(&self.thumbnails)
+                        .size_full()
+                        .object_fit(ObjectFit::Contain),
+                )
             });
+        if !self.grid {
+            let location = asset.selected_location(&self.query.provider);
+            let detail = location
+                .map(|location| location.provider.clone())
+                .unwrap_or_else(|| "没有可用地址".into());
+            let name = asset.name.clone();
+            return div()
+                .id(SharedString::from(format!("catalog-row-{id}")))
+                .w_full()
+                .h(px(76.))
+                .flex()
+                .items_center()
+                .gap(px(12.))
+                .p(px(10.))
+                .rounded(px(8.))
+                .border_1()
+                .border_color(crate::theme::color(BORDER))
+                .bg(crate::theme::color(CARD))
+                .when(self.selecting, |row| {
+                    row.child(
+                        gpui_kit::component::checkbox::Checkbox::new(SharedString::from(format!(
+                            "select-{id}"
+                        )))
+                        .accessibility_label(crate::i18n::text(format!("选择 {name}")))
+                        .checked(self.selected.contains(&id))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.selected.toggle(id.clone());
+                            cx.notify();
+                        })),
+                    )
+                })
+                .child(
+                    Button::new(SharedString::from(format!("preview-{}", asset.id)))
+                        .ghost()
+                        .accessibility_label(crate::i18n::text(format!("预览 {name}")))
+                        .w(px(62.))
+                        .h(px(56.))
+                        .child(preview)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.detail(target.clone(), window, cx)
+                        })),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap(px(6.))
+                        .child(label(name, 13., TEXT).text_ellipsis())
+                        .child(label(detail, 11., MUTED).text_ellipsis()),
+                )
+                .child(label(model::size_label(asset.size), 12., MUTED))
+                .child(label(
+                    format!("{} 个地址", asset.locations.len()),
+                    11.,
+                    MUTED,
+                ))
+                .into_any_element();
+        }
         div()
             .id(SharedString::from(format!("catalog-{}", asset.id)))
             .flex()
@@ -355,6 +767,7 @@ impl Library {
             .child(
                 Button::new(SharedString::from(format!("preview-{}", asset.id)))
                     .ghost()
+                    .accessibility_label(crate::i18n::text(format!("预览 {}", asset.name)))
                     .w_full()
                     .h(px(if self.grid { 140. } else { 50. }))
                     .child(preview)
@@ -372,12 +785,11 @@ impl Library {
                             gpui_kit::component::checkbox::Checkbox::new(SharedString::from(
                                 format!("select-{id}"),
                             ))
+                            .accessibility_label(crate::i18n::text(format!("选择 {}", asset.name)))
                             .checked(self.selected.contains(&id))
                             .on_click(cx.listener(
                                 move |this, _, _, cx| {
-                                    if !this.selected.remove(&id) {
-                                        this.selected.insert(id.clone());
-                                    }
+                                    this.selected.toggle(id.clone());
                                     cx.notify();
                                 },
                             )),
@@ -445,6 +857,7 @@ impl Render for Library {
                 action("catalog-view", if self.grid { "列表" } else { "网格" }).on_click(
                     cx.listener(|this, _, _, cx| {
                         this.grid = !this.grid;
+                        cx.emit(PreferenceChanged::View(this.grid));
                         cx.notify();
                     }),
                 ),
@@ -462,13 +875,89 @@ impl Render for Library {
                     cx.notify();
                 })),
             );
-        view = view.child(top).child(Input::new(&self.prefix).small());
+        view = view.child(top).child(
+            div()
+                .flex()
+                .gap(px(8.))
+                .child(div().flex_1().child(Input::new(&self.prefix).small()))
+                .child(
+                    action("catalog-index", "索引此范围")
+                        .disabled(!self.manageable.contains(&self.query.provider) || self.busy)
+                        .on_click(cx.listener(|this, _, window, cx| this.index_scope(window, cx))),
+                )
+                .child(
+                    action("catalog-pause-index", "暂停索引")
+                        .disabled(!self.manageable.contains(&self.query.provider))
+                        .on_click(cx.listener(|this, _, _, cx| this.pause_scope(cx))),
+                ),
+        );
+        view = view.child(
+            div()
+                .flex()
+                .flex_wrap()
+                .gap(px(8.))
+                .child(self.filter_button(
+                    "catalog-type",
+                    "格式",
+                    &self.query.content_type,
+                    &[
+                        ("", "全部格式"),
+                        ("image/png", "PNG"),
+                        ("image/jpeg", "JPEG"),
+                        ("image/webp", "WebP"),
+                        ("image/gif", "GIF"),
+                        ("image/svg+xml", "SVG"),
+                        ("image/avif", "AVIF"),
+                    ],
+                    |q, v| q.content_type = v,
+                    cx,
+                ))
+                .child(self.filter_button(
+                    "catalog-date",
+                    if self.query.since.is_some() {
+                        "已限定加入时间"
+                    } else {
+                        "全部时间"
+                    },
+                    if self.query.since.is_some() {
+                        "custom"
+                    } else {
+                        ""
+                    },
+                    &[
+                        ("", "全部时间"),
+                        ("7", "最近 7 天"),
+                        ("30", "最近 30 天"),
+                        ("90", "最近 90 天"),
+                    ],
+                    |q, v| {
+                        q.since = v.parse::<u64>().ok().map(|days| {
+                            std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs()
+                                .saturating_sub(days * 86400)
+                        });
+                    },
+                    cx,
+                ))
+                .child(
+                    action(
+                        "catalog-show-hidden",
+                        if self.query.include_hidden {
+                            "不显示隐藏记录"
+                        } else {
+                            "显示隐藏记录"
+                        },
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.query.include_hidden = !this.query.include_hidden;
+                        this.changed(cx);
+                    })),
+                ),
+        );
         if self.selecting {
-            let hidden = self
-                .selected
-                .iter()
-                .filter(|id| !self.matching.contains(*id))
-                .count();
+            let hidden = self.selected.hidden();
             view = view.child(
                 div()
                     .flex()
@@ -486,11 +975,13 @@ impl Render for Library {
                         div()
                             .flex()
                             .gap(px(8.))
+                            .flex_wrap()
+                            .child(self.format_picker(cx))
                             .child(
                                 action("catalog-all", "全选当前结果")
-                                    .disabled(self.busy)
+                                    .disabled(self.busy || self.matching.is_empty())
                                     .on_click(cx.listener(|this, _, _, cx| {
-                                        this.selected.extend(this.matching.iter().cloned());
+                                        this.selected.select_visible();
                                         cx.notify();
                                     })),
                             )
@@ -504,6 +995,29 @@ impl Render for Library {
                                 action("catalog-copy", "复制所选")
                                     .disabled(self.selected.is_empty())
                                     .on_click(cx.listener(|this, _, _, cx| this.copy(cx))),
+                            )
+                            .child(
+                                action("catalog-download", "下载所选")
+                                    .disabled(self.selected.is_empty() || self.busy)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.download_selected(window, cx)
+                                    })),
+                            )
+                            .child(
+                                action("catalog-hide", "隐藏所选")
+                                    .disabled(self.selected.is_empty() || self.busy)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let mut args = vec!["library".into(), "hide".into()];
+                                        args.extend(this.selected.iter().cloned());
+                                        this.command(args, cx);
+                                    })),
+                            )
+                            .child(
+                                action("catalog-delete", "删除远端文件")
+                                    .disabled(self.selected.is_empty() || self.busy)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.delete_selected(window, cx)
+                                    })),
                             )
                             .child(
                                 action("catalog-check", "检查链接")
@@ -526,6 +1040,17 @@ impl Render for Library {
         if let Some(notice) = &self.notice {
             view = view.child(label(notice.clone(), 12., MUTED));
         }
+        if self.assets.is_empty() && !self.loading {
+            view = view.child(label(
+                if self.query.text.is_empty() && self.total == 0 {
+                    "当前范围没有图片。选择存储源和目录后可开始索引，也可以先上传图片。"
+                } else {
+                    "没有匹配结果，已选图片会继续保留。"
+                },
+                13.,
+                MUTED,
+            ));
+        }
         let columns = if self.grid {
             if window.viewport_size().width < px(1180.) {
                 3
@@ -543,10 +1068,11 @@ impl Render for Library {
                     range
                         .map(|row| {
                             let mut line = div()
+                                .w_full()
                                 .flex()
                                 .gap(px(10.))
                                 .pb(px(10.))
-                                .h(px(if this.grid { 230. } else { 125. }));
+                                .h(px(if this.grid { 230. } else { 86. }));
                             for col in 0..columns {
                                 line = line.child(
                                     div().flex_1().min_w_0().children(
@@ -563,6 +1089,7 @@ impl Render for Library {
                 }),
             )
             .track_scroll(&self.scroll)
+            .w_full()
             .flex_1()
             .min_h_0(),
         );

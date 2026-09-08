@@ -2,6 +2,8 @@ use super::*;
 use base64::Engine;
 use std::{collections::BTreeMap, io::Write, time::Instant};
 
+pub(super) struct ConfigurationChanged;
+impl EventEmitter<ConfigurationChanged> for SyncPanel {}
 pub(super) struct SyncPanel {
     root: PathBuf,
     engine: PathBuf,
@@ -16,6 +18,7 @@ pub(super) struct SyncPanel {
     notice: Option<String>,
     control: Option<Control>,
     stamp: String,
+    config_stamp: String,
     dirty: Option<Instant>,
     next: Instant,
     next_index: Instant,
@@ -81,6 +84,7 @@ impl SyncPanel {
             notice: None,
             control: None,
             stamp: String::new(),
+            config_stamp: String::new(),
             dirty: None,
             next: Instant::now(),
             next_index: Instant::now(),
@@ -140,6 +144,10 @@ impl SyncPanel {
             let (settings, revision, config_stamp, due_scope) = task.await;
             let _ = this.update(cx, |this, cx| {
                 this.polling = false;
+                if this.config_stamp != config_stamp {
+                    this.config_stamp = config_stamp.clone();
+                    cx.emit(ConfigurationChanged);
+                }
                 this.configured = settings.is_some();
                 this.paused = settings.as_ref().is_some_and(|s| s["paused"] == true);
                 if this.stopped || this.busy {

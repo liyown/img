@@ -73,6 +73,55 @@ pub fn copy_text(items: &[Item], ids: &[String], format: CopyFormat) -> (String,
     (lines.join("\n"), count, ids.len().saturating_sub(count))
 }
 
+/// Stable IDs and a cached intersection make single-item selection independent of catalog size.
+#[derive(Default)]
+pub struct Ids {
+    ids: HashSet<String>,
+    visible: HashSet<String>,
+    visible_count: usize,
+}
+impl Ids {
+    pub fn reconcile(&mut self, visible: &HashSet<String>, valid: &HashSet<String>) {
+        self.ids.retain(|id| valid.contains(id));
+        self.visible = visible.clone();
+        self.visible_count = self.ids.intersection(&self.visible).count();
+    }
+    pub fn toggle(&mut self, id: String) {
+        if self.ids.remove(&id) {
+            self.visible_count -= usize::from(self.visible.contains(&id));
+        } else {
+            self.visible_count += usize::from(self.visible.contains(&id));
+            self.ids.insert(id);
+        }
+    }
+    pub fn select_visible(&mut self) {
+        self.ids.extend(self.visible.iter().cloned());
+        self.visible_count = self.visible.len();
+    }
+    pub fn clear(&mut self) {
+        self.ids.clear();
+        self.visible_count = 0;
+    }
+    pub fn contains(&self, id: &str) -> bool {
+        self.ids.contains(id)
+    }
+    pub fn len(&self) -> usize {
+        self.ids.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.ids.is_empty()
+    }
+    pub fn hidden(&self) -> usize {
+        self.ids.len() - self.visible_count
+    }
+    pub fn iter(&self) -> impl Iterator<Item = &String> {
+        self.ids.iter()
+    }
+    pub fn snapshot(&self) -> HashSet<String> {
+        self.ids.clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,5 +181,33 @@ mod tests {
         items[0].url = None;
         assert_eq!(copy_text(&items, &ids, CopyFormat::Url).1, 1);
         assert_eq!(copy_text(&items, &ids, CopyFormat::Url).2, 1);
+    }
+}
+
+#[cfg(test)]
+mod id_tests {
+    use super::*;
+    fn set(values: &[&str]) -> HashSet<String> {
+        values.iter().map(|s| s.to_string()).collect()
+    }
+    #[test]
+    fn selection_survives_search_appends_all_and_prunes_invalid_ids() {
+        let mut s = Ids::default();
+        let valid = set(&["a", "b", "c"]);
+        s.reconcile(&set(&["a", "b"]), &valid);
+        s.toggle("a".into());
+        s.reconcile(&set(&["b", "c"]), &valid);
+        assert_eq!(s.hidden(), 1);
+        s.select_visible();
+        assert_eq!(s.len(), 3);
+        assert_eq!(s.hidden(), 1);
+        s.toggle("b".into());
+        assert_eq!(s.hidden(), 1);
+        s.reconcile(&set(&[]), &set(&["c"]));
+        assert_eq!(s.snapshot(), set(&["c"]));
+        assert_eq!(s.hidden(), 1);
+        s.clear();
+        assert_eq!(s.hidden(), 0);
+        assert!(s.is_empty());
     }
 }

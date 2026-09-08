@@ -22,6 +22,8 @@ pub struct FileResult {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub remote_path: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub remote_version: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub url: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub provider: String,
@@ -212,12 +214,24 @@ fn one(
         .as_ref()
         .map(|r| r.remote_path.clone())
         .unwrap_or(remote);
+    let _remote_lease = match img_records::data_dir()
+        .and_then(|root| img_records::remote_lock::acquire(&root, &p.namespace(), &remote, false))
+    {
+        Ok(lease) => Some(lease),
+        // If local storage is unwritable, deletes cannot acquire the same lock either.
+        // Preserve the existing guarantee that a successful remote upload still returns its URL.
+        Err(error) if error.downcast_ref::<std::io::Error>().is_some() => None,
+        Err(error) => return Err(error),
+    };
     let mut attempt = 0;
-    let url = loop {
+    let receipt = loop {
         if let Some(previous) = &previous {
-            break previous.url.clone();
+            break crate::provider::UploadReceipt {
+                url: previous.url.clone(),
+                version: previous.remote_version.clone(),
+            };
         }
-        let result = p.upload(
+        let result = p.upload_versioned(
             Request {
                 name: &name,
                 remote_path: &remote,
@@ -241,6 +255,8 @@ fn one(
             }
         }
     };
+    let url = receipt.url;
+    let remote_version = receipt.version;
     let mut asset_id = String::new();
     let record_warning = if let Some(origin) = &o.record_origin {
         let result = (|| {
@@ -249,9 +265,9 @@ fn one(
             asset_id = catalog.upsert(&img_records::catalog::RemoteRecord {
                 namespace: p.namespace(),
                 provider: p.name.clone(),
-                path: Some(remote.clone()),
+                path: p.supports_remote_management().then(|| remote.clone()),
                 url: url.clone(),
-                version: String::new(),
+                version: remote_version.clone(),
                 name: name.clone(),
                 content_type: processed.content_type.clone(),
                 size: data.len() as u64,
@@ -263,7 +279,7 @@ fn one(
             })?;
             let cache = img_records::cache::Cache::open(&root)?;
             cache.put(&data)?;
-            cache.trim(img_records::cache::DEFAULT_LIMIT)?;
+            cache.trim(cache.limit()?)?;
             if std::env::var("IMG_DESKTOP_UPLOAD").as_deref() != Ok("1") {
                 let inbox_id = img_records::publish(
                     &root,
@@ -301,6 +317,7 @@ fn one(
         local_path: source.into(),
         success: true,
         remote_path: remote,
+        remote_version,
         url,
         provider: p.name.clone(),
         size: data.len() as u64,

@@ -23,6 +23,21 @@ impl Cache {
             catalog: Catalog::open(root)?,
         })
     }
+    pub fn limit(&self) -> Result<u64> {
+        Ok(self
+            .catalog
+            .setting("cache-limit")?
+            .map(|s| s.parse())
+            .transpose()?
+            .unwrap_or(DEFAULT_LIMIT))
+    }
+    pub fn set_limit(&self, limit: u64) -> Result<()> {
+        ensure!(
+            (16 * 1024 * 1024..=1024 * 1024 * 1024 * 1024).contains(&limit),
+            "cache limit must be between 16 MiB and 1 TiB"
+        );
+        self.catalog.set_setting("cache-limit", &limit.to_string())
+    }
     fn file(&self, key: &str) -> Result<PathBuf> {
         ensure!(
             key.len() == 64 && key.bytes().all(|b| b.is_ascii_hexdigit()),

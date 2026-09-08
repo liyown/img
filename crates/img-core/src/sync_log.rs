@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     fs::File,
+    io::{BufReader, BufWriter, Write},
     path::Path,
 };
 
@@ -148,7 +149,9 @@ pub fn exchange(
     }
     // Listing must finish before anything is applied. Authentication/truncation is not deletion.
     let keys = store.list(control)?;
-    let mut incoming = vec![];
+    let staging = tempfile::tempdir()?;
+    let event_path = staging.path().join("incoming.jsonl");
+    let mut incoming = BufWriter::new(File::create(&event_path)?);
     let mut acknowledged = vec![];
     let mut secrets = BTreeMap::new();
     for key in keys {
@@ -190,21 +193,32 @@ pub fn exchange(
             );
             secrets.insert(key, value);
         }
-        incoming.extend(batch.events);
-        ensure!(incoming.len() <= 100_000, "too many incoming changes");
+        for event in batch.events {
+            serde_json::to_writer(&mut incoming, &event)?;
+            incoming.write_all(b"\n")?;
+        }
         acknowledged.push(receipt);
     }
     // Validate on a disposable consistent snapshot before installing credentials or events.
     // Validation includes causal dependencies across files, independent of listing order.
-    let staging = tempfile::tempdir()?;
+    incoming.flush()?;
+    drop(incoming);
     catalog.snapshot(&staging.path().join("catalog.sqlite3"))?;
     let mut validation = Catalog::open(staging.path())?;
-    validation.sync_ingest(&incoming)?;
+    validation.sync_ingest_stream(read_events(&event_path)?)?;
     validation.sync_materialize_catalog()?;
     drop(validation);
     import_secrets(&secrets)?;
-    let pulled = catalog.sync_ingest(&incoming)?;
-    catalog.sync_ack(&destination, &incoming)?;
+    let pulled = catalog.sync_ingest_stream(read_events(&event_path)?)?;
+    let mut acknowledgements = Vec::with_capacity(200);
+    for event in read_events(&event_path)? {
+        acknowledgements.push(event?);
+        if acknowledgements.len() == 200 {
+            catalog.sync_ack(&destination, &acknowledgements)?;
+            acknowledgements.clear();
+        }
+    }
+    catalog.sync_ack(&destination, &acknowledgements)?;
     for receipt in acknowledged {
         catalog.set_setting(&receipt, "1")?;
     }
@@ -245,6 +259,14 @@ pub fn exchange(
         pushed,
         conflicts: catalog.sync_conflicts()?.len(),
     })
+}
+
+fn read_events(path: &Path) -> Result<impl Iterator<Item = Result<Event>>> {
+    Ok(
+        serde_json::Deserializer::from_reader(BufReader::new(File::open(path)?))
+            .into_iter::<Event>()
+            .map(|event| event.map_err(Into::into)),
+    )
 }
 
 #[cfg(test)]

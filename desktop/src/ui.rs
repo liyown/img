@@ -400,7 +400,36 @@ impl ImgDesktop {
                 }
                 cx.notify();
             });
+        let catalog_preferences = cx.subscribe(
+            &catalog,
+            |this, _, event: &catalog_ui::PreferenceChanged, cx| {
+                match event {
+                    catalog_ui::PreferenceChanged::Format(format) => {
+                        this.preferences.copy_format = *format
+                    }
+                    catalog_ui::PreferenceChanged::View(grid) => {
+                        this.preferences.library_view = if *grid {
+                            LibraryView::Grid
+                        } else {
+                            LibraryView::List
+                        }
+                    }
+                }
+                this.save_preferences(cx);
+            },
+        );
+        let external_config = cx.subscribe(
+            &sync_panel,
+            |this, _, _: &sync_ui::ConfigurationChanged, cx| {
+                this.storage_settings
+                    .update(cx, |settings, cx| settings.external_change(cx));
+            },
+        );
+        let catalog_changes = cx.observe(&catalog, |_, _, cx| cx.notify());
         let mut subscriptions = vec![
+            catalog_changes,
+            external_config,
+            catalog_preferences,
             subscription,
             storage_subscription,
             storage_focus_subscription,
@@ -916,6 +945,8 @@ impl ImgDesktop {
         }
     }
     fn save_preferences(&mut self, cx: &mut Context<Self>) {
+        self.catalog
+            .update(cx, |library, cx| library.preferences(self.preferences, cx));
         if self.preferences.save(&self.root).is_err() {
             self.message("当前选择已生效，但偏好未能保存", true, cx);
         }
@@ -1053,12 +1084,7 @@ impl ImgDesktop {
         self.save_preferences(cx);
     }
     fn sidebar(&self, active_y: Pixels, cx: &mut Context<Self>) -> AnyElement {
-        let done = self
-            .queue
-            .items
-            .iter()
-            .filter(|i| i.status == Status::Done)
-            .count();
+        let done = self.catalog.read(cx).all_total;
         let mut nav = div()
             .relative()
             .flex()
@@ -2337,7 +2363,7 @@ impl ImgDesktop {
             )
             .into_any_element()
     }
-    fn footer(&self) -> AnyElement {
+    fn footer(&self, cx: &App) -> AnyElement {
         let active = self
             .queue
             .items
@@ -2393,6 +2419,12 @@ impl ImgDesktop {
                 .child(label(
                     if self.preparing {
                         "正在读取图片…".into()
+                    } else if self.page == Page::Library && !self.reference {
+                        format!(
+                            "已索引 {} 张图片 · 当前结果 {} 项",
+                            self.catalog.read(cx).all_total,
+                            self.catalog.read(cx).total
+                        )
                     } else {
                         format!(
                             "{} 张图片 · {} 项已完成",
@@ -2540,7 +2572,7 @@ impl Render for ImgDesktop {
                     ),
             );
         }
-        main = main.child(self.content(window, cx)).child(self.footer());
+        main = main.child(self.content(window, cx)).child(self.footer(cx));
         div()
             .id("aperture")
             .key_context("ImgDesktop")

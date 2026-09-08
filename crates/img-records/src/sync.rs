@@ -1,7 +1,7 @@
 //! Immutable field events. No image bytes, device paths or executable tasks are accepted.
 use crate::catalog::Catalog;
 use anyhow::{Context, Result, ensure};
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -243,60 +243,156 @@ impl Catalog {
         let tx = self
             .db
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        let mut known = HashMap::<String, Event>::new();
-        {
-            let mut stmt = tx.prepare("SELECT body FROM sync_events")?;
-            for body in stmt.query_map([], |r| r.get::<_, String>(0))? {
-                let e: Event = serde_json::from_str(&body?)?;
-                known.insert(e.id.clone(), e);
-            }
-        }
-        let mut pending = BTreeMap::new();
+        let mut pending = BTreeMap::<String, Event>::new();
         for event in incoming {
-            if let Some(old) = known.get(&event.id).or_else(|| pending.get(&event.id)) {
+            let old: Option<String> = tx
+                .query_row(
+                    "SELECT body FROM sync_events WHERE id=?",
+                    [&event.id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if let Some(old) = old {
+                ensure!(
+                    serde_json::from_str::<Event>(&old)? == *event,
+                    "sync event identity has conflicting content"
+                );
+            } else if let Some(old) = pending.get(&event.id) {
                 ensure!(old == event, "sync event identity has conflicting content");
             } else {
                 pending.insert(event.id.clone(), event.clone());
             }
         }
         let count = pending.len();
-        while !pending.is_empty() {
-            let ready = pending
-                .values()
-                .filter(|e| e.parents.iter().all(|p| known.contains_key(p)))
-                .cloned()
-                .collect::<Vec<_>>();
-            ensure!(
-                !ready.is_empty(),
-                "sync batch has missing or cyclic parents"
-            );
-            for event in ready {
-                ensure!(
-                    event
-                        .parents
-                        .iter()
-                        .all(|p| known[p].entity == event.entity),
-                    "causal parents belong to another entity"
-                );
-                tx.execute(
-                    "INSERT INTO sync_events(id,device,entity,body) VALUES(?,?,?,?)",
-                    params![
-                        event.id,
-                        event.device,
-                        event.entity,
-                        serde_json::to_string(&event)?
-                    ],
-                )?;
-                pending.remove(&event.id);
-                known.insert(event.id.clone(), event);
+        let mut children = HashMap::<String, Vec<String>>::new();
+        let mut degrees = HashMap::<String, usize>::new();
+        let mut ready = std::collections::VecDeque::new();
+        for event in pending.values() {
+            let mut degree = 0;
+            for parent in event.parents.iter().collect::<HashSet<_>>() {
+                if let Some(ancestor) = pending.get(parent) {
+                    ensure!(
+                        ancestor.entity == event.entity,
+                        "causal parents belong to another entity"
+                    );
+                    children
+                        .entry(parent.clone())
+                        .or_default()
+                        .push(event.id.clone());
+                    degree += 1;
+                } else {
+                    let entity: Option<String> = tx
+                        .query_row("SELECT entity FROM sync_events WHERE id=?", [parent], |r| {
+                            r.get(0)
+                        })
+                        .optional()?;
+                    ensure!(
+                        entity.as_deref() == Some(&event.entity),
+                        "sync batch has missing or cross-entity parents"
+                    );
+                }
+            }
+            degrees.insert(event.id.clone(), degree);
+            if degree == 0 {
+                ready.push_back(event.id.clone());
             }
         }
+        while let Some(id) = ready.pop_front() {
+            let event = pending.remove(&id).expect("ready event exists");
+            tx.execute(
+                "INSERT INTO sync_events(id,device,entity,body) VALUES(?,?,?,?)",
+                params![
+                    event.id,
+                    event.device,
+                    event.entity,
+                    serde_json::to_string(&event)?
+                ],
+            )?;
+            for child in children.get(&id).into_iter().flatten() {
+                let degree = degrees.get_mut(child).expect("child exists");
+                *degree -= 1;
+                if *degree == 0 {
+                    ready.push_back(child.clone());
+                }
+            }
+        }
+        ensure!(pending.is_empty(), "sync batch has cyclic parents");
         tx.commit()?;
         Ok(count)
     }
     pub fn sync_entity(&self, entity: &str) -> Result<Entity> {
         let events = self.sync_events(Some(entity))?;
         entity_state(entity, &events)
+    }
+    /// Import an arbitrarily large log without retaining its payloads in RAM. All validation
+    /// and writes share one transaction; an invalid final event rolls back the entire import.
+    pub fn sync_ingest_stream(
+        &mut self,
+        events: impl IntoIterator<Item = Result<Event>>,
+    ) -> Result<usize> {
+        self.sync_init()?;
+        let tx = self
+            .db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        tx.execute_batch("CREATE TEMP TABLE IF NOT EXISTS incoming_events(id TEXT PRIMARY KEY,device TEXT,entity TEXT,body TEXT);
+            CREATE TEMP TABLE IF NOT EXISTS incoming_edges(child TEXT,parent TEXT,PRIMARY KEY(child,parent));
+            CREATE INDEX IF NOT EXISTS incoming_parent ON incoming_edges(parent);
+            DELETE FROM incoming_events; DELETE FROM incoming_edges;")?;
+        for event in events {
+            let event = event?;
+            event.validate()?;
+            let old: Option<String> = tx.query_row("SELECT body FROM sync_events WHERE id=?1 UNION ALL SELECT body FROM incoming_events WHERE id=?1 LIMIT 1", [&event.id], |r|r.get(0)).optional()?;
+            if let Some(old) = old {
+                ensure!(
+                    serde_json::from_str::<Event>(&old)? == event,
+                    "sync event identity has conflicting content"
+                );
+                continue;
+            }
+            tx.execute(
+                "INSERT INTO incoming_events VALUES(?,?,?,?)",
+                params![
+                    event.id,
+                    event.device,
+                    event.entity,
+                    serde_json::to_string(&event)?
+                ],
+            )?;
+            for parent in &event.parents {
+                tx.execute(
+                    "INSERT OR IGNORE INTO incoming_edges VALUES(?,?)",
+                    params![event.id, parent],
+                )?;
+            }
+        }
+        let invalid: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM incoming_edges e JOIN incoming_events child ON child.id=e.child LEFT JOIN incoming_events p ON p.id=e.parent LEFT JOIN sync_events known ON known.id=e.parent WHERE COALESCE(p.entity,known.entity,'')<>child.entity)",[],|r|r.get(0))?;
+        ensure!(!invalid, "sync batch has missing or cross-entity parents");
+        tx.execute(
+            "DELETE FROM incoming_edges WHERE parent IN (SELECT id FROM sync_events)",
+            [],
+        )?;
+        let count = usize::try_from(tx.query_row(
+            "SELECT count(*) FROM incoming_events",
+            [],
+            |r| r.get::<_, i64>(0),
+        )?)?;
+        let mut inserted = 0;
+        while inserted < count {
+            let ids = {
+                let mut stmt = tx.prepare("SELECT id FROM incoming_events e WHERE NOT EXISTS(SELECT 1 FROM incoming_edges WHERE child=e.id) LIMIT 500")?;
+                stmt.query_map([], |r| r.get::<_, String>(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            ensure!(!ids.is_empty(), "sync batch has cyclic parents");
+            for id in ids {
+                tx.execute("INSERT INTO sync_events(id,device,entity,body) SELECT id,device,entity,body FROM incoming_events WHERE id=?",[&id])?;
+                tx.execute("DELETE FROM incoming_edges WHERE parent=?", [&id])?;
+                tx.execute("DELETE FROM incoming_events WHERE id=?", [&id])?;
+                inserted += 1;
+            }
+        }
+        tx.commit()?;
+        Ok(count)
     }
     pub fn sync_conflicts(&self) -> Result<Vec<Conflict>> {
         let entities: BTreeSet<_> = self
@@ -409,6 +505,59 @@ pub(crate) fn entity_state(entity: &str, events: &[Event]) -> Result<Entity> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn streamed_import_handles_reverse_dependencies_and_rolls_back_late_errors() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut catalog = Catalog::open(temp.path()).unwrap();
+        let first = Event {
+            id: uuid::Uuid::new_v4().to_string(),
+            device: uuid::Uuid::new_v4().to_string(),
+            entity: "asset:stream".into(),
+            field: "name".into(),
+            parents: vec![],
+            value: Some("first".into()),
+        };
+        let mut second = first.clone();
+        second.id = uuid::Uuid::new_v4().to_string();
+        second.parents = vec![first.id.clone()];
+        second.value = Some("second".into());
+        assert_eq!(
+            catalog
+                .sync_ingest_stream([Ok(second.clone()), Ok(first.clone())])
+                .unwrap(),
+            2
+        );
+        assert_eq!(catalog.sync_ingest_stream([Ok(first.clone())]).unwrap(), 0);
+        let mut third = second.clone();
+        third.id = uuid::Uuid::new_v4().to_string();
+        third.parents = vec![second.id];
+        assert!(
+            catalog
+                .sync_ingest_stream([Ok(third.clone()), Err(anyhow::anyhow!("truncated input"))])
+                .is_err()
+        );
+        assert_eq!(catalog.sync_events(None).unwrap().len(), 2);
+        third.parents = vec![third.id.clone()];
+        assert!(catalog.sync_ingest_stream([Ok(third)]).is_err());
+        assert_eq!(catalog.sync_events(None).unwrap().len(), 2);
+    }
+    #[test]
+    fn streamed_import_exceeds_old_global_event_limit() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut catalog = Catalog::open(temp.path()).unwrap();
+        let device = uuid::Uuid::new_v4().to_string();
+        let events = (0..100_001).map(|i| {
+            Ok(Event {
+                id: uuid::Uuid::new_v4().to_string(),
+                device: device.clone(),
+                entity: format!("asset:{i}"),
+                field: "name".into(),
+                parents: vec![],
+                value: Some("image".into()),
+            })
+        });
+        assert_eq!(catalog.sync_ingest_stream(events).unwrap(), 100_001);
+    }
     #[test]
     fn independent_fields_merge_but_concurrent_writes_and_delete_conflict() {
         let a = tempfile::tempdir().unwrap();

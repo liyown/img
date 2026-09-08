@@ -342,7 +342,11 @@ impl Provider {
         })();
         result.map_err(|e| self.safe_error(e))
     }
-    pub(super) fn webdav_upload(&self, r: &Request<'_>, control: &Control) -> Result<String> {
+    pub(super) fn webdav_upload(
+        &self,
+        r: &Request<'_>,
+        control: &Control,
+    ) -> Result<UploadReceipt> {
         let parts = r.remote_path.split('/').collect::<Vec<_>>();
         for i in 1..parts.len() {
             control.check()?;
@@ -369,7 +373,16 @@ impl Provider {
                 r.data.len() as u64,
             ))
             .send()?;
+        let version = response
+            .headers()
+            .get("ETag")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
         self.response(response, "WebDAV upload")?;
-        Ok(self.public_object(r.remote_path))
+        Ok(UploadReceipt {
+            url: self.public_object(r.remote_path),
+            version,
+        })
     }
 }

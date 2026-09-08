@@ -29,6 +29,7 @@ pub struct StorageSettings {
     import_plan: Option<img_records::migration::Plan>,
 }
 struct ProviderEditor {
+    config_snapshot: Option<Vec<u8>>,
     draft: ProviderDraft,
     name: Entity<InputState>,
     fields: BTreeMap<String, Entity<InputState>>,
@@ -186,6 +187,9 @@ impl StorageSettings {
             .map(|row| extra_editor(row, window, cx))
             .collect();
         self.editor = Some(ProviderEditor {
+            config_snapshot: storage::config_path()
+                .ok()
+                .and_then(|p| std::fs::read(p).ok()),
             headers,
             extras,
             draft,
@@ -193,6 +197,21 @@ impl StorageSettings {
             fields,
         });
         self.notice = None;
+        cx.notify();
+    }
+    pub fn external_change(&mut self, cx: &mut Context<Self>) {
+        self.refresh(cx);
+        if let Some(editor) = &self.editor {
+            let current = storage::config_path()
+                .ok()
+                .and_then(|p| std::fs::read(p).ok());
+            if editor.config_snapshot != current {
+                self.notice = Some((
+                    "配置已在外部修改，请关闭并重新打开编辑器后保存".into(),
+                    true,
+                ));
+            }
+        }
         cx.notify();
     }
     fn refresh(&mut self, cx: &mut Context<Self>) {
@@ -213,6 +232,7 @@ impl StorageSettings {
         let Some(editor) = &self.editor else {
             return;
         };
+        let expected = editor.config_snapshot.clone();
         let mut draft = editor.draft.clone();
         draft.name = editor.name.read(cx).value().trim().to_owned();
         draft.values = editor
@@ -234,6 +254,10 @@ impl StorageSettings {
         self.saving = true;
         self.notice = None;
         let task = cx.background_executor().spawn(async move {
+            anyhow::ensure!(
+                std::fs::read(storage::config_path()?).ok() == expected,
+                "配置已在外部修改，请关闭并重新打开编辑器后保存"
+            );
             storage::save_provider(
                 &storage::config_path()?,
                 &draft,
