@@ -25,6 +25,7 @@ pub(super) struct Library {
     generation: u64,
     stamp: String,
     notice: Option<String>,
+    copied: Option<(String, std::time::Instant)>,
     grid: bool,
     format: CopyFormat,
     providers: Vec<String>,
@@ -84,6 +85,7 @@ impl Library {
             generation: 0,
             stamp: String::new(),
             notice: None,
+            copied: None,
             grid: preferences.library_view == LibraryView::Grid,
             format: preferences.copy_format,
             providers: vec![],
@@ -682,8 +684,29 @@ impl Library {
                 )
         });
     }
+    fn copy_link(&mut self, id: &str, name: &str, url: &str, cx: &mut Context<Self>) {
+        cx.write_to_clipboard(ClipboardItem::new_string(self.format.render(name, url)));
+        let feedback = (id.to_owned(), std::time::Instant::now());
+        self.copied = Some(feedback.clone());
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_secs(2)).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.copied.as_ref() == Some(&feedback) {
+                    this.copied = None;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+        cx.notify();
+    }
     fn cell(&self, asset: Asset, cx: &mut Context<Self>) -> AnyElement {
         let id = asset.id.clone();
+        let copied = self
+            .copied
+            .as_ref()
+            .is_some_and(|(copied, _)| copied == &id);
+        let copy_id = id.clone();
         let target = asset.clone();
         let hash = self
             .previews
@@ -766,20 +789,26 @@ impl Library {
                     MUTED,
                 ))
                 .child(
-                    action(SharedString::from(format!("copy-{}", asset.id)), "复制链接")
-                        .h(px(28.))
-                        .px(px(10.))
-                        .flex_shrink_0()
-                        .disabled(copy_url.as_ref().is_none_or(|url| url.is_empty()))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(url) = &copy_url {
-                                cx.write_to_clipboard(ClipboardItem::new_string(
-                                    this.format.render(&copy_name, url),
-                                ));
-                                this.notice = Some("已复制链接".into());
-                                cx.notify();
-                            }
-                        })),
+                    action(
+                        SharedString::from(format!("copy-{}", asset.id)),
+                        if copied { "" } else { "复制链接" },
+                    )
+                    .when(copied, |button| button.icon(IconName::Check))
+                    .accessibility_label(crate::i18n::text(if copied {
+                        "已复制"
+                    } else {
+                        "复制链接"
+                    }))
+                    .w(px(84.))
+                    .h(px(28.))
+                    .px(px(10.))
+                    .flex_shrink_0()
+                    .disabled(copy_url.as_ref().is_none_or(|url| url.is_empty()))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(url) = &copy_url {
+                            this.copy_link(&copy_id, &copy_name, url, cx);
+                        }
+                    })),
                 )
                 .into_any_element();
         }
@@ -838,20 +867,28 @@ impl Library {
                     .child(
                         Button::new(SharedString::from(format!("copy-{}", asset.id)))
                             .ghost()
-                            .icon(IconName::Copy)
-                            .accessibility_label(crate::i18n::text("复制链接"))
-                            .tooltip(crate::i18n::text("复制链接"))
+                            .icon(if copied {
+                                IconName::Check
+                            } else {
+                                IconName::Copy
+                            })
+                            .accessibility_label(crate::i18n::text(if copied {
+                                "已复制"
+                            } else {
+                                "复制链接"
+                            }))
+                            .tooltip(crate::i18n::text(if copied {
+                                "已复制"
+                            } else {
+                                "复制链接"
+                            }))
                             .w(px(28.))
                             .h(px(28.))
                             .flex_shrink_0()
                             .disabled(copy_url.as_ref().is_none_or(|url| url.is_empty()))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if let Some(url) = &copy_url {
-                                    cx.write_to_clipboard(ClipboardItem::new_string(
-                                        this.format.render(&copy_name, url),
-                                    ));
-                                    this.notice = Some("已复制链接".into());
-                                    cx.notify();
+                                    this.copy_link(&copy_id, &copy_name, url, cx);
                                 }
                             })),
                     ),
