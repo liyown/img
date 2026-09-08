@@ -13,10 +13,37 @@ pub fn run(config_path: &std::path::Path, command: SyncCommand, control: &Contro
             );
             println!(
                 "{}",
-                json!({"success":false,"error":failure.message(),"code":failure.code,"retry_after_seconds":failure.retry_after_seconds})
+                json!({"success":false,"error":failure.message(),"code":failure.code,"detail_code":detail_code(&error),"retry_after_seconds":failure.retry_after_seconds})
             );
             Ok(1)
         }
+    }
+}
+// Only export stable classifications, never server bodies or credential-bearing errors.
+fn detail_code(error: &anyhow::Error) -> Option<&'static str> {
+    let text = format!("{error:#}").to_lowercase();
+    let transport = matches!(
+        img_core::failure::Failure::from_error(error, img_core::failure::ErrorCode::Unknown).code,
+        img_core::failure::ErrorCode::Network | img_core::failure::ErrorCode::Timeout
+    );
+    if transport && (text.contains("certificate") || text.contains("invalid peer")) {
+        Some("tls_error")
+    } else if text.contains("sync is already running") {
+        Some("sync_busy")
+    } else if text.contains("ignores conditional writes")
+        || text.contains("changed a protected sync object")
+    {
+        Some("conditional_writes_unsupported")
+    } else if text.contains("sync connection credentials are missing") {
+        Some("credentials_missing")
+    } else if text.contains("damaged sync batch") || text.contains("conflicting content") {
+        Some("corrupt_remote_data")
+    } else if error.downcast_ref::<url::ParseError>().is_some()
+        || text.contains("invalid sync storage configuration")
+    {
+        Some("invalid_config")
+    } else {
+        None
     }
 }
 fn execute(config_path: &std::path::Path, command: SyncCommand, control: &Control) -> Result<i32> {
@@ -83,4 +110,33 @@ fn execute(config_path: &std::path::Path, command: SyncCommand, control: &Contro
     };
     println!("{}", serde_json::to_string(&output)?);
     Ok(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn sync_details_classify_local_failures_without_exporting_error_text() {
+        for (message, expected) in [
+            ("sync is already running", "sync_busy"),
+            (
+                "service ignores conditional writes",
+                "conditional_writes_unsupported",
+            ),
+            (
+                "sync connection credentials are missing on this device",
+                "credentials_missing",
+            ),
+            ("damaged sync batch", "corrupt_remote_data"),
+            ("invalid sync storage configuration", "invalid_config"),
+        ] {
+            assert_eq!(detail_code(&anyhow::anyhow!(message)), Some(expected));
+        }
+        assert_eq!(
+            detail_code(&anyhow::anyhow!("untrusted response with secret")),
+            None
+        );
+        // A server body mentioning certificates is not itself a TLS failure.
+        assert_eq!(detail_code(&anyhow::anyhow!("certificate secret")), None);
+    }
 }
