@@ -94,44 +94,102 @@ impl Library {
         self.grid = preferences.library_view == LibraryView::Grid;
         cx.notify();
     }
-    fn filter_button(
-        &self,
-        id: &'static str,
-        title: &str,
-        current: &str,
-        choices: &[(&str, &str)],
-        assign: fn(&mut CatalogQuery, String),
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let choices = choices
-            .iter()
-            .map(|(value, label)| (value.to_string(), label.to_string()))
-            .collect::<Vec<_>>();
-        let label = choices
-            .iter()
-            .find(|(v, _)| v == current)
-            .map(|(_, l)| l.as_str())
-            .unwrap_or(title)
-            .to_string();
-        let selected = current.to_string();
+    fn filter_menu(&self, cx: &mut Context<Self>) -> AnyElement {
+        let active = !self.query.content_type.is_empty() || self.query.since.is_some();
+        let content_type = self.query.content_type.clone();
+        let since = self.query.since;
         let weak = cx.weak_entity();
-        action(id, &label)
-            .dropdown_menu(move |mut menu, _, _| {
-                for (value, label) in &choices {
-                    let weak = weak.clone();
-                    let value = value.clone();
-                    menu = menu.item(
-                        PopupMenuItem::new(crate::i18n::text(label.clone()))
-                            .checked(value == selected)
-                            .on_click(move |_, _, cx| {
-                                let _ = weak.update(cx, |this, cx| {
-                                    assign(&mut this.query, value.clone());
-                                    this.changed(cx);
-                                });
-                            }),
-                    );
-                }
-                menu
+        Button::new("catalog-filters")
+            .ghost()
+            .icon(IconName::Settings2)
+            .w(px(32.))
+            .h(px(32.))
+            .selected(active)
+            .accessibility_label(crate::i18n::text("筛选图片"))
+            .tooltip(crate::i18n::text(if active {
+                "筛选已启用"
+            } else {
+                "筛选图片"
+            }))
+            .dropdown_menu(move |menu, window, cx| {
+                let format_view = weak.clone();
+                let time_view = weak.clone();
+                let reset_view = weak.clone();
+                let selected_type = content_type.clone();
+                menu.submenu(
+                    crate::i18n::text("格式"),
+                    window,
+                    cx,
+                    move |mut menu, _, _| {
+                        for (value, title) in [
+                            ("", "全部格式"),
+                            ("image/png", "PNG"),
+                            ("image/jpeg", "JPEG"),
+                            ("image/webp", "WebP"),
+                            ("image/gif", "GIF"),
+                            ("image/svg+xml", "SVG"),
+                            ("image/avif", "AVIF"),
+                        ] {
+                            let view = format_view.clone();
+                            menu = menu.item(
+                                PopupMenuItem::new(crate::i18n::text(title))
+                                    .checked(value == selected_type)
+                                    .on_click(move |_, _, cx| {
+                                        let _ = view.update(cx, |this, cx| {
+                                            this.query.content_type = value.into();
+                                            this.changed(cx);
+                                        });
+                                    }),
+                            );
+                        }
+                        menu
+                    },
+                )
+                .submenu(
+                    crate::i18n::text("加入时间"),
+                    window,
+                    cx,
+                    move |mut menu, _, _| {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
+                        let selected_days =
+                            since.map(|start| (now.saturating_sub(start) + 43200) / 86400);
+                        for (days, title) in [
+                            (None, "全部时间"),
+                            (Some(7), "最近 7 天"),
+                            (Some(30), "最近 30 天"),
+                            (Some(90), "最近 90 天"),
+                        ] {
+                            let view = time_view.clone();
+                            menu = menu.item(
+                                PopupMenuItem::new(crate::i18n::text(title))
+                                    .checked(days == selected_days)
+                                    .on_click(move |_, _, cx| {
+                                        let _ = view.update(cx, |this, cx| {
+                                            this.query.since =
+                                                days.map(|days| now.saturating_sub(days * 86400));
+                                            this.changed(cx);
+                                        });
+                                    }),
+                            );
+                        }
+                        menu
+                    },
+                )
+                .separator()
+                .item(
+                    PopupMenuItem::new(crate::i18n::text("重置筛选"))
+                        .disabled(!active)
+                        .on_click(move |_, _, cx| {
+                            let _ = reset_view.update(cx, |this, cx| {
+                                this.query.content_type.clear();
+                                this.query.since = None;
+                                this.changed(cx);
+                            });
+                        }),
+                )
             })
             .into_any_element()
     }
@@ -995,6 +1053,7 @@ impl Render for Library {
             .child(label(format!("{} 项 · 已索引范围", self.total), 11., MUTED))
             .child(div().flex_1());
         top = top
+            .child(self.filter_menu(cx))
             .child(
                 action(
                     "catalog-provider",
@@ -1072,57 +1131,6 @@ impl Render for Library {
                 })),
             );
         view = view.child(top);
-        view = view.child(
-            div()
-                .flex()
-                .flex_wrap()
-                .gap(px(8.))
-                .child(self.filter_button(
-                    "catalog-type",
-                    "格式",
-                    &self.query.content_type,
-                    &[
-                        ("", "全部格式"),
-                        ("image/png", "PNG"),
-                        ("image/jpeg", "JPEG"),
-                        ("image/webp", "WebP"),
-                        ("image/gif", "GIF"),
-                        ("image/svg+xml", "SVG"),
-                        ("image/avif", "AVIF"),
-                    ],
-                    |q, v| q.content_type = v,
-                    cx,
-                ))
-                .child(self.filter_button(
-                    "catalog-date",
-                    if self.query.since.is_some() {
-                        "已限定加入时间"
-                    } else {
-                        "全部时间"
-                    },
-                    if self.query.since.is_some() {
-                        "custom"
-                    } else {
-                        ""
-                    },
-                    &[
-                        ("", "全部时间"),
-                        ("7", "最近 7 天"),
-                        ("30", "最近 30 天"),
-                        ("90", "最近 90 天"),
-                    ],
-                    |q, v| {
-                        q.since = v.parse::<u64>().ok().map(|days| {
-                            std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_secs()
-                                .saturating_sub(days * 86400)
-                        });
-                    },
-                    cx,
-                )),
-        );
         if self.selecting {
             let hidden = self.selected.hidden();
             view = view.child(
