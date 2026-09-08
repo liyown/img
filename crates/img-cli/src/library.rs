@@ -56,7 +56,11 @@ fn execute(config_path: &Path, command: LibraryCommand, control: &Control) -> Re
             failed = files.iter().any(|r| !r.success);
             println!("{}", serde_json::json!({"success":!failed,"files":files}));
         }
-        LibraryCommand::Preview { id, provider } => {
+        LibraryCommand::Preview {
+            id,
+            provider,
+            cache_only,
+        } => {
             let asset = c.get(&id)?;
             let location = asset
                 .selected_location(&provider)
@@ -87,19 +91,24 @@ fn execute(config_path: &Path, command: LibraryCommand, control: &Control) -> Re
             let cache = img_records::cache::Cache::open(&root)?;
             let key = cache.put(&bytes)?;
             let lease = cache.lease(&key)?;
-            let asset_id = c.upsert(&img_records::catalog::RemoteRecord {
-                namespace: location.namespace,
-                provider: location.provider,
-                path: location.path,
-                url: location.url,
-                version: location.version.clone(),
-                name: asset.name,
-                content_type: ct,
-                size: bytes.len() as u64,
-                added_at: asset.added_at,
-                origin: asset.origin,
-                content_hash: Some(hash),
-            })?;
+            let asset_id = if cache_only {
+                c.set_setting(&format!("preview:{}", asset.id), &key)?;
+                asset.id.clone()
+            } else {
+                c.upsert(&img_records::catalog::RemoteRecord {
+                    namespace: location.namespace,
+                    provider: location.provider,
+                    path: location.path,
+                    url: location.url,
+                    version: location.version.clone(),
+                    name: asset.name,
+                    content_type: ct,
+                    size: bytes.len() as u64,
+                    added_at: asset.added_at,
+                    origin: asset.origin,
+                    content_hash: Some(hash),
+                })?
+            };
             c.mark_location(
                 &location.id,
                 &location.version,

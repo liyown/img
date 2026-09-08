@@ -12,6 +12,9 @@ pub(super) struct Library {
     engine: PathBuf,
     assets: Vec<Asset>,
     previews: HashMap<String, String>,
+    preview_jobs: HashMap<String, Control>,
+    preview_failures: HashMap<String, std::time::Instant>,
+    stopping: bool,
     thumbnails: Entity<crate::thumbnails::ThumbnailCache>,
     pub total: usize,
     pub all_total: usize,
@@ -59,6 +62,9 @@ impl Library {
             engine,
             assets: vec![],
             previews: HashMap::new(),
+            preview_jobs: HashMap::new(),
+            preview_failures: HashMap::new(),
+            stopping: false,
             thumbnails,
             total: 0,
             all_total: 0,
@@ -250,11 +256,89 @@ impl Library {
         })
         .detach();
     }
-    pub fn stop(&mut self) -> Option<Control> {
-        if let Some(control) = &self.control {
+    pub fn stop(&mut self) -> Vec<Control> {
+        self.stopping = true;
+        let mut controls = self.preview_jobs.values().cloned().collect::<Vec<_>>();
+        controls.extend(self.control.take());
+        for control in &controls {
             control.stop(engine::CANCEL);
         }
-        self.control.take()
+        controls
+    }
+    fn load_visible_preview(&mut self, asset: &Asset, cx: &mut Context<Self>) {
+        if self.stopping
+            || self.preview_jobs.len() >= 2
+            || self.preview_jobs.contains_key(&asset.id)
+        {
+            return;
+        }
+        if self
+            .previews
+            .get(&asset.id)
+            .is_some_and(|key| self.root.join("cache").join(key).is_file())
+            || self
+                .preview_failures
+                .get(&asset.id)
+                .is_some_and(|time| time.elapsed() < Duration::from_secs(60))
+        {
+            return;
+        }
+        let Some(location) = asset.selected_location(&self.query.provider) else {
+            return;
+        };
+        if location.path.is_none() || !self.manageable.contains(&location.provider) {
+            return;
+        }
+        let id = asset.id.clone();
+        let provider = location.provider.clone();
+        let root = self.root.clone();
+        let engine = self.engine.clone();
+        let control = Control::default();
+        self.preview_jobs.insert(id.clone(), control.clone());
+        let requested = id.clone();
+        let task = cx.background_executor().spawn(async move {
+            let _completion = control.completion();
+            (|| -> anyhow::Result<String> {
+                let mut command = std::process::Command::new(engine);
+                command
+                    .arg("--config")
+                    .arg(storage::config_path()?)
+                    .args([
+                        "library",
+                        "preview",
+                        &requested,
+                        "--provider",
+                        &provider,
+                        "--cache-only",
+                    ])
+                    .env("IMG_DATA_DIR", root);
+                let output = engine::run(command, &control)?;
+                anyhow::ensure!(output.success && output.stopped == 0, "preview unavailable");
+                let result: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+                Ok(result["cache_key"]
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("invalid preview"))?
+                    .to_owned())
+            })()
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.preview_jobs.remove(&id);
+                match result {
+                    Ok(key) => {
+                        this.previews.insert(id.clone(), key);
+                        this.preview_failures.remove(&id);
+                    }
+                    Err(_) => {
+                        this.preview_failures.insert(id, std::time::Instant::now());
+                    }
+                }
+                this.stamp.clear();
+                cx.notify();
+            });
+        })
+        .detach();
     }
     fn command(&mut self, args: Vec<String>, cx: &mut Context<Self>) {
         self.command_file(args, None, cx);
@@ -1157,13 +1241,15 @@ impl Render for Library {
                                 .pb(px(10.))
                                 .h(px(if this.grid { 230. } else { 86. }));
                             for col in 0..columns {
+                                let asset = this.assets.get(row * columns + col).cloned();
+                                if let Some(asset) = &asset {
+                                    this.load_visible_preview(asset, cx);
+                                }
                                 line = line.child(
-                                    div().flex_1().min_w_0().children(
-                                        this.assets
-                                            .get(row * columns + col)
-                                            .cloned()
-                                            .map(|asset| this.cell(asset, cx)),
-                                    ),
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .children(asset.map(|asset| this.cell(asset, cx))),
                                 );
                             }
                             line

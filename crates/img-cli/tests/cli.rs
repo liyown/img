@@ -8,6 +8,79 @@ use std::{
 };
 const BIN: &str = env!("CARGO_BIN_EXE_img");
 #[test]
+fn gallery_preview_uses_authenticated_storage_and_preserves_record_identity() {
+    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", server.server_addr());
+    let f = Fixture::new(&endpoint);
+    std::fs::write(&f.config, format!("version=1\nallow_plaintext_credentials=true\ndefault_provider='local'\n[providers.local]\ntype='s3'\nendpoint='{endpoint}'\nbucket='images'\nregion='test'\naccess_key='test'\nsecret_key='test'\npublic_url='https://unavailable.invalid'\npath_style=true\nallow_insecure=true\n")).unwrap();
+    let cfg = img_core::config::read_global(&f.config).unwrap();
+    let provider = img_core::provider::Provider::new("local", &cfg.providers["local"]).unwrap();
+    let mut catalog = img_records::catalog::Catalog::open(&f.dir.path().join("data")).unwrap();
+    let bytes = std::fs::read(&f.image).unwrap();
+    let id = catalog
+        .upsert(&img_records::catalog::RemoteRecord {
+            namespace: provider.namespace(),
+            provider: "local".into(),
+            path: Some("picture.png".into()),
+            url: "https://unavailable.invalid/picture.png".into(),
+            version: "\"v1\"".into(),
+            name: "picture.png".into(),
+            content_type: "image/png".into(),
+            size: bytes.len() as u64,
+            added_at: 1,
+            origin: "remote".into(),
+            content_hash: None,
+        })
+        .unwrap();
+    let handle = std::thread::spawn(move || {
+        let request = server
+            .recv_timeout(Duration::from_secs(8))
+            .unwrap()
+            .unwrap();
+        assert_eq!(request.method().as_str(), "GET");
+        assert_eq!(request.url(), "/images/picture.png");
+        assert!(
+            request
+                .headers()
+                .iter()
+                .any(|h| h.field.equiv("authorization"))
+        );
+        assert_eq!(
+            request
+                .headers()
+                .iter()
+                .find(|h| h.field.equiv("if-match"))
+                .unwrap()
+                .value
+                .as_str(),
+            "\"v1\""
+        );
+        request
+            .respond(
+                tiny_http::Response::from_data(bytes)
+                    .with_header(tiny_http::Header::from_bytes("ETag", "\"v1\"").unwrap()),
+            )
+            .unwrap();
+    });
+    let result = parsed(&f.run(&[
+        "library",
+        "preview",
+        &id,
+        "--provider",
+        "local",
+        "--cache-only",
+    ]));
+    handle.join().unwrap();
+    assert_eq!(result["id"], id);
+    let asset = catalog.get(&id).unwrap();
+    assert!(asset.content_hash.is_none());
+    assert!(catalog.preview_key(&asset).unwrap().is_some());
+    assert_eq!(
+        std::fs::read(result["path"].as_str().unwrap()).unwrap(),
+        std::fs::read(&f.image).unwrap()
+    );
+}
+#[test]
 fn directory_watch_rejects_its_own_cache_and_ancestors() {
     let f = Fixture::new("https://unused.invalid/upload");
     std::fs::create_dir_all(f.dir.path().join("data")).unwrap();

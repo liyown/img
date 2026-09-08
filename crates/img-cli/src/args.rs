@@ -423,6 +423,9 @@ pub enum LibraryCommand {
         id: String,
         #[arg(long, default_value = "")]
         provider: String,
+        /// Cache a gallery preview without changing the image identity
+        #[arg(long)]
+        cache_only: bool,
     },
     Scopes {
         #[arg(long)]
