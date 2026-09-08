@@ -32,6 +32,10 @@ jobs:
       - name: Set up Rust
         run: rustup toolchain install 1.98.1 --profile minimal && rustup default 1.98.1
         shell: bash
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: cli-${{ matrix.target }}
+          cache-bin: false
       - run: cargo test --locked -p img-core -p img-cli
       - name: Package standalone CLI
         shell: bash
@@ -61,6 +65,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: cli-*
@@ -74,4 +79,4 @@ jobs:
           set -eu
           for dir in packages/cli-*; do (cd "$dir" && sha256sum -c checksums.txt); done
           cat packages/cli-*/checksums.txt > packages/checksums.txt
-          gh release create "$RELEASE_TAG" packages/cli-*/*.tar.gz packages/cli-*/*.zip packages/checksums.txt --verify-tag --generate-notes --latest --title "img CLI ${RELEASE_TAG#v}"
+          gh release create "$RELEASE_TAG" packages/cli-*/*.tar.gz packages/cli-*/*.zip packages/checksums.txt --verify-tag --notes-file docs/CLI-RELEASE-NOTES.md --generate-notes --latest --title "img CLI ${RELEASE_TAG#v}"

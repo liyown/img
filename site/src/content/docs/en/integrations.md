@@ -58,6 +58,6 @@ Install the companion Skill for assistants that support Agent Skills and can run
 npx skills add liyown/img --skill img-uploader
 ```
 
-Install the native CLI and configure your default storage first. Your agent can then upload local images and insert the returned links into an article. The Skill checks files and configuration, reads per-file JSON results, and preserves successful links when other uploads fail. It reuses existing storage settings without requiring credentials in the conversation. Read the full [Skill workflow](https://github.com/liyown/img/blob/main/skills/img-uploader/SKILL.md).
+Install the native CLI to let an agent process images, query the library, check sync status, preview migrations, or upload and reference results. Local processing needs no storage setup. The Skill reads per-item JSON results, preserves partial successes, and requires explicit requests for remote deletion or article changes. Uploads reuse existing credentials without putting them in the conversation. Read the full [Skill workflow](https://github.com/liyown/img/blob/main/skills/img-uploader/SKILL.md).
 
 The [GitHub Action](https://github.com/liyown/img/blob/main/action.yml) uploads and rewrites Markdown images in a workflow. Its installer fetches the latest released CLI; pinning the Action commit does not pin the downloaded CLI. For a reproducible version, download and verify a specific CLI release in your workflow, then call `img rewrite`.

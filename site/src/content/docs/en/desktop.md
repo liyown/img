@@ -6,7 +6,7 @@ topic: desktop
 order: 2
 ---
 
-This guide describes the published stable release. Main-branch additions such as the shared library, dark mode, folder imports and remote management are covered in [migration and management](/img/en/docs/workflows/); release verification is still in progress.
+This guide covers img 0.4. The sidebar contains Library, Upload, Convert & compress, Resize & crop, Storage, and Settings. Both single-image tools work without storage configuration. See the [0.4 guide](/img/en/docs/0.4/) for details.
 
 ## Import and upload
 
@@ -16,9 +16,9 @@ Progress follows actual request-body reads. After transmission, the app waits fo
 
 ## Library and links
 
-The library shows successful uploads in grid or list view; history retains finished records. Search names, providers, or URLs. Click a thumbnail to enlarge it; Escape closes the preview.
+The library combines desktop and CLI uploads with indexed remote images in grid or list view. Search names, providers, or URLs; selections survive search and view changes. Click a thumbnail to preview, or use its copy icon directly. Escape closes the preview.
 
-Copy as URL, Markdown image, Markdown link, HTML, or BBCode. Automatic copying is enabled by default and includes successful batch links in import order, separated by newlines. Clearing records deletes app copies and records only, preserving original files and remote images.
+Copy as URL, Markdown image, Markdown link, HTML, or BBCode. Automatic copying includes successful batch links in import order. Clearing caches keeps library records and originals; hiding records keeps remote images. Remote deletion requires a separate target and version confirmation.
 
 ## Settings sections
 
@@ -30,7 +30,7 @@ Copy as URL, Markdown image, Markdown link, HTML, or BBCode. Automatic copying i
 | App preferences       | Shortcuts and interface preferences                                                   |
 | About and updates     | Version, diagnostics, CLI entry point, manual update checks                           |
 
-The stable release does not include dark mode, remote library management, tags, or folder imports. Its UI is Chinese. See the development guide above for main-branch additions.
+The interface supports English and Chinese, with light and dark themes. Storage has its own sidebar entry. Settings contains cache, sync, shortcut, and update preferences. A tagging system is not included.
 
 ## macOS window and quick actions
 
@@ -48,7 +48,7 @@ Closing the window or pressing ⌘W hides it while uploads continue. ⌘Q exits;
 
 Global shortcuts can be changed or disabled. Quick batches run in order without including unsubmitted manual imports. Without a default provider, content is retained and storage settings open. Cancelling capture creates no task. Each batch produces one result notification.
 
-Global shortcut delivery, third-party conflicts, system capture cancellation, status-item clicks, and notification permissions and clicks still need manual testing for the stable release. See the [acceptance record](https://github.com/liyown/img/blob/main/stability-qa.md).
+Windows and Linux use Ctrl+Alt+U and Ctrl+Alt+S. Windows supports region capture and a tray menu. Linux Wayland uses desktop portals; shortcuts require GlobalShortcuts support and trays require StatusNotifier. macOS uses a menu-bar entry. See the [iteration record](https://github.com/liyown/img/blob/main/docs/iteration-0.4.md) for platform verification limits.
 
 ## Installation, terminal command and updates
 
@@ -60,6 +60,6 @@ Check for updates checks stable desktop releases only. Downloads are verified fo
 
 ## Local data and recovery
 
-Data lives in `~/Library/Application Support/aperture`, preserving the historical directory through upgrades. It contains the queue, image copies, thumbnails, and preferences. Only one process can use a data directory at a time.
+On macOS, data lives in `~/Library/Application Support/aperture`, preserving the historical directory through upgrades. Desktop and CLI share the SQLite library; one desktop process owns its queue. Image caches have a separate 2 GiB default budget. Manual backups can include cache files; cross-device sync never includes them.
 
 Queue saves are serialized and atomic, with two recent valid backups. If corruption is detected, restore a backup or preserve the damaged file and rebuild an empty queue. Uploads stay blocked until recovery. See [troubleshooting](/img/en/docs/troubleshooting/).

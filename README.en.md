@@ -1,8 +1,8 @@
 <div align="center">
   <img src="site/public/favicon.svg" width="72" alt="img">
   <h1>img</h1>
-  <p><strong>A native image uploader</strong></p>
-  <p>Upload images to your own storage and generate links for your documents.<br>Native desktop app, standalone CLI, and Agent Skill for macOS, Windows, and Linux.</p>
+  <p><strong>Image hosting management and image tools</strong></p>
+  <p>Manage your own image storage, edit images, and bring the links back to your documents.<br>Native desktop app, standalone CLI, and Agent Skill for macOS, Windows, and Linux.</p>
   <p><a href="https://liyown.github.io/img/en/install/#gui"><strong>Download desktop</strong></a> · <a href="https://liyown.github.io/img/en/install/#cli">Download CLI</a> · <a href="https://liyown.github.io/img/en/">Website</a> · <a href="https://liyown.github.io/img/en/docs/">Docs</a> · <a href="README.md">中文</a></p>
 
 [![Desktop release](https://github.com/liyown/img/actions/workflows/desktop-release.yml/badge.svg)](https://github.com/liyown/img/actions/workflows/desktop-release.yml)
@@ -18,15 +18,16 @@
 img is built in Rust. The GPUI desktop app bundles the matching CLI, with shared storage configuration and image processing across desktop uploads, editor integrations, and automation. The standalone CLI runs without the desktop app or a language runtime.
 
 - Quick uploads: import files, clipboard images, screenshots, or remote URLs. Upload directly with a shortcut and copy the result as a URL, Markdown, or another format.
-- Your own storage: connect R2, S3, OSS, GitHub, or HTTP hosts. Keep your public domain and select storage per project.
-- Local gallery: search and preview desktop upload records, switch between grid and list, and copy links in batches across search results.
-- Image processing: optimize, resize, or remove JPEG EXIF before batch uploads while preserving original files.
-- Article migration: use `img rewrite` to upload local and remote Markdown images, replacing references while preserving alt text and titles.
+- Your own storage: connect R2, S3, OSS, GitHub, WebDAV, or HTTP hosts. Keep your public domain and select storage per project.
+- Unified library: index images already on your storage alongside new uploads. Search, preview, select across filters, copy links, download, or explicitly delete remote files. Clearing the cache preserves library records.
+- Standalone image tools: Convert & compress and Resize & crop have dedicated sidebar entries. Process PNG, JPEG, and static WebP; preview the actual output size, then save, copy, or upload. No storage setup is needed for local processing.
+- Migration and article repair: copy images to another host, verify them, and create a URL mapping. Preview Markdown changes per file and back up before replacing references. Sources are preserved by default; failed items can be retried.
+- Device sync: use your own WebDAV or S3 to sync storage configuration, indexes, and presets. Desktop and CLI share local data. Cached images stay local; synced hosting credentials are not additionally encrypted.
 - Automation: read per-file JSON results and exit codes from the native CLI, or use the companion Skill with an AI agent.
 
 ## Installation
 
-The main branch adds shared upload history, PicGo / PicList import, duplicate reuse, link checks, processing previews and watermarks, backup and restore, folder watching, remote management, WebDAV, dark mode and English / Chinese UI. See the [workflow guide](docs/workflows.en.md) and [acceptance status](desktop/features-qa.md). Stable installer features follow their release notes.
+The [0.4 guide](docs/0.4.en.md) covers the library, sync, image tools, and article repair. See the [workflow guide](docs/workflows.en.md) for PicGo / PicList import, duplicate reuse, link checks, backups, and folder watching.
 
 Download the latest stable release from the [installation page](https://liyown.github.io/img/en/install/#gui). Desktop packages include the CLI, which is also available separately. No source build is required.
 
@@ -52,7 +53,7 @@ GitHub Actions builds, tests, and publishes native packages with SHA-256 checksu
 
 ### Desktop app
 
-1. Install img, add your image host in Settings → Storage, and set it as default.
+1. Install img, add your image host in Storage, and set it as default.
 2. Copy an image and press the upload shortcut.
 3. Paste the link after the upload completes. Select Markdown, URL, or another output format in Settings.
 
@@ -90,13 +91,13 @@ The standalone CLI works with scripts, editors, and AI agents. JSON output inclu
 img upload ./assets/chart.png --format json --no-copy
 ```
 
-The [img-uploader Skill](skills/img-uploader) defines file checks, configuration validation, uploads, and result parsing. Assistants that support Agent Skills and local command execution can use it to upload screenshots or charts and reference them in documents.
+The [img-uploader Skill](skills/img-uploader) lets assistants upload and process images, query the library, check sync status, and preview migrations. It reads per-file JSON results and requires an explicit request before remote deletion or article changes.
 
 ```sh
 npx skills add liyown/img --skill img-uploader
 ```
 
-Install the CLI and configure a default storage provider first. Credentials come from local configuration rather than prompts. [Skill reference](skills/img-uploader/SKILL.md) · [JSON output and exit codes](docs/cli.en.md#json-output)
+Install the CLI first; local image processing works without a storage provider. Uploads reuse your existing configuration, with credentials kept out of prompts. [Skill reference](skills/img-uploader/SKILL.md) · [JSON output and exit codes](docs/cli.en.md#json-output)
 
 ## Editors and workflows
 
@@ -114,11 +115,11 @@ Install the CLI and configure a default storage provider first. Credentials come
 
 Add your existing provider settings to img, verify an upload and its public URL, then update your editor's upload command. Changing the client does not affect links in existing articles.
 
-The stable release uses manual configuration. The main branch adds PicGo / PicList configuration import and remote management, currently under release verification. Importing client history and running PicGo plugins are outside the supported scope. See the [migration and management guide](docs/workflows.en.md).
+Import supported PicGo / PicList storage settings after reviewing supported fields and conflicts. Client history and the PicGo plugin runtime are not imported. See the [migration and management guide](docs/workflows.en.md).
 
 ## Storage and formats
 
-**Cloudflare R2 · S3-compatible services · Alibaba Cloud OSS · GitHub repositories · Custom HTTP endpoints**
+**Cloudflare R2 · S3-compatible services · Alibaba Cloud OSS · GitHub repositories · WebDAV · Custom HTTP endpoints**
 
 PNG, JPEG, GIF, WebP, SVG, and AVIF are supported. Select storage per project and set defaults for output formats and image processing. [Storage guide](https://liyown.github.io/img/en/docs/storage/)
 

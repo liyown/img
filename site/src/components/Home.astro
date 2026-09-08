@@ -48,13 +48,13 @@ const features = t(
   [
     [
       'image',
-      '图库与历史',
-      '网格与列表自由切换，搜索记录，随时找回已上传的图片。',
+      '统一管理图床',
+      '索引图床已有图片，和新上传一起搜索、预览、复制与下载。清理缓存不会清空图库。',
     ],
     [
       'sliders',
-      '上传前处理图片',
-      '压缩、缩放、清理 JPEG EXIF。上传前处理，保留原文件。',
+      '独立图片工具',
+      '转换与压缩、尺寸与裁剪。预览实际大小，直接保存、复制或上传，无需先配置图床。',
     ],
     [
       'command',
@@ -63,8 +63,8 @@ const features = t(
     ],
     [
       'shield',
-      '错误提示与队列恢复',
-      '清楚的错误分类，可恢复的队列，两份有效备份。',
+      '用自己的存储同步',
+      '通过 WebDAV 或 S3 同步配置、图库索引和预设。图片缓存留在本机，冲突由你选择。',
     ],
     [
       'copy',
@@ -73,20 +73,20 @@ const features = t(
     ],
     [
       'terminal',
-      'Markdown 图片转存',
-      '批量上传文章中的本地图片与外链图片，替换引用并保留 alt 和 title。',
+      '迁移与文章修复',
+      '复制到另一图床，验证后更新文章引用。逐文件预览并备份，默认保留源图片。',
     ],
   ],
   [
     [
       'image',
-      'Library and history',
-      'Switch between grids and lists, search records, and find uploaded images again.',
+      'One library for your storage',
+      'Index existing images alongside new uploads. Search, preview, copy, and download. Clearing caches keeps library records.',
     ],
     [
       'sliders',
-      'Process images before upload',
-      'Compress, resize, and remove JPEG EXIF before upload. Keep your originals.',
+      'Standalone image tools',
+      'Convert, compress, resize, and crop. Preview actual output size, then save, copy, or upload. No storage setup needed.',
     ],
     [
       'command',
@@ -95,8 +95,8 @@ const features = t(
     ],
     [
       'shield',
-      'Errors and queue recovery',
-      'Clear error categories, a recoverable queue, and two valid backups.',
+      'Sync through your storage',
+      'Sync configuration, indexes, and presets through WebDAV or S3. Cached images stay local; you decide conflicts.',
     ],
     [
       'copy',
@@ -105,8 +105,8 @@ const features = t(
     ],
     [
       'terminal',
-      'Markdown image migration',
-      'Upload local and remote images from an article, replacing references while preserving alt text and titles.',
+      'Migration and article repair',
+      'Copy to another host and verify before updating references. Review and back up each document; keep source images by default.',
     ],
   ],
 );
@@ -127,7 +127,7 @@ const faq = t(
     ],
     [
       '已有图床和文章链接需要迁移吗？',
-      '支持的存储服务和公开域名可以继续使用。在 img 中添加配置并验证上传后，即可调整编辑器入口；已有文章链接不受影响。稳定版使用手动配置；主分支的 PicGo / PicList 配置导入正在验收，暂不支持迁入历史记录。',
+      '支持的存储服务和公开域名可以继续使用。在 img 中添加配置并验证上传后，即可调整编辑器入口；已有文章链接不受影响。支持预览并导入 PicGo / PicList 存储配置，不迁入历史记录或运行原有插件。',
     ],
   ],
   [
@@ -145,7 +145,7 @@ const faq = t(
     ],
     [
       'Do I need to migrate my storage or existing links?',
-      'Keep supported storage services and your public domain. Add the configuration in img and verify an upload before changing your editor integration. Existing article links remain unchanged. The stable release uses manual configuration. PicGo / PicList configuration import is under verification on the main branch; history import is not available.',
+      'Keep supported storage services and your public domain. Add the configuration in img and verify an upload before changing your editor integration. Existing article links remain unchanged. Preview and import supported PicGo / PicList storage configuration; history and plugin runtimes are not imported.',
     ],
   ],
 );
@@ -161,16 +161,16 @@ const faq = t(
     /></a
   >
   <h1 class="product-title">
-    {t(locale, '原生图片', 'Native image')}<br /><span
-      >{t(locale, '上传工具', 'uploader')}</span
+    {t(locale, '图床管理', 'Native image')}<br /><span
+      >{t(locale, '与图片工具', 'workspace')}</span
     >
   </h1>
   <p class="hero-description">
     {
       t(
         locale,
-        '面向写作与自动化，将图片上传到自有存储并生成链接。',
-        'Upload images to your own storage for publishing and automation.',
+        '管理自己的图床，处理图片，把链接带回文章。',
+        'Manage your image storage, edit images, and bring links back to your documents.',
       )
     }<br />{
       t(
@@ -247,14 +247,18 @@ const faq = t(
       >{(evidence.products[0].bytes! / 1e6).toFixed(1)}<small>MB</small></span
     ><p>
       {t(locale, 'GUI 安装包，已含 CLI', 'GUI package, CLI included')}
-    </p><span class="metric-note">macOS ARM64 · DMG</span>
+    </p><span class="metric-note"
+      >{evidence.products[0].version} · macOS ARM64 · DMG</span
+    >
   </div>
   <div>
     <span class="metric"
       >{(evidence.cli.bytes / 1e6).toFixed(2)}<small>MB</small></span
     ><p>
       {t(locale, '独立 CLI 压缩包', 'Standalone CLI archive')}
-    </p><span class="metric-note">macOS ARM64 · tar.gz</span>
+    </p><span class="metric-note"
+      >{evidence.cli.version} · macOS ARM64 · tar.gz</span
+    >
   </div>
   <div>
     <span class="metric"
@@ -327,6 +331,26 @@ const faq = t(
     </div>
   </div>
 </section>
+<section class="section wrap feature-story">
+  <div>
+    <span class="eyebrow">IMAGE TOOLS</span>
+    <h2>{t(locale, '处理好，再发布。', 'Prepare it. Then publish.')}</h2>
+    <p>
+      {
+        t(
+          locale,
+          '转换与压缩、尺寸与裁剪，直接打开一张图片就能开始。预览实际结果，保存、复制或上传。原文件始终保留。',
+          'Open one image to convert, compress, resize, or crop. Preview the actual result, then save, copy, or upload. Your original stays intact.',
+        )
+      }
+    </p>
+    <a class="text-link" href={href(locale, 'docs/0.4')}
+      >{t(locale, '了解图片工具', 'Explore the image tools')}
+      <Icon name="arrow" /></a
+    >
+  </div>
+  <Screenshot name="tools" locale={locale} />
+</section>
 <section class="agent-section section wrap" id="automation">
   <div class="agent-intro">
     <span class="eyebrow">CLI &amp; AGENT SKILL</span>
@@ -344,8 +368,8 @@ const faq = t(
       {
         t(
           locale,
-          'Agent Skill 定义文件检查、配置校验和上传流程，复用已配置的存储源。适用于支持 Agent Skills 且能够执行本地命令的助手。',
-          'The Agent Skill defines file checks, configuration validation, and uploads using existing storage settings. It works with assistants that support Agent Skills and local command execution.',
+          'Agent Skill 提供图片处理、图库查询、同步状态和迁移预览。上传复用已有存储源；删除远端文件和改写文章需要明确执行请求。',
+          'The Agent Skill supports image processing, library queries, sync status, and migration previews. Uploads reuse configured storage; remote deletion and article changes require an explicit request.',
         )
       }
     </p>
@@ -372,8 +396,8 @@ const faq = t(
       {
         t(
           locale,
-          '使用前安装 CLI 并配置默认存储源。Skill 调用本地配置，无需在提示词中提供凭据。',
-          'Install the CLI and configure a default provider first. The Skill uses local configuration; credentials do not belong in prompts.',
+          '先安装 CLI；本地图片处理无需配置图床。上传读取已有配置，无需在提示词中提供凭据。',
+          'Install the CLI first. Local processing needs no storage setup. Uploads use existing configuration; credentials stay out of prompts.',
         )
       }
     </p>

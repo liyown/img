@@ -46,8 +46,8 @@ const schema = [
           screenshot: site.origin + asset('screenshots/gallery.webp'),
           description: t(
             locale,
-            '原生 macOS / Windows / Linux 图片上传工具与独立 Rust CLI。支持自选存储源、链接复制和可恢复上传队列。',
-            'A native macOS / Windows / Linux image uploader and standalone Rust CLI with your own storage, link copying, and a recoverable queue.',
+            '面向 macOS、Windows 和 Linux 的原生图床管理与图片工具。统一图库、转换压缩、跨设备同步，配有独立 CLI 和 Agent Skill。',
+            'A native image workspace for macOS, Windows, and Linux. Manage your storage, process images, and sync through your own service, with a standalone CLI and Agent Skill.',
           ),
         },
       ]
@@ -145,7 +145,7 @@ const schema = [
       content={description}
     /><meta
       name="twitter:image:alt"
-      content={t(locale, 'img 图片上传工具', 'img image uploader')}
+      content={t(locale, 'img 图床管理与图片工具', 'img image workspace')}
     />
     <link rel="icon" type="image/svg+xml" href={asset('favicon.svg')} /><link
       rel="apple-touch-icon"

@@ -1,8 +1,8 @@
 <div align="center">
   <img src="site/public/favicon.svg" width="72" alt="img">
   <h1>img</h1>
-  <p><strong>原生图片上传工具</strong></p>
-  <p>将图片上传到自有存储，生成可直接使用的链接。<br>原生桌面应用、独立 CLI 与 Agent Skill，支持 macOS、Windows 和 Linux。</p>
+  <p><strong>图床管理与图片工具</strong></p>
+  <p>管理自己的图床，处理图片，把链接带回文章。<br>原生桌面应用、独立 CLI 与 Agent Skill，支持 macOS、Windows 和 Linux。</p>
   <p><a href="https://liyown.github.io/img/install/#gui"><strong>下载桌面版</strong></a> · <a href="https://liyown.github.io/img/install/#cli">下载 CLI</a> · <a href="https://liyown.github.io/img/">官网</a> · <a href="https://liyown.github.io/img/docs/">文档</a> · <a href="README.en.md">English</a></p>
 
 [![Desktop release](https://github.com/liyown/img/actions/workflows/desktop-release.yml/badge.svg)](https://github.com/liyown/img/actions/workflows/desktop-release.yml)
@@ -18,15 +18,16 @@
 img 使用 Rust 构建，桌面端采用 GPUI，内置同版本 CLI。桌面上传、编辑器集成和自动化任务共享存储配置与图片处理能力；独立 CLI 无需启动桌面应用或安装语言运行时。
 
 - 快捷上传：支持文件、剪贴板、截图和外链导入。快捷键可直接上传，完成后自动复制 URL、Markdown 等格式的链接。
-- 自有存储：连接 R2、S3、OSS、GitHub 或 HTTP 图床，沿用现有存储和公开域名，支持按项目选择存储源。
-- 本地图库：搜索和预览桌面上传记录，支持网格、列表、跨搜索多选及批量复制链接。
-- 图片处理：批量上传前压缩、缩放或移除 JPEG EXIF，保留原文件。
-- 文章转存：使用 `img rewrite` 上传 Markdown 中的本地图片和外链图片，替换引用并保留 alt 与 title。
+- 自有存储：连接 R2、S3、OSS、GitHub、WebDAV 或 HTTP 图床，沿用现有存储和公开域名，支持按项目选择存储源。
+- 统一图库：索引图床已有图片，与新上传记录一起搜索、预览和管理。支持跨搜索多选、批量复制、下载和明确确认后的远端删除；清理缓存不会清空图库。
+- 独立图片工具：转换与压缩、尺寸与裁剪直接位于侧边栏。处理 PNG、JPEG 和静态 WebP，预览实际输出大小，直接保存、复制或上传；无需先配置图床。
+- 迁移与文章维护：复制图片到另一个图床，验证后生成新旧链接映射；逐文件预览 Markdown 修改，备份后替换。默认保留源端图片，失败项可重试。
+- 跨设备同步：用自己的 WebDAV 或 S3 同步配置、索引和预设，桌面与 CLI 共用本机数据。缓存图片不参与同步；同步的图床凭据不额外加密。
 - 自动化接口：原生 CLI 提供 JSON 输出、逐文件结果和退出码，配套 Skill 支持 AI Agent 调用。
 
 ## 安装
 
-主分支已加入统一上传记录、PicGo / PicList 导入、重复图片复用、链接诊断、处理预览与水印、备份恢复、目录监听、远端管理、WebDAV、深色主题与中英文界面。见[功能使用说明](docs/workflows.md)和[验收状态](desktop/features-qa.md)；稳定安装包以 Release notes 为准。
+[0.4 使用指南](docs/0.4.md)介绍统一图库、同步、图片工具和文章修复。PicGo / PicList 配置导入、重复图片复用、链接诊断、备份恢复和目录监听见[工作流说明](docs/workflows.md)。
 
 从[安装页](https://liyown.github.io/img/install/#gui)下载最新稳定版。桌面安装包包含 CLI，也可单独下载命令行版本，无需从源码编译。
 
@@ -52,7 +53,7 @@ img 使用 Rust 构建，桌面端采用 GPUI，内置同版本 CLI。桌面上�
 
 ### 桌面应用
 
-1. 安装并打开 img，在「设置 → 存储源」添加图床，设为默认。
+1. 安装并打开 img，在「存储源」添加图床，设为默认。
 2. 复制一张图片，按下快捷键直接上传。
 3. 上传成功后粘贴链接。在设置中选择 Markdown、URL 等输出格式。
 
@@ -90,13 +91,13 @@ CLI 可独立用于脚本、编辑器和 AI Agent。使用 JSON 输出读取每�
 img upload ./assets/chart.png --format json --no-copy
 ```
 
-配套的 [img-uploader Skill](skills/img-uploader) 定义了文件检查、配置校验、上传和结果解析流程。支持 Agent Skills 且具备本地命令执行能力的助手，可通过 Skill 将截图或图表上传并引用到文档中。
+配套的 [img-uploader Skill](skills/img-uploader) 提供上传、图片处理、图库查询、同步状态和迁移预览流程。支持 Agent Skills 且具备本地命令执行能力的助手，可通过 Skill 将截图或图表上传并引用到文档中。
 
 ```sh
 npx skills add liyown/img --skill img-uploader
 ```
 
-使用前需安装 CLI 并配置默认存储源。凭据沿用本地配置，无需写入提示词。[Skill 使用说明](skills/img-uploader/SKILL.md) · [JSON 输出与退出码](docs/cli.md#json-输出)
+使用前需安装 CLI；上传前配置存储源，本地图片处理无需图床配置。凭据沿用本地配置，无需写入提示词。[Skill 使用说明](skills/img-uploader/SKILL.md) · [JSON 输出与退出码](docs/cli.md#json-输出)
 
 ## 编辑器与工作流
 
@@ -114,11 +115,11 @@ npx skills add liyown/img --skill img-uploader
 
 使用已有存储服务时，在 img 中添加对应配置，验证上传与公开 URL 后，将编辑器的上传入口指向 img。更换客户端不影响已有文章链接。
 
-稳定版的迁入方式是手动配置。主分支已加入 PicGo / PicList 配置导入和远端管理，正在进行发行验收；历史记录导入和 PicGo 插件运行环境不在支持范围内。详见[迁移与管理指南](docs/workflows.md)。
+支持导入 PicGo / PicList 的存储配置，并预览支持项及冲突；导入不会运行原客户端的插件。PicGo 历史记录导入不在支持范围内。详见[迁移与管理指南](docs/workflows.md)。
 
 ## 支持的存储与格式
 
-**Cloudflare R2 · S3 兼容服务 · 阿里云 OSS · GitHub 仓库 · 自定义 HTTP 接口**
+**Cloudflare R2 · S3 兼容服务 · 阿里云 OSS · GitHub 仓库 · WebDAV · 自定义 HTTP 接口**
 
 支持 PNG、JPEG、GIF、WebP、SVG、AVIF。可以为不同项目选择不同存储源，配置默认输出格式与图片处理选项。[存储配置指南](https://liyown.github.io/img/docs/storage/)
 

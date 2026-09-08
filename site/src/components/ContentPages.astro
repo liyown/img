@@ -13,7 +13,7 @@ const features = t(
   [
     [
       'image',
-      '图库与历史',
+      '统一图库',
       '在网格和列表之间切换。搜索文件名、存储源和链接，打开大图预览，复制需要的结果。',
       'gallery',
     ],
@@ -25,15 +25,15 @@ const features = t(
     ],
     [
       'sliders',
-      '设置就在界面里',
-      '存储源、上传与图片处理、链接与剪贴板、应用偏好、关于与更新分别设有区块，可直接在界面中修改。',
-      'settings',
+      '两个独立图片工具',
+      '转换压缩、调整尺寸和裁剪。左侧预览实际结果，右侧调整参数，处理后直接保存、复制或上传。无需配置图床。',
+      'tools',
     ],
   ],
   [
     [
       'image',
-      'Library and history',
+      'Unified library',
       'Switch between grids and lists. Search names, storage providers, and links; enlarge previews and copy results.',
       'gallery',
     ],
@@ -45,9 +45,9 @@ const features = t(
     ],
     [
       'sliders',
-      'Settings in the interface',
-      'Dedicated sections for storage, processing, links and clipboard, app preferences, and about and updates.',
-      'settings',
+      'Two standalone image tools',
+      'Convert, compress, resize, and crop. Preview the actual result and adjust parameters, then save, copy, or upload. No storage setup needed.',
+      'tools',
     ],
   ],
 );
@@ -71,7 +71,7 @@ const rows = t(
     ],
     [
       '存储选择',
-      'R2 / S3 / OSS / GitHub / HTTP',
+      'R2 / S3 / OSS / GitHub / WebDAV / HTTP',
       '内置图床 + 插件生态',
       '内置图床 + 插件生态',
       '内置图床 + 自定义服务',
@@ -79,7 +79,7 @@ const rows = t(
     ['自动复制与截图', '支持', '支持', '支持', '支持'],
     [
       '远端文件管理',
-      '未提供',
+      '范围索引、检查、下载、迁移与明确确认后的删除',
       '云端相册能力',
       '远端搜索、删除与批量管理',
       '以上传与本地历史为主',
@@ -116,7 +116,7 @@ const rows = t(
     ],
     [
       'Storage',
-      'R2 / S3 / OSS / GitHub / HTTP',
+      'R2 / S3 / OSS / GitHub / WebDAV / HTTP',
       'Built-in providers + plugins',
       'Built-in providers + plugins',
       'Built-in + custom services',
@@ -130,7 +130,7 @@ const rows = t(
     ],
     [
       'Remote file management',
-      'Not provided',
+      'Scope indexing, checks, downloads, migration, and explicit deletion',
       'Cloud album capabilities',
       'Remote search, deletion, batch management',
       'Focus on uploading and local history',
@@ -182,7 +182,7 @@ const rows = t(
             </div>
             <Screenshot
               locale={locale}
-              name={shot as 'gallery' | 'queue' | 'settings'}
+              name={shot as 'gallery' | 'queue' | 'settings' | 'tools'}
             />
           </section>
         ))}
@@ -387,8 +387,8 @@ const rows = t(
           <p class="fine-print">
             {t(
               locale,
-              'img 0.3.0 社区版、PicGo 3.0.2、PicList 3.5.0；uPic 按官方项目及 App Store 分发说明，GitHub v0.21.1 不代表最新 App Store 版。核验日期：2026-09-07。',
-              'img 0.3.0 community release, PicGo 3.0.2, PicList 3.5.0; uPic follows its official project and App Store distribution notes. GitHub v0.21.1 is not the latest App Store version. Checked Sep 7, 2026.',
+              '体积数据取自 img 0.3.0 社区版；当前功能按 img 0.4。PicGo 3.0.2、PicList 3.5.0；uPic 按官方项目及 App Store 分发说明，GitHub v0.21.1 不代表最新 App Store 版。核验日期：2026-09-07。',
+              'Package sizes use img 0.3.0; current features describe img 0.4. PicGo 3.0.2, PicList 3.5.0; uPic follows its official project and App Store distribution notes. GitHub v0.21.1 is not the latest App Store version. Checked Sep 7, 2026.',
             )}
           </p>
         </>
@@ -752,8 +752,8 @@ const rows = t(
           <p>
             {t(
               locale,
-              '应用直接上传到你选择的存储服务；远程图片导入会请求源图片地址。队列、图片副本和偏好保存在本地。macOS GUI 新凭据存入系统钥匙串，原有环境变量引用保持兼容。手动或启用后的自动更新检查会请求 GitHub。',
-              'The app uploads directly to your chosen storage service; remote image imports request the source URL. Queues, image copies, and preferences stay local. New macOS GUI credentials are stored in Keychain, while existing environment references remain compatible. Manual or enabled automatic update checks contact GitHub.',
+              '应用直接上传到你选择的存储服务；远程图片导入会请求源图片地址。队列和图片缓存保存在本地，本机凭据使用系统凭据管理器。启用同步后，配置、图床凭据、图库索引、隐藏状态和预设会写入你选择的 WebDAV 或 S3 私有目录。同步数据不额外加密，图床密钥可能为明文。同步服务自身凭据、本机路径、运行中的任务和缓存不参与同步；环境变量保留引用，不导出值。手动或启用后的自动更新检查会请求 GitHub。',
+              'The app uploads directly to your chosen storage; remote imports request the source URL. Queues and image caches stay local; device credentials use the system credential store. If enabled, sync sends provider configuration and credentials, library indexes, hidden state, and presets to your private WebDAV or S3 directory. Sync data is not additionally encrypted and may contain plaintext provider secrets. Sync-service credentials, local paths, running tasks, and caches are excluded. Environment references retain their references, not values. Update checks contact GitHub.',
             )}
           </p>
         </>

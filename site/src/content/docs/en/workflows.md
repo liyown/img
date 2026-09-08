@@ -6,11 +6,11 @@ topic: workflows
 order: 9
 ---
 
-This guide covers additions on the main branch. Check the release notes for features in a stable installer. Verification status is tracked in [feature acceptance](https://github.com/liyown/img/blob/main/desktop/features-qa.md).
+This guide covers upload and data management in 0.4. See the [0.4 guide](/img/en/docs/0.4/) for the unified library, single-image tools, sync, and reference repair.
 
 ## Bring your existing storage
 
-Use Settings → Storage → Import PicGo / PicList settings. Review supported profiles, name conflicts and skipped plugins before saving each profile. Existing names receive a suffix; the source JSON is never changed. GitHub, Alibaba OSS and PicList AWS S3 profiles are supported, including multiple configurations. Plugin scripts are never executed.
+Use Storage → Import PicGo / PicList settings. Review supported profiles, name conflicts and skipped plugins before saving each profile. Existing names receive a suffix; the source JSON is never changed. GitHub, Alibaba OSS and PicList AWS S3 profiles are supported, including multiple configurations. Plugin scripts are never executed.
 
 ```sh
 img import-config piclist.json
@@ -23,7 +23,7 @@ Preview does not print credentials. Applying saves credentials through the syste
 
 ## One local library
 
-CLI, editor server, screenshot, document migration and Agent uploads publish independent local records. The running desktop app imports them, displays their source and acknowledges them only after saving its queue.
+Successful CLI, editor server, screenshot, document migration, and Agent uploads immediately enter the shared SQLite library. Desktop does not need to be running. Legacy queues and inbox records import idempotently. If saving a new record fails, the upload still returns its successful URL with an explicit record warning.
 
 ```sh
 img upload image.png --origin agent --format json
@@ -56,7 +56,7 @@ img upload photo.png --image-format jpeg --quality 85 --max-edge 2400
 img upload photo.png --watermark /absolute/path/logo.png --watermark-opacity 60
 ```
 
-Resizing keeps the aspect ratio and never enlarges an image. JPEG composites transparency onto white. WebP is lossless; quality controls JPEG only. The bottom-right watermark fits within a quarter of the image dimensions, with 60% default opacity.
+Legacy upload processing keeps the aspect ratio, avoids enlargement, composites JPEG onto white, and uses lossless WebP. The standalone tools and ProcessingPlan additionally support JPEG background colors and lossy WebP quality or target-size modes. The bottom-right watermark fits within a quarter of the image dimensions, with 60% default opacity.
 
 Explicit processing supports PNG, JPEG and static WebP. Original GIF, animated WebP, SVG and AVIF uploads preserve their bytes; unsupported explicit conversions fail instead of silently discarding animation. Original files are never modified. Explicit CLI processing options replace the global recipe.
 
@@ -97,13 +97,13 @@ img restore ./img-backup --apply
 
 Restore without --apply only verifies and previews. Close desktop before applying from the CLI. The desktop restore action saves the queue, quits, restores and reopens the app.
 
-Image cache and plaintext credentials are excluded by default. Records without cache retain links; previewing or uploading again requires selecting the original file. Credential backups are explicitly opt-in and **unencrypted**; keep them private.
+Image cache and plaintext credentials are excluded by default. Records without cache retain links. Linked remote objects can be downloaded again for preview; unlinked legacy records may require a local original. Credential backups are explicitly opt-in and **unencrypted**; keep them private.
 
 Restoring replaces included settings and records, restores cache files and keeps unrelated files. A recovery copy named img-before-restore-UUID is created first. It preserves exact original settings, including any plaintext keys in legacy configurations. When importing credentials, it also backs up the keychain entries referenced by your current configuration. Keep recovery copies private. A failed restore attempts rollback and reports the recovery location. Remote storage and original image files are unchanged.
 
 ## Remote files and WebDAV
 
-Browse directories, load additional pages, copy links or confirm deletion of a single file in Settings → Remote files. Supported backends are S3-compatible storage, GitHub and WebDAV. Custom HTTP upload APIs do not have a shared browsing or deletion protocol.
+Select an index scope in Storage, then use the unified library to search, preview, download, and manage remote images. Advanced CLI commands also support directory browsing and single-object deletion. Supported backends are S3-compatible storage, GitHub and WebDAV. Custom HTTP upload APIs do not have a shared browsing or deletion protocol.
 
 ```sh
 img remote --provider r2 list --prefix posts/
@@ -111,7 +111,7 @@ img remote --provider r2 list --prefix posts/ --cursor TOKEN
 img remote --provider r2 delete posts/image.png --version '"ETAG"' --yes
 ```
 
-Deletion requires the ETag or GitHub SHA returned by the listing. Changed files must be refreshed and confirmed again. Directory deletion is disabled. Remote deletion affects existing links; local library cleanup only removes local records and cache. Versioned S3 buckets may retain old versions behind a delete marker.
+Deletion requires the ETag or GitHub SHA returned by the listing. Changed files must be refreshed and confirmed again. Directory deletion is disabled. Remote deletion affects existing links. Clearing caches preserves the library; hiding records preserves remote images. Versioned S3 buckets may retain old versions behind a delete marker.
 
 GitHub directories at the Contents API's 1,000-entry limit return a clear error; browse smaller subdirectories. Remote browsing does not download full-size images as thumbnails.
 

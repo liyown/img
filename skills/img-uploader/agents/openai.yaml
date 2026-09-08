@@ -1,4 +1,4 @@
 interface:
-  display_name: "Image Uploader"
-  short_description: "Upload images and return ready-to-use links"
-  default_prompt: "Use $img-uploader to upload my image and return a Markdown link."
+  display_name: "img Image Tools"
+  short_description: "Upload, process, and manage images with img"
+  default_prompt: "Use $img-uploader to process my image, upload it to my configured storage, and return a Markdown link."

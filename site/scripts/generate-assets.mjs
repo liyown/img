@@ -11,8 +11,13 @@ await sharp(Buffer.from(svgIcon))
   .resize(180, 180)
   .png()
   .toFile(path.join(root, 'public/apple-touch-icon.png'));
-for (const name of ['gallery', 'queue', 'settings']) {
-  const source = path.join(root, `src/assets/screenshots/${name}.png`);
+for (const [name, file] of [
+  ['gallery', 'gallery-0.4.jpg'],
+  ['tools', 'tools.jpg'],
+  ['queue', 'queue.png'],
+  ['settings', 'settings.png'],
+]) {
+  const source = path.join(root, `src/assets/screenshots/${file}`);
   await sharp(source)
     .webp({ lossless: true })
     .toFile(path.join(root, `public/screenshots/${name}.webp`));
@@ -24,7 +29,7 @@ for (const name of ['gallery', 'queue', 'settings']) {
 }
 for (const locale of ['zh', 'en']) {
   const zh = locale === 'zh';
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630"><rect width="1200" height="630" fill="#f8f7f3"/><path d="M60 96h1080M60 563h1080" stroke="#d6dbca"/><text x="63" y="65" font-family="Arial,sans-serif" font-size="37" font-weight="700" fill="#252923">img<tspan fill="#a96412">.</tspan></text><text x="1140" y="61" text-anchor="end" font-family="monospace" font-size="14" fill="#656960">NATIVE IMAGE UPLOADER</text><text x="65" y="243" font-family="PingFang SC,Arial,sans-serif" font-size="${zh ? 88 : 84}" font-weight="500" fill="#252923">${zh ? '原生图片' : 'Native image'}</text><text x="65" y="345" font-family="PingFang SC,Arial,sans-serif" font-size="${zh ? 88 : 84}" font-weight="500" fill="#536344">${zh ? '上传工具' : 'uploader'}</text><text x="69" y="417" font-family="PingFang SC,Arial,sans-serif" font-size="22" fill="#656960">${zh ? '原生桌面、独立 CLI 与 Agent Skill。支持自有存储。' : 'Native desktop, standalone CLI, and Agent Skill.'}</text><rect x="66" y="460" width="170" height="44" rx="5" fill="#252923"/><text x="151" y="489" text-anchor="middle" font-family="Arial,sans-serif" font-size="15" fill="#fffefa">Native desktop</text><rect x="248" y="460" width="135" height="44" rx="5" fill="none" stroke="#b9c1ad"/><text x="315" y="489" text-anchor="middle" font-family="Arial,sans-serif" font-size="15" fill="#252923">Rust CLI</text><text x="65" y="601" font-family="monospace" font-size="14" fill="#656960">liyown.github.io/img</text><text x="1140" y="601" text-anchor="end" font-family="monospace" font-size="12" fill="#656960">macOS / Windows / Linux</text><g transform="translate(900 250) rotate(-8)"><rect x="-95" y="-100" width="220" height="220" rx="50" fill="#edeada" stroke="#d0d5c3"/><g fill="none" stroke="#536344" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"><rect x="-40" y="-44" width="112" height="112" rx="17"/><path d="m-38 35 35-39 31 31 18-18 25 28"/><circle cx="40" cy="-12" r="8" fill="#c17722" stroke="none"/></g></g></svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630"><rect width="1200" height="630" fill="#f8f7f3"/><path d="M60 96h1080M60 563h1080" stroke="#d6dbca"/><text x="63" y="65" font-family="Arial,sans-serif" font-size="37" font-weight="700" fill="#252923">img<tspan fill="#a96412">.</tspan></text><text x="1140" y="61" text-anchor="end" font-family="monospace" font-size="14" fill="#656960">YOUR IMAGE WORKSPACE</text><text x="65" y="243" font-family="PingFang SC,Arial,sans-serif" font-size="${zh ? 88 : 84}" font-weight="500" fill="#252923">${zh ? '图床管理' : 'Native image'}</text><text x="65" y="345" font-family="PingFang SC,Arial,sans-serif" font-size="${zh ? 88 : 84}" font-weight="500" fill="#536344">${zh ? '与图片工具' : 'workspace'}</text><text x="69" y="417" font-family="PingFang SC,Arial,sans-serif" font-size="22" fill="#656960">${zh ? '原生桌面、独立 CLI 与 Agent Skill。支持自有存储。' : 'Native desktop, standalone CLI, and Agent Skill.'}</text><rect x="66" y="460" width="170" height="44" rx="5" fill="#252923"/><text x="151" y="489" text-anchor="middle" font-family="Arial,sans-serif" font-size="15" fill="#fffefa">Native desktop</text><rect x="248" y="460" width="135" height="44" rx="5" fill="none" stroke="#b9c1ad"/><text x="315" y="489" text-anchor="middle" font-family="Arial,sans-serif" font-size="15" fill="#252923">Rust CLI</text><text x="65" y="601" font-family="monospace" font-size="14" fill="#656960">liyown.github.io/img</text><text x="1140" y="601" text-anchor="end" font-family="monospace" font-size="12" fill="#656960">macOS / Windows / Linux</text><g transform="translate(900 250) rotate(-8)"><rect x="-95" y="-100" width="220" height="220" rx="50" fill="#edeada" stroke="#d0d5c3"/><g fill="none" stroke="#536344" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"><rect x="-40" y="-44" width="112" height="112" rx="17"/><path d="m-38 35 35-39 31 31 18-18 25 28"/><circle cx="40" cy="-12" r="8" fill="#c17722" stroke="none"/></g></g></svg>`;
   await writeFile(path.join(root, `public/og/${locale}.svg`), svg);
   await sharp(Buffer.from(svg))
     .png()

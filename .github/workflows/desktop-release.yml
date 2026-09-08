@@ -35,6 +35,10 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libfontconfig1-dev libssl-dev libasound2-dev libvulkan-dev libgit2-dev cmake clang pkg-config xvfb mesa-vulkan-drivers
       - name: Set up Rust
         run: rustup toolchain install 1.98.1 --profile minimal && rustup default 1.98.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: desktop-${{ matrix.artifact }}
+          cache-bin: false
       - name: Tests
         shell: bash
         run: |

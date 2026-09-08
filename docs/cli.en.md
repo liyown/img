@@ -143,8 +143,8 @@ img screenshot --no-copy
 ```
 
 - **macOS:** uses the built-in `screencapture` command
-- **Linux:** tries `flameshot`, `scrot`, `gnome-screenshot`, `import` in order
-- **Windows:** PowerShell full-screen capture
+- **Linux:** desktop portals on Wayland; `flameshot`, `scrot`, `gnome-screenshot`, or `import` on X11
+- **Windows:** region, window, and full-screen capture; Escape cancels
 
 ### img serve — editor image upload proxy
 
@@ -338,7 +338,7 @@ img completion fish      # img completion fish > ~/.config/fish/completions/img.
 In a documentation repository, this Action automatically rewrites local image paths in Markdown to CDN URLs on every push:
 
 ```yaml
-- uses: liyown/img@v0.3.0
+- uses: liyown/img@v0.4.0
   with:
     provider-type: s3
     s3-endpoint: https://ACCOUNT.r2.cloudflarestorage.com

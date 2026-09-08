@@ -58,6 +58,6 @@ stdout 是最终 JSON，stderr 是独立的进度事件。`--progress` 限单文
 npx skills add liyown/img --skill img-uploader
 ```
 
-先安装原生 CLI 并配置默认存储源，再让 Agent 上传本地图片、把返回的链接写进文章。Skill 会检查文件与配置，读取逐文件 JSON 结果，保留部分成功的链接。Agent 复用已有配置，无需在对话中输入存储密钥。完整流程见 [SKILL.md](https://github.com/liyown/img/blob/main/skills/img-uploader/SKILL.md)。
+安装原生 CLI 后，Agent 可处理本地图片、查询图库、检查同步状态、预览迁移或上传并引用结果。上传复用已有存储配置，处理本地文件无需先配置图床。Skill 读取逐项 JSON 结果；远端删除与文章修改要求明确执行请求，无需在对话中输入存储密钥。完整流程见 [SKILL.md](https://github.com/liyown/img/blob/main/skills/img-uploader/SKILL.md)。
 
 [GitHub Action](https://github.com/liyown/img/blob/main/action.yml) 可在工作流中转存 Markdown 图片。安装步骤获取最新已发布 CLI；固定 Action 提交不会固定下载的 CLI 版本。需要可复现版本时，在工作流中下载并校验指定 CLI 发行包，再调用 `img rewrite`。

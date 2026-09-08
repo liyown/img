@@ -1,15 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
-for (const name of ['gallery', 'queue', 'settings']) {
+for (const [name, file, width, height] of [
+  ['gallery', 'gallery-0.4.jpg', 1161, 768],
+  ['tools', 'tools.jpg', 1161, 768],
+  ['queue', 'queue.png', 1280, 900],
+  ['settings', 'settings.png', 1280, 900],
+]) {
   test(`${name}: full-size WebP preserves visible native pixels`, async () => {
     const original = sharp(
-      new URL(`../src/assets/screenshots/${name}.png`, import.meta.url)
-        .pathname,
+      new URL(`../src/assets/screenshots/${file}`, import.meta.url).pathname,
     );
     const meta = await original.metadata();
-    assert.equal(meta.width, 1280);
-    assert.equal(meta.height, 900);
+    assert.equal(meta.width, width);
+    assert.equal(meta.height, height);
     const output = sharp(
       new URL(`../public/screenshots/${name}.webp`, import.meta.url).pathname,
     );

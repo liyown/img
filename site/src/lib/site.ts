@@ -3,8 +3,8 @@ export const site = {
   origin: 'https://liyown.github.io',
   base: '/img/',
   repository: 'https://github.com/liyown/img',
-  productCommit: 'cec6219',
-  verified: '2026-09-07',
+  productCommit: '3d8e8b9',
+  verified: '2026-09-08',
   gaId: import.meta.env.PUBLIC_GA_MEASUREMENT_ID?.trim() ?? '',
   verification: import.meta.env.PUBLIC_GOOGLE_SITE_VERIFICATION?.trim() ?? '',
 };
@@ -32,6 +32,7 @@ export const pages = [
   ['docs/cli', 'CLI 参考', 'CLI reference'],
   ['docs/integrations', '编辑器与 Agent', 'Editors & agents'],
   ['docs/troubleshooting', '故障排查', 'Troubleshooting'],
+  ['docs/0.4', '0.4 新功能', 'What’s new in 0.4'],
   ['docs/workflows', '迁移与资料管理', 'Migration & data management'],
   ['privacy', '隐私说明', 'Privacy'],
 ] as const;

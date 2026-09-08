@@ -145,8 +145,8 @@ img screenshot --no-copy         # 不复制到剪贴板
 ```
 
 - macOS：使用系统内置 `screencapture`
-- Linux：按顺序尝试 `flameshot`、`scrot`、`gnome-screenshot`、`import`
-- Windows：PowerShell 全屏截图
+- Linux：Wayland 使用桌面门户；X11 支持 `flameshot`、`scrot`、`gnome-screenshot`、`import`
+- Windows：区域、窗口和全屏截图，Esc 取消
 
 ### img serve — 编辑器图片上传代理
 
@@ -346,7 +346,7 @@ img completion fish      # img completion fish > ~/.config/fish/completions/img.
 在文档仓库里自动把本地图片路径转 CDN URL：
 
 ```yaml
-- uses: liyown/img@v0.3.0
+- uses: liyown/img@v0.4.0
   with:
     provider-type: s3
     s3-endpoint: https://ACCOUNT.r2.cloudflarestorage.com

@@ -8,7 +8,7 @@ order: 5
 
 ## 命令与简写
 
-`img <图片或 URL>` 等价于 `img upload <图片或 URL>`。`--config <文件>` 是全局选项。命令帮助以当前 0.3.0 release 二进制输出为准，下方完整列出各子命令参数。
+`img <图片或 URL>` 等价于 `img upload <图片或 URL>`。`--config <文件>` 是全局选项。命令帮助以当前 0.4.0 release 二进制输出为准，下方完整列出各子命令参数。
 
 ## 处理与输出
 
@@ -54,7 +54,7 @@ img upload photo.png --format json --no-copy --progress
 
 ## 平台差异
 
-macOS 截图调用 `screencapture`；Linux 依次尝试 flameshot、scrot、gnome-screenshot、ImageMagick import；Windows 使用 PowerShell 全屏截图，区域和窗口参数不能提供等同 macOS 的交互。剪贴板需要对应系统命令和有效图形会话。
+macOS 截图调用 `screencapture`；Linux Wayland 使用桌面门户，X11 支持 flameshot、scrot、gnome-screenshot、ImageMagick import；Windows 提供区域、窗口和全屏截图。剪贴板需要对应系统命令和有效图形会话。
 
 `fetch` 只下载，不上传；默认最大 8 MiB，可设置 1–128 MiB。`rewrite` 对文件默认原地改写，无文件时读 stdin；`serve` 默认监听 `127.0.0.1:36677`。配置详细解释见[存储配置](/img/docs/storage/)。
 
@@ -68,19 +68,33 @@ Upload images from files, screenshots or links. Rust CLI included with img GUI.
 Usage: img [OPTIONS] <COMMAND>
 
 Commands:
-  upload       Upload local files or remote image URLs
-  fetch        Download an image URL without uploading it
-  screenshot   Capture and upload a screenshot (copies result by default)
-  serve        Run a PicGo-compatible editor upload server
-  rewrite      Upload image references and rewrite Markdown documents
-  info         Inspect image dimensions, type and EXIF presence
-  init         Configure a storage provider interactively or with flags
-  provider     List, show, select, remove or test storage providers
-  config       Inspect or change configuration
-  completion   Print a shell completion script
-  version      Print application version
-  install-cli  Add the bundled CLI to a directory on PATH (no GUI required to run it)
-  help         Print this message or the help of the given subcommand(s)
+  references        Preview and repair Markdown image references with backups
+  migrate           Plan and apply recoverable copies; preserve source files
+  sync              Synchronize metadata through your own WebDAV or S3 storage
+  library           Query the shared remote image library
+  remote            Browse remote files or explicitly delete one version
+  backup            Back up local settings and records to a new directory (never uploads)
+  restore           Verify a backup, or restore it while img desktop is closed
+  process           Preview processing locally without uploading or modifying the source
+  tasks             Inspect and resume local tasks
+  presets           Share processing presets through configured metadata sync
+  restore-document  Restore a Markdown document from a backup created by img rewrite
+  watch             Upload new or changed images after they settle in a directory
+  import-config     Preview or import PicGo/PicList storage configurations
+  check             Verify public image URLs without sending storage credentials
+  upload            Upload local files or remote image URLs
+  fetch             Download an image URL without uploading it
+  screenshot        Capture and upload a screenshot (copies result by default)
+  serve             Run a PicGo-compatible editor upload server
+  rewrite           Upload image references and rewrite Markdown documents
+  info              Inspect image dimensions, type and EXIF presence
+  init              Configure a storage provider interactively or with flags
+  provider          List, show, select, remove or test storage providers
+  config            Inspect or change configuration
+  completion        Print a shell completion script
+  version           Print application version
+  install-cli       Add the bundled CLI to a directory on PATH (no GUI required to run it)
+  help              Print this message or the help of the given subcommand(s)
 
 Options:
       --config <CONFIG>  Use this global configuration file
@@ -99,22 +113,60 @@ Arguments:
   <FILES>...
 
 Options:
-      --config <CONFIG>      Use this global configuration file
-      --provider <PROVIDER>  Storage provider name [default: ""]
-      --path <PATH>          Remote path prefix [default: ""]
+      --config <CONFIG>
+          Use this global configuration file
+      --recursive
+          Include images in directories and their subdirectories
+      --preset <PRESET>
+          [possible values: original, web, photo]
+      --image-format <IMAGE_FORMAT>
+          [possible values: original, png, jpeg, webp]
+      --quality <QUALITY>
+          JPEG encoding quality
+      --max-edge <MAX_EDGE>
+
+      --watermark <WATERMARK>
+          Local image watermark placed at bottom right
+      --watermark-opacity <WATERMARK_OPACITY>
+
+      --reuse
+          Reuse a previous link for identical processed bytes in this destination
+      --force
+          Upload again instead of reusing a cached link
+      --origin <ORIGIN>
+          Source shown in the desktop library [default: cli] [possible values: cli, agent, editor, rewrite, screenshot]
+      --no-history
+          Do not retain a local library record or image copy
+      --provider <PROVIDER>
+          Storage provider name [default: ""]
+      --path <PATH>
+          Remote path prefix [default: ""]
       --overwrite
-      --optimize             Compress images before uploading
-      --strip-exif           Remove JPEG EXIF metadata, preserving orientation
-      --resize <RESIZE>      [default: 0]
-      --allow-insecure       Allow trusted plain HTTP image sources
-      --format <FORMAT>      [possible values: url, markdown, html, json]
+
+      --optimize
+          Compress images before uploading
+      --strip-exif
+          Remove JPEG EXIF metadata, preserving orientation
+      --resize <RESIZE>
+          [default: 0]
+      --allow-insecure
+          Allow trusted plain HTTP image sources
+      --format <FORMAT>
+          [possible values: url, markdown, html, json]
       --copy
+
       --no-copy
+
       --quiet
+
       --verbose
-      --name <NAME>          [default: ""]
-      --progress             Write JSON progress events to stderr (one file only)
-  -h, --help                 Print help
+
+      --name <NAME>
+          [default: ""]
+      --progress
+          Write JSON progress events to stderr (one file only)
+  -h, --help
+          Print help
 ```
 
 ### img fetch
@@ -143,20 +195,56 @@ Capture and upload a screenshot (copies result by default)
 Usage: img screenshot [OPTIONS]
 
 Options:
-      --config <CONFIG>      Use this global configuration file
-      --provider <PROVIDER>  Storage provider name [default: ""]
-      --path <PATH>          Remote path prefix [default: ""]
+      --config <CONFIG>
+          Use this global configuration file
+      --output <OUTPUT>
+          Save the capture locally without uploading or copying a link
+      --preset <PRESET>
+          [possible values: original, web, photo]
+      --image-format <IMAGE_FORMAT>
+          [possible values: original, png, jpeg, webp]
+      --quality <QUALITY>
+          JPEG encoding quality
+      --max-edge <MAX_EDGE>
+
+      --watermark <WATERMARK>
+          Local image watermark placed at bottom right
+      --watermark-opacity <WATERMARK_OPACITY>
+
+      --reuse
+          Reuse a previous link for identical processed bytes in this destination
+      --force
+          Upload again instead of reusing a cached link
+      --origin <ORIGIN>
+          Source shown in the desktop library [default: cli] [possible values: cli, agent, editor, rewrite, screenshot]
+      --no-history
+          Do not retain a local library record or image copy
+      --provider <PROVIDER>
+          Storage provider name [default: ""]
+      --path <PATH>
+          Remote path prefix [default: ""]
       --overwrite
-      --optimize             Compress images before uploading
-      --strip-exif           Remove JPEG EXIF metadata, preserving orientation
-      --resize <RESIZE>      [default: 0]
-      --allow-insecure       Allow trusted plain HTTP image sources
+
+      --optimize
+          Compress images before uploading
+      --strip-exif
+          Remove JPEG EXIF metadata, preserving orientation
+      --resize <RESIZE>
+          [default: 0]
+      --allow-insecure
+          Allow trusted plain HTTP image sources
       --region
+
       --window
-      --format <FORMAT>      [possible values: url, markdown, html, json]
+
+      --format <FORMAT>
+          [possible values: url, markdown, html, json]
       --no-copy
+
       --verbose
-  -h, --help                 Print help
+
+  -h, --help
+          Print help
 ```
 
 ### img serve
@@ -167,17 +255,48 @@ Run a PicGo-compatible editor upload server
 Usage: img serve [OPTIONS]
 
 Options:
-      --config <CONFIG>      Use this global configuration file
-      --provider <PROVIDER>  Storage provider name [default: ""]
-      --path <PATH>          Remote path prefix [default: ""]
+      --config <CONFIG>
+          Use this global configuration file
+      --preset <PRESET>
+          [possible values: original, web, photo]
+      --image-format <IMAGE_FORMAT>
+          [possible values: original, png, jpeg, webp]
+      --quality <QUALITY>
+          JPEG encoding quality
+      --max-edge <MAX_EDGE>
+
+      --watermark <WATERMARK>
+          Local image watermark placed at bottom right
+      --watermark-opacity <WATERMARK_OPACITY>
+
+      --reuse
+          Reuse a previous link for identical processed bytes in this destination
+      --force
+          Upload again instead of reusing a cached link
+      --origin <ORIGIN>
+          Source shown in the desktop library [default: cli] [possible values: cli, agent, editor, rewrite, screenshot]
+      --no-history
+          Do not retain a local library record or image copy
+      --provider <PROVIDER>
+          Storage provider name [default: ""]
+      --path <PATH>
+          Remote path prefix [default: ""]
       --overwrite
-      --optimize             Compress images before uploading
-      --strip-exif           Remove JPEG EXIF metadata, preserving orientation
-      --resize <RESIZE>      [default: 0]
-      --allow-insecure       Allow trusted plain HTTP image sources
-      --bind <BIND>          [default: 127.0.0.1]
-      --port <PORT>          [default: 36677]
-  -h, --help                 Print help
+
+      --optimize
+          Compress images before uploading
+      --strip-exif
+          Remove JPEG EXIF metadata, preserving orientation
+      --resize <RESIZE>
+          [default: 0]
+      --allow-insecure
+          Allow trusted plain HTTP image sources
+      --bind <BIND>
+          [default: 127.0.0.1]
+      --port <PORT>
+          [default: 36677]
+  -h, --help
+          Print help
 ```
 
 ### img rewrite
@@ -191,16 +310,50 @@ Arguments:
   [FILES]...
 
 Options:
-      --config <CONFIG>      Use this global configuration file
-      --provider <PROVIDER>  Storage provider name [default: ""]
-      --path <PATH>          Remote path prefix [default: ""]
+      --config <CONFIG>
+          Use this global configuration file
+      --dry-run
+          List image references without uploading or changing documents
+      --report <REPORT>
+          Write per-image successes and failures to a JSON report
+      --preset <PRESET>
+          [possible values: original, web, photo]
+      --image-format <IMAGE_FORMAT>
+          [possible values: original, png, jpeg, webp]
+      --quality <QUALITY>
+          JPEG encoding quality
+      --max-edge <MAX_EDGE>
+
+      --watermark <WATERMARK>
+          Local image watermark placed at bottom right
+      --watermark-opacity <WATERMARK_OPACITY>
+
+      --reuse
+          Reuse a previous link for identical processed bytes in this destination
+      --force
+          Upload again instead of reusing a cached link
+      --origin <ORIGIN>
+          Source shown in the desktop library [default: cli] [possible values: cli, agent, editor, rewrite, screenshot]
+      --no-history
+          Do not retain a local library record or image copy
+      --provider <PROVIDER>
+          Storage provider name [default: ""]
+      --path <PATH>
+          Remote path prefix [default: ""]
       --overwrite
-      --optimize             Compress images before uploading
-      --strip-exif           Remove JPEG EXIF metadata, preserving orientation
-      --resize <RESIZE>      [default: 0]
-      --allow-insecure       Allow trusted plain HTTP image sources
+
+      --optimize
+          Compress images before uploading
+      --strip-exif
+          Remove JPEG EXIF metadata, preserving orientation
+      --resize <RESIZE>
+          [default: 0]
+      --allow-insecure
+          Allow trusted plain HTTP image sources
       --stdout
-  -h, --help                 Print help
+
+  -h, --help
+          Print help
 ```
 
 ### img info
@@ -227,28 +380,52 @@ Configure a storage provider interactively or with flags
 Usage: img init [OPTIONS]
 
 Options:
-      --config <CONFIG>                  Use this global configuration file
-      --type <KIND>                      [default: ""]
-      --name <NAME>                      [default: ""]
-      --url <URL>                        [default: ""]
-      --url-json-path <URL_JSON_PATH>    [default: data.url]
-      --method <METHOD>                  [default: POST] [possible values: POST, PUT, PATCH]
-      --file-field <FILE_FIELD>          [default: file]
-      --endpoint <ENDPOINT>              [default: ""]
-      --region <REGION>                  [default: auto]
-      --bucket <BUCKET>                  [default: ""]
-      --access-key <ACCESS_KEY>          [default: ""]
-      --secret-key <SECRET_KEY>          [default: ""]
-      --session-token <SESSION_TOKEN>    [default: ""]
-      --public-url <PUBLIC_URL>          [default: ""]
+      --authorization <AUTHORIZATION>
+          Authorization header reference, for HTTP or WebDAV [default: ""]
+      --config <CONFIG>
+          Use this global configuration file
+      --type <KIND>
+          [default: ""]
+      --name <NAME>
+          [default: ""]
+      --url <URL>
+          [default: ""]
+      --url-json-path <URL_JSON_PATH>
+          [default: data.url]
+      --method <METHOD>
+          [default: POST] [possible values: POST, PUT, PATCH]
+      --file-field <FILE_FIELD>
+          [default: file]
+      --endpoint <ENDPOINT>
+          [default: ""]
+      --region <REGION>
+          [default: auto]
+      --bucket <BUCKET>
+          [default: ""]
+      --access-key <ACCESS_KEY>
+          [default: ""]
+      --secret-key <SECRET_KEY>
+          [default: ""]
+      --session-token <SESSION_TOKEN>
+          [default: ""]
+      --public-url <PUBLIC_URL>
+          [default: ""]
       --path-style
+
       --allow-insecure
-      --owner <OWNER>                    [default: ""]
-      --repo <REPO>                      [default: ""]
-      --branch <BRANCH>                  [default: main]
-      --token <TOKEN>                    [default: ""]
-      --commit-message <COMMIT_MESSAGE>  [default: "upload: {path}"]
-  -h, --help                             Print help
+
+      --owner <OWNER>
+          [default: ""]
+      --repo <REPO>
+          [default: ""]
+      --branch <BRANCH>
+          [default: main]
+      --token <TOKEN>
+          [default: ""]
+      --commit-message <COMMIT_MESSAGE>
+          [default: "upload: {path}"]
+  -h, --help
+          Print help
 ```
 
 ### img provider
@@ -460,6 +637,178 @@ Usage: img install-cli [OPTIONS]
 
 Options:
       --config <CONFIG>  Use this global configuration file
+      --json             Return a structured installation result
       --dir <DIR>
+  -h, --help             Print help
+```
+
+### img process
+
+```text
+Preview processing locally without uploading or modifying the source
+
+Usage: img process [OPTIONS] [FILES]...
+
+Arguments:
+  [FILES]...
+
+Options:
+      --config <CONFIG>
+          Use this global configuration file
+      --output <OUTPUT>
+
+      --output-dir <OUTPUT_DIR>
+
+      --recipe <RECIPE>
+          A versioned ProcessingPlan JSON file
+      --resume <RESUME>
+          Resume a saved processing task
+      --preview
+          Render without adding a persistent task; uses the export renderer
+      --prepare
+          Save the task without running it
+      --inputs-manifest <INPUTS_MANIFEST>
+          Input snapshots with per-image annotations and optional source asset IDs
+      --preset <PRESET>
+          [possible values: original, web, photo]
+      --image-format <IMAGE_FORMAT>
+          [possible values: original, png, jpeg, webp]
+      --quality <QUALITY>
+          JPEG encoding quality
+      --max-edge <MAX_EDGE>
+
+      --watermark <WATERMARK>
+          Local image watermark placed at bottom right
+      --watermark-opacity <WATERMARK_OPACITY>
+
+      --reuse
+          Reuse a previous link for identical processed bytes in this destination
+      --force
+          Upload again instead of reusing a cached link
+      --origin <ORIGIN>
+          Source shown in the desktop library [default: cli] [possible values: cli, agent, editor, rewrite, screenshot]
+      --no-history
+          Do not retain a local library record or image copy
+      --provider <PROVIDER>
+          Storage provider name [default: ""]
+      --path <PATH>
+          Remote path prefix [default: ""]
+      --overwrite
+
+      --optimize
+          Compress images before uploading
+      --strip-exif
+          Remove JPEG EXIF metadata, preserving orientation
+      --resize <RESIZE>
+          [default: 0]
+      --allow-insecure
+          Allow trusted plain HTTP image sources
+  -h, --help
+          Print help
+```
+
+### img library
+
+```text
+Query the shared remote image library
+
+Usage: img library [OPTIONS] <COMMAND>
+
+Commands:
+  delete-plan
+  delete
+  preview
+  scopes
+  index
+  list
+  show
+  check
+  download
+  hide
+  cache
+  help         Print this message or the help of the given subcommand(s)
+
+Options:
+      --config <CONFIG>  Use this global configuration file
+  -h, --help             Print help
+```
+
+### img sync
+
+```text
+Synchronize metadata through your own WebDAV or S3 storage
+
+Usage: img sync [OPTIONS] <COMMAND>
+
+Commands:
+  configure  Store a dedicated sync connection in this device's system keychain
+  status
+  run
+  pause
+  resume
+  conflicts
+  resolve    Resolve one conflict using the explicitly selected event
+  help       Print this message or the help of the given subcommand(s)
+
+Options:
+      --config <CONFIG>  Use this global configuration file
+  -h, --help             Print help
+```
+
+### img migrate
+
+```text
+Plan and apply recoverable copies; preserve source files
+
+Usage: img migrate [OPTIONS] <COMMAND>
+
+Commands:
+  source  Attach a local original to a failed item, without uploading; then retry the task
+  plan    Inspect destinations without uploading; save a fixed plan for review
+  apply   Apply or retry this exact plan; verified successes are preserved
+  show    Inspect locally saved migration progress
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+      --config <CONFIG>  Use this global configuration file
+  -h, --help             Print help
+```
+
+### img references
+
+```text
+Preview and repair Markdown image references with backups
+
+Usage: img references [OPTIONS] <COMMAND>
+
+Commands:
+  scan     Scan only the selected directory; no document writes
+  show
+  apply    Apply the saved preview; recheck destination images and original documents
+  restore  Preview restoration; apply the returned task with references apply --yes
+  export   Export the report and document backups into a new directory
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+      --config <CONFIG>  Use this global configuration file
+  -h, --help             Print help
+```
+
+### img tasks
+
+```text
+Inspect and resume local tasks
+
+Usage: img tasks [OPTIONS] <COMMAND>
+
+Commands:
+  upload  Upload saved processing outputs without reprocessing their pixels
+  list
+  show
+  retry
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+      --config <CONFIG>  Use this global configuration file
   -h, --help             Print help
 ```

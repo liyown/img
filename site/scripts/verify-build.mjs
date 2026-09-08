@@ -23,7 +23,7 @@ const all = await walk(root);
 const htmlFiles = all.filter(
   (x) => x.endsWith('.html') && !x.endsWith('/404.html'),
 );
-assert.equal(htmlFiles.length, 28, '26 content pages and two 404 pages');
+assert.equal(htmlFiles.length, 30, '28 content pages and two 404 pages');
 const pages = new Map();
 const titles = new Set();
 const descriptions = new Set();
@@ -156,7 +156,7 @@ const sitemap = new JSDOM(
   await readFile(path.join(root, 'sitemap.xml'), 'utf8'),
   { contentType: 'text/xml' },
 ).window.document;
-assert.equal(sitemap.querySelectorAll('url').length, 26);
+assert.equal(sitemap.querySelectorAll('url').length, 28);
 for (const loc of sitemap.querySelectorAll('loc')) {
   assert.ok(pages.has(new URL(loc.textContent).pathname));
   assert.ok(!loc.textContent.includes('404'));

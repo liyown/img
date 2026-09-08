@@ -2,14 +2,22 @@
 import Icon from './Icon.astro';
 import { t, asset, type Locale } from '../lib/site';
 interface Props {
-  name?: 'gallery' | 'queue' | 'settings';
+  name?: 'gallery' | 'queue' | 'settings' | 'tools';
   locale: Locale;
   eager?: boolean;
   caption?: boolean;
 }
 const { name = 'gallery', locale, eager = false, caption = true } = Astro.props;
 const src = asset(`screenshots/${name}.webp`);
+const current = name === 'gallery' || name === 'tools';
+const width = current ? 1161 : 1280;
+const height = current ? 768 : 900;
 const alt = {
+  tools: t(
+    locale,
+    'img 0.4 转换与压缩：真实图片预览、WebP 参数、实际体积及保存、复制、上传操作。',
+    'img 0.4 Convert & compress: an image preview, WebP parameters, actual output size, and save, copy, and upload controls. Chinese app UI.',
+  ),
   gallery: t(
     locale,
     'img 原生图库：网格中的图片缩略图、文件名与复制链接操作。隔离演示数据。',
@@ -37,7 +45,13 @@ const alt = {
     aria-label={t(locale, '放大截图：', 'Enlarge screenshot: ') +
       t(
         locale,
-        name === 'gallery' ? '图库' : name === 'queue' ? '上传队列' : '设置',
+        name === 'gallery'
+          ? '图库'
+          : name === 'queue'
+            ? '上传队列'
+            : name === 'tools'
+              ? '转换与压缩'
+              : '设置',
         name,
       )}
     ><img
@@ -47,13 +61,13 @@ const alt = {
         .map(
           (width) => `${asset(`screenshots/${name}-${width}.webp`)} ${width}w`,
         )
-        .concat(`${src} 1280w`)
+        .concat(`${src} ${width}w`)
         .join(', ')}
       sizes={eager
         ? '(max-width: 520px) 490px, (max-width: 1200px) calc(100vw - 56px), 1160px'
         : '(max-width: 520px) calc(100vw - 48px), (max-width: 780px) calc(100vw - 52px), (max-width: 1200px) 60vw, 720px'}
-      width={1280}
-      height={900}
+      width={width}
+      height={height}
       loading={eager ? 'eager' : 'lazy'}
       fetchpriority={eager ? 'high' : 'auto'}
       decoding="async"
@@ -64,8 +78,8 @@ const alt = {
       <figcaption>
         {t(
           locale,
-          '0.3.0 原生应用实拍 · 演示数据 · 点击放大',
-          '0.3.0 native app · Demo data · Click to enlarge',
+          `${current ? '0.4.0' : '0.3.0'} 原生应用实拍 · 演示数据 · 点击放大`,
+          `${current ? '0.4.0' : '0.3.0'} native app · Demo data · Click to enlarge`,
         )}
       </figcaption>
     )

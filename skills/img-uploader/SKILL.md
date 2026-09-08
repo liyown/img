@@ -1,58 +1,82 @@
 ---
 name: img-uploader
-description: Upload local image files with the img CLI and return usable URL or Markdown results. Use when the user asks an agent to upload, publish, host, share, or create links for PNG, JPEG, GIF, WebP, SVG, or AVIF files through a configured S3/R2/OSS, GitHub, or HTTP image provider.
+description: Upload and process images, query the shared image library, inspect sync, and preview image-host migrations or Markdown reference repairs with the native img CLI. Use for image hosting and local PNG/JPEG/static WebP processing through configured S3/R2/OSS, GitHub, WebDAV, or HTTP providers.
 ---
 
-# Image Uploader
+# img image workflows
 
-Use the `img` executable as the only upload interface. Keep credentials out of commands, logs, and responses.
+Use the installed `img` CLI. Locate it with `command -v img` and check `img version`; the commands below require 0.4 or later. Desktop packages include the CLI, but the desktop does not need to run. Credentials and library records are shared locally.
 
-## Workflow
+Choose the workflow the user requested. Local processing and library queries do not require provider validation. Before uploading, run `img config validate`; inspect provider names with `img provider list` when needed. Keep credentials and environment values out of commands, logs, and responses.
 
-1. Confirm each requested local file exists. Do not upload unrelated images.
-2. Locate the CLI with `command -v img`. In an `img` repository checkout, fall back to `./bin/img` when present.
-3. Run `img config validate`. If configuration is missing, stop and give the initialization command from the repository README. Never ask the user to paste credentials into chat.
-4. Use the configured default Provider unless the user names one. Inspect names with `img provider list` when needed.
-5. Upload with `--format json --no-copy` so results are machine-readable and no clipboard process is invoked.
-6. Parse every item in `files`. Preserve partial successes when the process exits with code 3.
-7. Return concise clickable links. Prefer Markdown image syntax when the user wants content for Markdown; otherwise return URLs.
+## Upload
 
-## Commands
-
-Single file:
+Check requested files exist, then use the configured default provider unless another was specified:
 
 ```sh
 img upload "/absolute/path/image.png" --format json --no-copy
+img upload "/path/a.png" "/path/b.webp" --provider oss --path articles --format json --no-copy
 ```
 
-Multiple files:
+Read every `files` result. Exit 3 means partial failure: preserve successful URLs and identify failures. Do not upload unrelated files or infer permission to overwrite. Use `--name` only for a single file. Return useful URLs or Markdown, never invented links.
+
+## Local image processing
+
+A new output preserves the original and does not upload anything:
 
 ```sh
-img upload "/path/a.png" "/path/b.webp" --format json --no-copy
+img process "/path/photo.png" --output "/path/photo.webp" --image-format webp
+img process "/path/photo.png" --recipe "/path/recipe.json" --output-dir "/path/results"
 ```
 
-Named Provider and remote prefix:
+Minimal recipe:
+
+```json
+{"version":1,"encoding":{"format":"webp","compression":{"mode":"quality","quality":85}}}
+```
+
+PNG/JPEG/static WebP can be edited; do not flatten animated inputs. Target-size mode reports `target_met`; do not describe an unmet target as successful compression to the requested size. Read per-output order and errors from the result. Existing tasks can be inspected with `img tasks show TASK_ID` and retried with `img tasks retry TASK_ID`.
+
+## Library and sync
 
 ```sh
-img upload "/path/image.png" --provider github --path posts/assets --format json --no-copy
+img library list --search cover --limit 100
+img library show IMAGE_ID
+img library check IMAGE_ID
+img library download IMAGE_ID --output-dir /path/downloads
+img sync status
+img sync conflicts
 ```
 
-Use `--name desired.png` only for a single file. Use `--overwrite` only when the user explicitly requests replacement or confirms an existing object may be replaced.
+Results cover indexed scopes, not necessarily all remote files. Cache presence does not establish remote availability. A failed authenticated request is not proof a file is missing. Query additional pages using `--offset` when needed.
 
-## Result Handling
+`img sync run` exchanges metadata with the configured sync backend; use it when the user asks to synchronize. Hosting credentials are not additionally encrypted in the sync directory, while the backend's own credentials stay device-local. Never configure sync or resolve a conflict merely to answer a status question.
 
-- Exit 0: report all uploaded files.
-- Exit 1: report the upload error with its useful context.
-- Exit 2: report the configuration or argument problem; do not retry unchanged.
-- Exit 3: report successful URLs and list failed files separately.
-- Never discard successful items because another file failed.
-- Do not expose Provider tokens, secrets, Authorization headers, or environment values.
+## Migration and reference repair
 
-## Guardrails
+Start with a reviewable plan:
 
-- Treat uploading as an external write. Only upload files included in the user's request.
-- Do not create a public link for private or sensitive material without clear user intent.
-- Do not enable overwrite by inference.
-- Do not modify global or project configuration during an ordinary upload request.
-- Do not use `--copy` in agent workflows.
-- If `img` is unavailable, provide the documented install command rather than substituting another upload service.
+```sh
+img migrate plan IMAGE_ID --to r2 --prefix articles --output /path/move.json
+img migrate show TASK_ID
+img references scan /path/articles --migration TASK_ID --output /path/references.json
+img references show REFERENCE_TASK_ID
+```
+
+A migration plan freezes the selected locations and destination. Applying it uploads images; do this only when the user requested migration execution:
+
+```sh
+img migrate apply /path/move.json --report /path/report.json
+```
+
+Sources remain in place. Do not switch references to unverified URLs. `img references apply REFERENCE_TASK_ID --yes` writes articles and must be explicitly requested. It rechecks documents and destination images and backs up each file before replacement. `references restore` creates a restoration preview, not an immediate write.
+
+Remote deletion also requires an explicit request identifying the target storage and objects. Do not interpret migration, cache cleanup, or reference scanning as deletion authorization. References outside a scanned directory are unknown.
+
+## Failures and boundaries
+
+- Exit 1: operation failed; return useful context. Exit 2: invalid configuration or arguments; do not retry unchanged. Exit 3: preserve partial successes.
+- Reuse saved task IDs for retries instead of starting a duplicate migration or upload.
+- A successful upload can include a record-saving warning: return its URL and explain that the local record was not saved.
+- Use `--no-copy` for agent uploads. Clipboard interaction is unnecessary for returning results.
+- If `img` is absent, use the project's documented installer; do not substitute another hosting service.
