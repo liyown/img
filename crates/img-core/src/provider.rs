@@ -501,6 +501,14 @@ impl Provider {
             }),
         }
     }
+    fn is_aliyun_oss(&self) -> bool {
+        url::Url::parse(&self.cfg.endpoint).ok().is_some_and(|url| {
+            url.host_str().is_some_and(|host| {
+                host.ends_with(".aliyuncs.com")
+                    && host.split('.').any(|part| part.starts_with("oss-"))
+            })
+        })
+    }
     fn s3_request(
         &self,
         method: Method,
@@ -547,7 +555,11 @@ impl Provider {
             headers.push(("content-type", content_type));
         }
         if no_overwrite {
-            headers.push(("if-none-match", "*"));
+            headers.push(if self.is_aliyun_oss() {
+                ("x-oss-forbid-overwrite", "true")
+            } else {
+                ("if-none-match", "*")
+            });
         }
         if let Some(etag) = if_match {
             headers.push(("if-match", etag));
@@ -757,6 +769,39 @@ mod tests {
             seen[1].headers["x-amz-content-sha256"],
             format!("{:x}", sha2::Sha256::digest(&data))
         );
+    }
+    #[test]
+    fn oss_conditional_upload_uses_signed_native_overwrite_guard() {
+        let (url, seen, thread) = server(vec![(200, "")]);
+        let cfg = ProviderConfig {
+            kind: "s3".into(),
+            endpoint: "https://oss-cn-shenzhen.aliyuncs.com".into(),
+            region: "oss-cn-shenzhen".into(),
+            bucket: "test".into(),
+            public_url: "https://cdn.test".into(),
+            access_key: "FAKEACCESS".into(),
+            secret_key: "fake-test-secret".into(),
+            ..Default::default()
+        };
+        let provider = Provider::new("oss", &cfg).unwrap();
+        provider
+            .s3_request(
+                Method::PUT,
+                &url,
+                Some(Arc::from(b"image".as_slice())),
+                "image/png",
+                true,
+                &Control::default(),
+            )
+            .unwrap();
+        thread.join().unwrap();
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen[0].headers["x-oss-forbid-overwrite"], "true");
+        assert!(!seen[0].headers.contains_key("if-none-match"));
+        assert!(seen[0].headers["authorization"].contains("x-oss-forbid-overwrite"));
+        let mut malicious = cfg;
+        malicious.endpoint = "https://oss-cn-shenzhen.aliyuncs.com.example.com".into();
+        assert!(!Provider::new("s3", &malicious).unwrap().is_aliyun_oss());
     }
     #[test]
     fn github_lookup_overwrite_and_branch_remain_compatible() {

@@ -27,7 +27,7 @@ pub struct Scan {
 impl Scope {
     pub fn new(provider: &Provider, prefix: &str) -> Result<Self> {
         if !prefix.is_empty() {
-            crate::pathgen::validate(prefix)?;
+            crate::pathgen::validate(prefix.trim_end_matches('/'))?;
             ensure!(
                 prefix.ends_with('/'),
                 "index scope must be a directory ending in /"
@@ -208,6 +208,9 @@ mod tests {
             },
         )
         .unwrap();
+        assert!(Scope::new(&provider, "photos/2026/").is_ok());
+        assert!(Scope::new(&provider, "photos/../").is_err());
+        assert!(Scope::new(&provider, "photos").is_err());
         let root = tempfile::tempdir().unwrap();
         let mut c = Catalog::open(root.path()).unwrap();
         let id = c
