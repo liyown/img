@@ -616,8 +616,11 @@ impl Library {
         let format = self.format;
         window.open_dialog(cx, move |dialog, window, _| {
             let viewport = window.viewport_size();
-            let width = (f32::from(viewport.width) - 48.).max(240.);
-            let image_height = (f32::from(viewport.height) - 240.).max(80.);
+            let width = (f32::from(viewport.width) * 0.85).clamp(240., 960.);
+            let image_height = (f32::from(viewport.height) * 0.60)
+                .min(560.)
+                .min((f32::from(viewport.height) - 220.).max(80.));
+            let top = ((f32::from(viewport.height) - image_height - 192.) / 2.).max(16.);
             let mut body = div().flex().flex_col().gap(px(10.)).child(label(
                 format!("{} · {}", asset.content_type, model::size_label(asset.size)),
                 12.,
@@ -653,7 +656,7 @@ impl Library {
                 .map(|link| format.render(&asset.name, &link.url));
             dialog
                 .w(px(width))
-                .margin_top(px(24.))
+                .margin_top(px(top))
                 .title(crate::i18n::text(asset.name.clone()))
                 .child(body)
                 .footer(
@@ -780,6 +783,10 @@ impl Library {
                 )
                 .into_any_element();
         }
+        let copy_url = asset
+            .selected_location(&self.query.provider)
+            .map(|location| location.url.clone());
+        let copy_name = asset.name.clone();
         div()
             .id(SharedString::from(format!("catalog-{}", asset.id)))
             .flex()
@@ -822,7 +829,32 @@ impl Library {
                             )),
                         )
                     })
-                    .child(label(asset.name, 12., TEXT).text_ellipsis()),
+                    .child(
+                        label(asset.name, 12., TEXT)
+                            .flex_1()
+                            .min_w_0()
+                            .text_ellipsis(),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!("copy-{}", asset.id)))
+                            .ghost()
+                            .icon(IconName::Copy)
+                            .accessibility_label(crate::i18n::text("复制链接"))
+                            .tooltip(crate::i18n::text("复制链接"))
+                            .w(px(28.))
+                            .h(px(28.))
+                            .flex_shrink_0()
+                            .disabled(copy_url.as_ref().is_none_or(|url| url.is_empty()))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if let Some(url) = &copy_url {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(
+                                        this.format.render(&copy_name, url),
+                                    ));
+                                    this.notice = Some("已复制链接".into());
+                                    cx.notify();
+                                }
+                            })),
+                    ),
             )
             .child(label(
                 format!(
